@@ -24,6 +24,9 @@ import java.io.File
 object EngineConfig {
     const val FILE_NAME = "krunk-engine.yaml"
 
+    /** The backstop's SOCKS port: closed for good (see [vpnPrefs]). */
+    const val BACKSTOP_PORT = 1
+
     /** Read by `krunk-guard` (gate-api.js) when it starts, before any message can reach it. */
     const val PREF_GATE_BLOCKER = "krunk.guard.blockerUpdates"
     const val PREF_GATE_ENGINE = "krunk.guard.engineRequests"
@@ -78,16 +81,18 @@ object EngineConfig {
      * (then port 1, a closed port: the backstop refuses instead of going direct).
      *
      * The proxy prefs are the backstop: a channel `krunk-guard`'s filter does not route (before
-     * the extension runs, or one it misses) goes to the SOCKS port without the password and is
-     * refused. The rest close leaks past a proxy (DNS prefetch, HTTPS RR lookups, TRR, HTTP/3 and
+     * the extension runs, or one it misses) goes to SOCKS on `127.0.0.1:1`, a port nothing can
+     * listen on (apps cannot bind below 1024), and fails. The proxy's real port and the session
+     * password are never in a pref (prefs are copied to content processes); only the filter has
+     * them. The rest close leaks past a proxy (DNS prefetch, HTTPS RR lookups, TRR, HTTP/3 and
      * WebTransport over UDP, preconnects, WebRTC host candidates). The same list, with the same
      * values, is `VPN_PREFS` in krunk-guard's vpn-api.js, which sets and restores it at run time;
      * a JVM test compares both. The last pref tells it that the defaults it finds are these.
      */
-    fun vpnPrefs(port: Int?): List<Pair<String, Any>> = listOf(
+    fun vpnPrefs(): List<Pair<String, Any>> = listOf(
         "network.proxy.type" to 1,
         "network.proxy.socks" to "127.0.0.1",
-        "network.proxy.socks_port" to (port ?: 1),
+        "network.proxy.socks_port" to BACKSTOP_PORT,
         "network.proxy.socks_version" to 5,
         "network.proxy.socks_remote_dns" to true,
         "network.proxy.no_proxies_on" to "",

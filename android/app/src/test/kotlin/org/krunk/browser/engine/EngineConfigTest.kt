@@ -7,10 +7,6 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EngineConfigTest {
-    private companion object {
-        const val PORT = 40123
-    }
-
     @Test
     fun byDefaultRemoteSettingsSafeBrowsingAndTheConnectivityCheckAreOff() {
         val yaml = EngineConfig.yaml(automaticUpdates = false)
@@ -80,22 +76,21 @@ class EngineConfigTest {
 
     @Test
     fun vpnPrefsPinTheBackstopAndTheLeakList() {
-        val on = EngineConfig.vpnPrefs(port = 40123).toMap()
+        val on = EngineConfig.vpnPrefs().toMap()
         assertEquals(1, on["network.proxy.type"])
         assertEquals("127.0.0.1", on["network.proxy.socks"])
-        assertEquals(40123, on["network.proxy.socks_port"])
+        // A port nothing listens on: the real proxy port never goes into a pref.
+        assertEquals(1, on["network.proxy.socks_port"])
         assertEquals(5, on["network.proxy.socks_version"])
         assertEquals(true, on["network.proxy.socks_remote_dns"])
         assertEquals(false, on["network.proxy.failover_direct"])
         assertEquals(5, on["network.trr.mode"])
         assertEquals(false, on["network.http.http3.enable"])
         assertEquals(true, on["media.peerconnection.ice.proxy_only"])
-        // Not up yet: a closed port, never "no proxy".
-        assertEquals(1, EngineConfig.vpnPrefs(port = null).toMap()["network.proxy.socks_port"])
         // Nothing secret goes into the file, and it is gone again at a start without the VPN.
-        val yaml = EngineConfig.yaml(false, extraPrefs = EngineConfig.vpnPrefs(40123))
+        val yaml = EngineConfig.yaml(false, extraPrefs = EngineConfig.vpnPrefs())
         assertTrue(yaml.lines().contains("  network.proxy.socks: \"127.0.0.1\""))
-        assertTrue(yaml.lines().contains("  network.proxy.socks_port: 40123"))
+        assertTrue(yaml.lines().contains("  network.proxy.socks_port: 1"))
         assertTrue(yaml.lines().contains("  krunk.vpn.engineConfig: true"))
         assertFalse(EngineConfig.yaml(false).contains("network.proxy"))
     }
@@ -109,14 +104,13 @@ class EngineConfigTest {
         val fromJs = row.findAll(block).map { m ->
             val raw = m.groupValues[2].trim()
             val value: Any = when {
-                raw == "null" -> PORT
                 raw == "true" || raw == "false" -> raw.toBoolean()
                 raw.startsWith("\"") -> raw.removeSurrounding("\"")
                 else -> raw.toInt()
             }
             m.groupValues[1] to value
         }.toList()
-        assertEquals(EngineConfig.vpnPrefs(PORT), fromJs)
+        assertEquals(EngineConfig.vpnPrefs(), fromJs)
     }
 
     @Test

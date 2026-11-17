@@ -135,7 +135,7 @@ test("on: proxied with SOCKS5 and the password, direct for localhost; off restor
   assert.deepEqual(state, { installed: true, held: 0 });
   assert.deepEqual(env.topics, ["net:cancel-all-connections", "net:prune-all-connections"]);
   assert.equal(env.defaults.get("network.proxy.type"), 1);
-  assert.equal(env.defaults.get("network.proxy.socks_port"), 4321);
+  assert.equal(env.defaults.get("network.proxy.socks_port"), 1, "the real port never goes into a pref");
   assert.equal(env.defaults.get("network.trr.mode"), 5);
   // The password is never in a pref.
   for (const v of env.defaults.values()) assert.ok(!String(v).includes(PASS));

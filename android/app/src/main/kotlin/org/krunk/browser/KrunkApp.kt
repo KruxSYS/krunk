@@ -70,8 +70,10 @@ class KrunkApp : Application() {
         // The VPN (0.10.0) starts before the engine when "Connect when Krunk starts" is on, so its
         // port is known for the engine's start-up prefs; on and not up: the engine starts closed
         // (port null: the backstop points at a closed port and pages wait for the guard's filter).
-        val vpnPort = vpn.startAtLaunch()
-        val vpnPrefs = if (vpn.isOn()) EngineConfig.vpnPrefs(vpnPort) else emptyList()
+        // Connects now when "Connect when Krunk starts" is set; the engine gets the backstop prefs
+        // either way while the VPN is on, and the guard gets the port over its native port.
+        vpn.startAtLaunch()
+        val vpnPrefs = if (vpn.isOn()) EngineConfig.vpnPrefs() else emptyList()
         GeckoEngine(this, settings.filterAutoUpdate, host, vpnPrefs).also {
             engineMade = it
             it.applySettings(settings)

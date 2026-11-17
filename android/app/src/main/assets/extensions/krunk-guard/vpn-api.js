@@ -38,13 +38,14 @@ const PREF_SAVED = "krunk.vpn.saved";
 const MARKER = "krunk.vpn.engineConfig";
 
 // BEGIN VPN_PREFS — [name, value while the VPN is on, the engine's own default].
-// A null value is the proxy's port (1, a closed port, while it is not up). The last column is
+// The backstop points at SOCKS 127.0.0.1:1, a port nothing can listen on: a channel the filter
+// misses fails. The proxy's real port and the password are never in a pref. The last column is
 // used only to restore a start whose engine config already held these values (MARKER true), when
 // the engine's own defaults are no longer readable. Mirrored by EngineConfig.vpnPrefs (JVM test).
 const VPN_PREFS = [
   ["network.proxy.type", 1, 5],
   ["network.proxy.socks", "127.0.0.1", ""],
-  ["network.proxy.socks_port", null, 0],
+  ["network.proxy.socks_port", 1, 0],
   ["network.proxy.socks_version", 5, 5],
   ["network.proxy.socks_remote_dns", true, false],
   ["network.proxy.no_proxies_on", "", ""],
@@ -345,7 +346,7 @@ function storeSaved(saved) {
   writeDefault(Services.prefs.getDefaultBranch(""), PREF_SAVED, saved ? JSON.stringify(saved) : "");
 }
 
-function applyPrefs(port) {
+function applyPrefs() {
   const branch = Services.prefs.getDefaultBranch("");
   if (!vpn.saved) {
     const prev = {};
@@ -357,7 +358,7 @@ function applyPrefs(port) {
   vpn.saved.scope = vpn.cfg.scope;
   vpn.saved.lan = vpn.cfg.lan;
   storeSaved(vpn.saved);
-  for (const [name, value] of VPN_PREFS) writeDefault(branch, name, value === null ? port : value);
+  for (const [name, value] of VPN_PREFS) writeDefault(branch, name, value);
 }
 
 function restorePrefs() {
@@ -414,7 +415,7 @@ function configure(json) {
         vpn.infos = next.pending ? null : makeInfos(next.port, next.pass);
       }
       vpn.cfg = next;
-      applyPrefs(next.pending ? 1 : next.port);
+      applyPrefs();
       register();
       // The same config again keeps held channels on their running time limit.
       if (what !== "same") rerouteHeld();
