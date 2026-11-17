@@ -21,6 +21,13 @@ licences (`app/src/main/kotlin/org/krunk/browser/ui/settings/Licenses.kt`); a un
 | Online Malicious URL Blocklist (URLhaus) | CC0-1.0 | Addresses that spread malware, inside uBlock Origin; malware-filter project, data by abuse.ch | https://gitlab.com/malware-filter/urlhaus-filter |
 | Public Suffix List | MPL-2.0 | Where a site's name ends; inside uBlock Origin and the shared core | https://publicsuffix.org/ |
 | SnakeYAML | Apache-2.0 | Part of GeckoView; reads Krunk's engine configuration | https://bitbucket.org/snakeyaml/snakeyaml |
+| boringtun | BSD-3-Clause | The WireGuard protocol of the in-browser VPN (protocol state machine only), by Cloudflare; with x25519-dalek (BSD-3-Clause) | https://github.com/cloudflare/boringtun |
+| smoltcp | 0BSD | The TCP/IP stack inside the VPN tunnel | https://github.com/smoltcp-rs/smoltcp |
+| OpenVPN 3 Core | MPL-2.0 | The OpenVPN client library of the in-browser VPN, used under MPL-2.0 through the openvpn-connect crates (MPL-2.0), vendored with the changes listed in vendor/README.md | https://github.com/OpenVPN/openvpn3 |
+| Asio | BSL-1.0 | Networking library inside OpenVPN 3 Core | https://think-async.com/Asio/ |
+| LZ4 | BSD-2-Clause | Compression library inside OpenVPN 3 Core (lz4-sys bindings: MIT) | https://github.com/lz4/lz4 |
+| rustls and ring | Apache-2.0 OR ISC OR MIT (rustls); Apache-2.0 AND ISC (ring) | TLS and cryptography for OpenVPN's control channel | https://github.com/rustls/rustls |
+| webpki-roots | CDLA-Permissive-2.0 | Mozilla's root certificates as a Rust crate, linked with rustls | https://github.com/rustls/webpki-roots |
 | Rust crates of the shared core | MIT or Apache-2.0 unless noted | serde, serde_json, url, psl, RustCrypto argon2 and chacha20poly1305 and the rest of `Cargo.lock` | `../Cargo.lock` |
 
 ## uBlock Origin
@@ -41,3 +48,13 @@ version and the address from it at build time.
   (`css/fonts/`) and libraries (`lib/`) carry theirs.
 - Peter Lowe's list is published under the McRae General Public License; its author asks that it
   be used for non-commercial purposes only (see the README next to the list in the package).
+
+## In-browser VPN (0.10.0)
+
+The VPN code (`vpn/`, `ffi/src/vpn.rs`) is in `libkrunk_ffi.so`. OpenVPN 3 Core is used under the
+Mozilla Public License 2.0 (never its AGPL licence option); its source and Krunk's changes to the
+vendored copies of `openvpn-connect` and `openvpn-connect-sys` are in this repository under
+`vendor/` (list of changes: `vendor/README.md`, `vendor/openvpn-connect-sys/PATCHES.md`). Asio
+(Boost Software License 1.0) and LZ4 (BSD 2-Clause) come with OpenVPN 3 Core; their licence texts
+are in `vendor/openvpn-connect-sys/` with its sources. boringtun is © Cloudflare, Inc. (BSD
+3-Clause); smoltcp is under the Zero-Clause BSD licence.

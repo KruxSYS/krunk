@@ -120,6 +120,48 @@ val LICENSES: List<LicenseEntry> = listOf(
         "https://bitbucket.org/snakeyaml/snakeyaml",
     ),
     LicenseEntry(
+        "boringtun",
+        "BSD-3-Clause",
+        "The WireGuard protocol of the in-browser VPN (protocol state machine only), by Cloudflare; with x25519-dalek (BSD-3-Clause).",
+        "https://github.com/cloudflare/boringtun",
+    ),
+    LicenseEntry(
+        "smoltcp",
+        "0BSD",
+        "The TCP/IP stack inside the VPN tunnel.",
+        "https://github.com/smoltcp-rs/smoltcp",
+    ),
+    LicenseEntry(
+        "OpenVPN 3 Core",
+        "MPL-2.0",
+        "The OpenVPN client library of the in-browser VPN, used under MPL-2.0 through the openvpn-connect crates (MPL-2.0), vendored with the changes listed in vendor/README.md.",
+        "https://github.com/OpenVPN/openvpn3",
+    ),
+    LicenseEntry(
+        "Asio",
+        "BSL-1.0",
+        "Networking library inside OpenVPN 3 Core.",
+        "https://think-async.com/Asio/",
+    ),
+    LicenseEntry(
+        "LZ4",
+        "BSD-2-Clause",
+        "Compression library inside OpenVPN 3 Core (lz4-sys bindings: MIT).",
+        "https://github.com/lz4/lz4",
+    ),
+    LicenseEntry(
+        "rustls and ring",
+        "Apache-2.0 OR ISC OR MIT (rustls); Apache-2.0 AND ISC (ring)",
+        "TLS and cryptography for OpenVPN's control channel.",
+        "https://github.com/rustls/rustls",
+    ),
+    LicenseEntry(
+        "webpki-roots",
+        "CDLA-Permissive-2.0",
+        "Mozilla's root certificates as a Rust crate, linked with rustls.",
+        "https://github.com/rustls/webpki-roots",
+    ),
+    LicenseEntry(
         "Rust crates of the shared core",
         "MIT or Apache-2.0 unless noted",
         "serde, serde_json, url, psl, RustCrypto argon2 and chacha20poly1305 and the rest of Cargo.lock.",
