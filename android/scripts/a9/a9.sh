@@ -97,6 +97,11 @@ t2() {
     got=$(A "printf '\005\001\000' | toybox timeout 8 toybox nc 127.0.0.1 $p | toybox wc -c" | tr -d '\r ')
     [ "$got" = 0 ] && result T2 PASS "port $p: SOCKS5 no-auth greeting closed, 0 bytes" ||
       result T2 FAIL "port $p: SOCKS5 no-auth greeting got $got bytes"
+    # Username/password offered, wrong password (64 hex chars): only the method choice 05 02
+    # comes back, then the close (no RFC 1929 status).
+    got=$(A "printf '\005\001\002\001\005krunk\100%s' $(printf '0%.0s' $(seq 64)) | toybox timeout 8 toybox nc 127.0.0.1 $p | toybox od -An -tx1" | tr -d '\r' | xargs)
+    [ "$got" = "05 02" ] && result T2 PASS "port $p: SOCKS5 wrong password closed after the method choice (05 02 only)" ||
+      result T2 FAIL "port $p: SOCKS5 wrong password got: $got"
   done
 }
 
