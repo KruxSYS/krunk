@@ -10,6 +10,8 @@ package org.krunk.browser.engine.blocker
  *    private tabs restarts an extension, so a "ready" from before the restart does not count.
  *  - Without a working guard there is no enabled blocker.
  *  - Pages wait until the blocker filters, the blocker is off or unavailable, or [HOLD_MS] passed.
+ *    With Krunk's VPN on at start they also wait for the guard's VPN filter, and [HOLD_MS] does
+ *    not stand in for that ([PageGate.mayOpen]).
  *  - With blocking switched off the guard still runs (its rewriter and the engine's gate apply).
  */
 enum class BlockerStatus {
@@ -274,5 +276,48 @@ fun step(state: StartState, event: StartEvent): Pair<StartState, List<StartActio
 
         StartEvent.HoldTimeout ->
             if (state.pagesReleased) state to emptyList() else release(state, unprotected = true)
+    }
+}
+
+/** Which channels Krunk's VPN carries (the guard's filter sends the others direct). */
+enum class VpnGuardScope(val wire: String) {
+    ALL("all"),
+    PRIVATE("private"),
+}
+
+/**
+ * What `krunk-guard`'s VPN filter is told (contract 3). [pending]: the VPN is on but its proxy is
+ * not up yet, so matching connections are held (and cancelled after 20 s). Otherwise [port] and
+ * [pass] (the session token as 64 lowercase hex characters) are the proxy's. Never logged:
+ * [toString] leaves the port and the password out.
+ */
+class VpnGuardConfig private constructor(
+    val pending: Boolean,
+    val port: Int?,
+    val pass: String?,
+    val scope: VpnGuardScope,
+    val lan: Boolean,
+) {
+    /** Always true: "off" is a null config. Part of the message all the same (contract 3). */
+    val on: Boolean get() = true
+
+    override fun equals(other: Any?): Boolean = other is VpnGuardConfig && pending == other.pending &&
+        port == other.port && pass == other.pass && scope == other.scope && lan == other.lan
+
+    override fun hashCode(): Int = listOf(pending, port, pass, scope, lan).hashCode()
+
+    override fun toString(): String = "VpnGuardConfig(pending=$pending, scope=$scope, lan=$lan)"
+
+    companion object {
+        /** The proxy is up on 127.0.0.1:[port]; [pass] is its token as hex. */
+        fun connected(port: Int, pass: String, scope: VpnGuardScope, lan: Boolean): VpnGuardConfig {
+            require(port in 1..65535) { "port out of range" }
+            require(pass.length == 64 && pass.all { it in '0'..'9' || it in 'a'..'f' }) { "pass must be 64 hex chars" }
+            return VpnGuardConfig(false, port, pass, scope, lan)
+        }
+
+        /** The VPN is on, its proxy not up yet. */
+        fun pending(scope: VpnGuardScope, lan: Boolean): VpnGuardConfig =
+            VpnGuardConfig(true, null, null, scope, lan)
     }
 }

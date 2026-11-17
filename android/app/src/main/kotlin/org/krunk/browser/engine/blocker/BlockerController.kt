@@ -28,7 +28,12 @@ import org.mozilla.geckoview.WebExtensionController
  * The order of things at start is decided by [step] (BlockerStart.kt); this class carries the
  * actions out against GeckoView and reports back. Main thread only.
  */
-class BlockerController(private val runtime: GeckoRuntime, private val host: Host) {
+class BlockerController(
+    private val runtime: GeckoRuntime,
+    private val host: Host,
+    /** Krunk's VPN is on at this start: pages also wait for the guard's VPN filter ([PageGate]). */
+    vpnAtStart: Boolean = false,
+) {
     /** What the controller needs from the app. */
     interface Host {
         fun settings(): AndroidSettings
@@ -40,8 +45,22 @@ class BlockerController(private val runtime: GeckoRuntime, private val host: Hos
         fun listsUpdated(at: Long)
     }
 
-    /** Page loads wait here until the blocker filters (or is off, unavailable, or too slow). */
-    val pages = PageGate()
+    /**
+     * Page loads wait here until the blocker filters (or is off, unavailable, or too slow) and,
+     * with the VPN on at start, until the guard's VPN filter is installed.
+     */
+    val pages = PageGate(vpnRequired = vpnAtStart)
+
+    private val _vpnFilterInstalled = MutableStateFlow(false)
+
+    /** The guard's VPN filter is registered (it routes or holds the engine's connections). */
+    val vpnFilterInstalled: StateFlow<Boolean> = _vpnFilterInstalled.asStateFlow()
+
+    /** What the guard's VPN filter should do; null: VPN off. Sent again after every "ready". */
+    private var vpn: VpnGuardConfig? = null
+
+    /** The VPN was on at some point of this run (an "off" then has to reach the guard too). */
+    private var vpnTouched = vpnAtStart
 
     private val _status = MutableStateFlow(BlockerStatus.STARTING)
     val status: StateFlow<BlockerStatus> = _status.asStateFlow()
@@ -249,6 +268,7 @@ class BlockerController(private val runtime: GeckoRuntime, private val host: Hos
                             override fun onDisconnect(port: WebExtension.Port) {
                                 if (port !== guardPort) return
                                 guardPort = null
+                                vpnInstalled(false)
                                 failCalls()
                                 dispatch(StartEvent.GuardLost)
                             }
@@ -290,7 +310,16 @@ class BlockerController(private val runtime: GeckoRuntime, private val host: Hos
         when (m.optString("t")) {
             "ready" -> {
                 readyOnPort = true
+                m.optJSONObject("vpn")?.let { vpnInstalled(it.optBoolean("installed")) }
+                // The script (and its VPN filter) may have restarted: it knows nothing of the VPN.
+                sendVpn()
                 dispatch(StartEvent.GuardReady)
+            }
+
+            "vpn-state" -> {
+                vpnInstalled(m.optBoolean("installed"))
+                if (m.has("error")) Log.w(KrunkApp.TAG, "guard: VPN filter: ${m.optString("error")}")
+                debug { "vpn: installed=${m.optBoolean("installed")} held=${m.optInt("held")}" }
             }
 
             "gate" -> debug { "gate: ${m.optJSONObject("gate") ?: m.optString("error")}" }
@@ -321,6 +350,44 @@ class BlockerController(private val runtime: GeckoRuntime, private val host: Hos
                 toGuard(JSONObject().put("t", "rewritten").put("id", m.optInt("id")).put("url", cleaned ?: ""))
             }
         }
+    }
+
+    // ----- VPN -----
+
+    /**
+     * Krunk's VPN for the engine: [config] null = off (the guard's filter goes, its prefs are
+     * restored), else on (routed, or held while [VpnGuardConfig.pending]). Repeated after every
+     * restart of the guard. Never logs the port or the password.
+     */
+    fun setVpn(config: VpnGuardConfig?) {
+        vpn = config
+        vpnTouched = vpnTouched || config != null
+        // Switched off before the pages went: they no longer wait for the filter. Switched on
+        // before they went: they do (it is the same start).
+        pages.vpnRequired(config != null)
+        sendVpn()
+    }
+
+    private fun sendVpn() {
+        if (!vpnTouched) return
+        val c = vpn
+        val m = JSONObject().put("t", "vpn")
+        if (c == null) {
+            m.put("on", false)
+        } else {
+            m.put("on", true).put("scope", c.scope.wire).put("lan", c.lan)
+            if (c.pending) {
+                m.put("pending", true)
+            } else {
+                m.put("port", c.port).put("user", VPN_USER).put("pass", c.pass)
+            }
+        }
+        toGuard(m)
+    }
+
+    private fun vpnInstalled(installed: Boolean) {
+        _vpnFilterInstalled.value = installed
+        pages.vpnFilterInstalled(installed)
     }
 
     // ----- blocker -----
@@ -595,7 +662,7 @@ class BlockerController(private val runtime: GeckoRuntime, private val host: Hos
     fun debugState(): String = "phase=${state.phase} status=${state.status} guardUp=${state.guardUp} " +
         "pagesReleased=${state.pagesReleased} unprotected=${state.startedUnprotected} held=${pages.held} " +
         "guard=${guard?.metaData?.enabled} blocker=${blocker?.metaData?.enabled} ${blocker?.metaData?.version} " +
-        "shields=${shieldStore.snapshot()} update=${_update.value}"
+        "shields=${shieldStore.snapshot()} update=${_update.value} vpn=$vpn vpnFilter=${_vpnFilterInstalled.value}"
 
     private inline fun debug(message: () -> String) {
         if (BuildConfig.DEBUG) Log.i(GUARD_TAG, message())
@@ -607,6 +674,9 @@ class BlockerController(private val runtime: GeckoRuntime, private val host: Hos
         const val GUARD_URI = "resource://android/assets/extensions/krunk-guard/"
         const val BLOCKER_URI = "resource://android/assets/extensions/ublock0/"
         const val NATIVE_APP = "krunk"
+
+        /** The VPN proxy's SOCKS5 user name (contract 1). */
+        private const val VPN_USER = "krunk"
 
         /** The blocker's lightest page: its messaging client and nothing else. */
         private const val BRIDGE_PAGE = "no-dashboard.html"

@@ -300,6 +300,10 @@ class KrunkSession(
             // cannot make the bar read krunk://... or switch the tab to the new-tab page.
             // mailto: and tel: are not pages: Android's mail app or dialer gets them (asked
             // first unless the user tapped the link). The engine never loads them.
+            // A button of Krunk's error page ("Open VPN settings"): the app's to carry out.
+            if (ErrorPage.dispatch(request.uri, current.loadError != null, request.hasUserGesture)) {
+                return GeckoResult.fromValue(AllowOrDeny.DENY)
+            }
             val sinceTouch = lastTouchAt.takeIf { it > 0 }?.let { SystemClock.uptimeMillis() - it }
             val handOff = ExternalLinks.classify(request.uri, request.hasUserGesture, request.isRedirect, sinceTouch)
             when (handOff) {

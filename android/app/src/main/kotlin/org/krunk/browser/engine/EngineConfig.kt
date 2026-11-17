@@ -73,6 +73,47 @@ object EngineConfig {
     )
 
     /**
+     * Prefs for a start with Krunk's VPN on (plan-android-vpn 3.2 and 5; contract 4), appended
+     * after [prefs]. [port] is the VPN proxy's port on 127.0.0.1, or null while it is not up yet
+     * (then port 1, a closed port: the backstop refuses instead of going direct).
+     *
+     * The proxy prefs are the backstop: a channel `krunk-guard`'s filter does not route (before
+     * the extension runs, or one it misses) goes to the SOCKS port without the password and is
+     * refused. The rest close leaks past a proxy (DNS prefetch, HTTPS RR lookups, TRR, HTTP/3 and
+     * WebTransport over UDP, preconnects, WebRTC host candidates). The same list, with the same
+     * values, is `VPN_PREFS` in krunk-guard's vpn-api.js, which sets and restores it at run time;
+     * a JVM test compares both. The last pref tells it that the defaults it finds are these.
+     */
+    fun vpnPrefs(port: Int?): List<Pair<String, Any>> = listOf(
+        "network.proxy.type" to 1,
+        "network.proxy.socks" to "127.0.0.1",
+        "network.proxy.socks_port" to (port ?: 1),
+        "network.proxy.socks_version" to 5,
+        "network.proxy.socks_remote_dns" to true,
+        "network.proxy.no_proxies_on" to "",
+        "network.proxy.allow_hijacking_localhost" to false,
+        "network.proxy.failover_direct" to false,
+        "network.dns.disablePrefetch" to true,
+        "network.dns.disablePrefetchFromHTTPS" to true,
+        "network.dns.native_https_query" to false,
+        "network.dns.upgrade_with_https_rr" to false,
+        "network.dns.use_https_rr_as_altsvc" to false,
+        "network.trr.mode" to 5,
+        "network.http.http3.enable" to false,
+        "network.http.altsvc.enabled" to false,
+        "network.webtransport.enabled" to false,
+        "network.http.speculative-parallel-limit" to 0,
+        "network.early-hints.preconnect.enabled" to false,
+        "media.peerconnection.ice.proxy_only" to true,
+        "media.peerconnection.ice.no_host" to true,
+        "media.peerconnection.ice.default_address_only" to true,
+        PREF_VPN_ENGINE_CONFIG to true,
+    )
+
+    /** Read by vpn-api.js: the VPN prefs' defaults at this start came from this file. */
+    const val PREF_VPN_ENGINE_CONFIG = "krunk.vpn.engineConfig"
+
+    /**
      * Removes what an earlier Remote Settings sync left in the engine's profile under [filesDir]
      * (0.1.x synced at every start; so does a profile on which automatic updates were once on).
      * Called before the runtime is created when [mustDropRemoteSettingsStore] says so; returns
@@ -134,14 +175,18 @@ object EngineConfig {
     private const val REMOTE_SETTINGS_IDB_NAME = "rsegmnoittet-es"
 
     /** The file's content. */
-    fun yaml(automaticUpdates: Boolean, engineGate: String = ENGINE_GATE_DEFAULT): String = buildString {
+    fun yaml(
+        automaticUpdates: Boolean,
+        engineGate: String = ENGINE_GATE_DEFAULT,
+        extraPrefs: List<Pair<String, Any>> = emptyList(),
+    ): String = buildString {
         val env = env(automaticUpdates)
         if (env.isNotEmpty()) {
             append("env:\n")
             for ((name, value) in env) append("  ").append(name).append(": ").append(quote(value)).append('\n')
         }
         append("prefs:\n")
-        for ((name, value) in prefs(automaticUpdates, engineGate)) {
+        for ((name, value) in prefs(automaticUpdates, engineGate) + extraPrefs) {
             append("  ").append(name).append(": ")
             append(if (value is String) quote(value) else value.toString())
             append('\n')
@@ -150,11 +195,17 @@ object EngineConfig {
 
     /**
      * Writes the file into [dir] (replacing it in one step) and returns it. Called before the
-     * runtime is created, at every start.
+     * runtime is created, at every start. [extraPrefs]: [vpnPrefs] when the VPN is on at start
+     * (a start without them removes them again).
      */
-    fun write(dir: File, automaticUpdates: Boolean, engineGate: String = ENGINE_GATE_DEFAULT): File {
+    fun write(
+        dir: File,
+        automaticUpdates: Boolean,
+        engineGate: String = ENGINE_GATE_DEFAULT,
+        extraPrefs: List<Pair<String, Any>> = emptyList(),
+    ): File {
         val file = File(dir, FILE_NAME)
-        val text = yaml(automaticUpdates, engineGate)
+        val text = yaml(automaticUpdates, engineGate, extraPrefs)
         if (file.isFile && runCatching { file.readText() }.getOrNull() == text) return file
         val tmp = File(dir, "$FILE_NAME.tmp")
         tmp.writeText(text)

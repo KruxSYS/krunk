@@ -25,7 +25,13 @@ import org.mozilla.geckoview.StorageController
  * The one [GeckoRuntime] of the process and the settings Krunk applies to it. Private tabs use
  * the same runtime with `usePrivateMode` sessions (Gecko keeps their data in memory only).
  */
-class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: BlockerController.Host) {
+class GeckoEngine(
+    context: Context,
+    automaticUpdates: Boolean,
+    blockerHost: BlockerController.Host,
+    /** [EngineConfig.vpnPrefs] when Krunk's VPN is on at this start, else empty. */
+    vpnPrefs: List<Pair<String, Any>> = emptyList(),
+) {
     val runtime: GeckoRuntime
 
     /** The ad and tracker blocker; started with the runtime, before any tab exists. */
@@ -85,7 +91,11 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
             Log.w(KrunkApp.TAG, "engine: Remote Settings store not checked: ${e.javaClass.simpleName}")
         }
         try {
-            val config = EngineConfig.write(context.applicationContext.filesDir, automaticUpdates)
+            val config = EngineConfig.write(
+                context.applicationContext.filesDir,
+                automaticUpdates,
+                extraPrefs = vpnPrefs,
+            )
             builder.configFilePath(config.absolutePath)
         } catch (e: java.io.IOException) {
             // Without the file the engine runs with its own defaults (background requests to
@@ -96,7 +106,7 @@ class GeckoEngine(context: Context, automaticUpdates: Boolean, blockerHost: Bloc
         runtime = GeckoRuntime.create(context.applicationContext, settings)
         Log.i(KrunkApp.TAG, "GeckoRuntime ready (GeckoView ${BuildConfig.GECKOVIEW_VERSION})")
         runtime.autocompleteStorageDelegate = logins.storage
-        blocker = BlockerController(runtime, blockerHost)
+        blocker = BlockerController(runtime, blockerHost, vpnAtStart = vpnPrefs.isNotEmpty())
         blocker.start()
     }
 

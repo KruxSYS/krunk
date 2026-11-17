@@ -243,4 +243,39 @@ class BlockerStartTest {
         )
         assertEquals(listOf(StartAction.EnableBlocker, StartAction.AwaitFilters), actions.takeLast(2))
     }
+
+    @Test
+    fun theHoldTimeoutReleasesPagesForTheBlockerButNeverForTheVpn() {
+        // The VPN is on at start; the blocker is slow and its time limit passes.
+        val gate = PageGate(vpnRequired = true)
+        var loaded = false
+        gate.run { loaded = true }
+        val (waiting, _) = run(*firstStart.take(7).toTypedArray())
+        val (_, actions) = run(StartEvent.HoldTimeout, from = waiting)
+        for (action in actions) if (action is StartAction.ReleasePages) gate.open()
+        assertFalse(gate.isOpen)
+        assertFalse(loaded)
+        // The guard reports its VPN filter: now they go.
+        gate.vpnFilterInstalled(true)
+        assertTrue(loaded)
+    }
+
+    @Test
+    fun vpnConfigsNeverPrintTheirSecrets() {
+        val pass = "0123456789abcdef".repeat(4)
+        val on = VpnGuardConfig.connected(40123, pass, VpnGuardScope.PRIVATE, lan = true)
+        assertFalse(on.toString().contains(pass))
+        assertFalse(on.toString().contains("40123"))
+        assertEquals(on, VpnGuardConfig.connected(40123, pass, VpnGuardScope.PRIVATE, lan = true))
+        assertTrue(on.on && !on.pending)
+        assertEquals("private", on.scope.wire)
+        val pending = VpnGuardConfig.pending(VpnGuardScope.ALL, lan = false)
+        assertTrue(pending.pending)
+        assertEquals(null, pending.port)
+        assertEquals(null, pending.pass)
+        for (bad in listOf("short", pass.uppercase(), pass + "0")) {
+            assertTrue(runCatching { VpnGuardConfig.connected(1, bad, VpnGuardScope.ALL, false) }.isFailure)
+        }
+        assertTrue(runCatching { VpnGuardConfig.connected(0, pass, VpnGuardScope.ALL, false) }.isFailure)
+    }
 }

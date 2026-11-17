@@ -5,20 +5,93 @@ import android.util.Base64
 import org.mozilla.geckoview.WebRequestError
 
 /**
+ * A button on Krunk's error page that the app carries out (the page is a `data:` document and
+ * asks by navigating to [url]; the tab refuses that load and passes it to [ErrorPage.onAction]).
+ */
+sealed class ErrorPageAction(val path: String, val label: String) {
+    val url: String get() = ACTION_BASE + path
+
+    /** "Open VPN settings" on the "VPN not connected" page. */
+    data object OpenVpnSettings : ErrorPageAction("open-vpn-settings", "Open VPN settings")
+
+    companion object {
+        const val ACTION_BASE = "krunk://error-action/"
+
+        fun fromUrl(url: String): ErrorPageAction? = when (url) {
+            OpenVpnSettings.url -> OpenVpnSettings
+            else -> null
+        }
+    }
+}
+
+/**
  * Krunk's own error page (like the desktop one): assets/error.html with placeholders, returned
  * from `onLoadError` as a `data:` URI. Dark/light follows the page's `prefers-color-scheme`.
+ * While Krunk's VPN is on, network errors get the VPN's own pages ([ErrorPageVpn]).
  */
 class ErrorPage(context: Context) {
     private val template: String = context.assets.open("error.html").bufferedReader().use { it.readText() }
 
     fun dataUri(uri: String, category: Int, code: Int): String {
-        val (title, message) = describe(category, code)
+        val vpnKind = vpnSource?.let { vpn ->
+            val on = vpn.vpnOn
+            val connected = on && vpn.connected
+            // Asked only when it can matter (a refusal while connected).
+            val refused = on && connected && ErrorPageVpn.host(uri)?.let(vpn::refusedRecently) == true
+            ErrorPageVpn.kind(on, connected, code, refused)
+        }
+        val (title, message) = if (vpnKind != null) {
+            ErrorPageVpn.title(vpnKind) to ErrorPageVpn.message(vpnKind)
+        } else {
+            describe(category, code)
+        }
+        val buttons = buildString {
+            append("<button onclick=\"location.reload()\">")
+            append(if (vpnKind != null) "Retry" else "Try again")
+            append("</button>")
+            for (action in vpnKind?.let(ErrorPageVpn::actions).orEmpty()) {
+                // The action's address is a constant of ours: nothing from the page goes in here.
+                append("<button class=\"secondary\" onclick=\"location.href='").append(action.url).append("'\">")
+                append(escape(action.label)).append("</button>")
+            }
+        }
         val html = template
             .replace("{{title}}", escape(title))
             .replace("{{message}}", escape(message))
             .replace("{{url}}", escape(uri))
             .replace("{{code}}", escape(codeName(code)))
+            .replace("{{buttons}}", buttons)
         return "data:text/html;base64," + Base64.encodeToString(html.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+    }
+
+    /** What the error page needs to know about Krunk's VPN (set by the app; main thread). */
+    interface VpnSource {
+        val vpnOn: Boolean
+        val connected: Boolean
+
+        /** `KrunkVpn.refusedRecently`: the proxy refused [host] within the last 30 s. */
+        fun refusedRecently(host: String): Boolean
+    }
+
+    companion object {
+        /** Krunk's VPN as the error page sees it; null: no VPN (normal pages only). */
+        @Volatile
+        var vpnSource: VpnSource? = null
+
+        /** Gets the error page's buttons (besides Retry), on the main thread. */
+        @Volatile
+        var onAction: ((ErrorPageAction) -> Unit)? = null
+
+        /**
+         * A tab's load request to [url]: if it is one of the error page's buttons and the tab shows
+         * an error page ([showsError]) after a tap ([userGesture]), [onAction] gets it. True when the
+         * request was such a button (the load is then refused, whether or not it was passed on).
+         */
+        fun dispatch(url: String, showsError: Boolean, userGesture: Boolean): Boolean {
+            val action = ErrorPageAction.fromUrl(url) ?: return false
+            if (showsError && userGesture) onAction?.invoke(action)
+            return true
+        }
     }
 
     private fun describe(category: Int, code: Int): Pair<String, String> = when (code) {
