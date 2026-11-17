@@ -444,6 +444,9 @@ pub struct Browser {
     address_focus: Cell<Option<TabId>>,
     /// The tab whose video went to the floating window automatically (setting `auto_pip`).
     auto_pip_tab: Cell<Option<TabId>>,
+    /// The last tab asked to show a video in the floating window, and when (0.24.2): the
+    /// video it replaces leaves PiP still playing, which is not the user's "Back to tab".
+    pip_requested: Cell<Option<(TabId, i64)>>,
     /// Extensions (0.6.0).
     ext: ext::ExtHost,
     /// The extension request being dispatched came from the action popup (not the background).
@@ -578,6 +581,7 @@ impl Browser {
             closing: Cell::new(false),
             address_focus: Cell::new(None),
             auto_pip_tab: Cell::new(None),
+            pip_requested: Cell::new(None),
             ext: ext::ExtHost::new(),
             site_data: RefCell::new(HashMap::new()),
             pointer: pointer::PointerHost::default(),

@@ -133,6 +133,7 @@ impl Browser {
         let Some(view) = self.tab_view(tab) else { return };
         // The menu's point is in view DIP; the page's are CSS pixels.
         let zoom = view.zoom().max(0.01);
+        self.pip_requested.set(Some((tab, now_ms())));
         let params = serde_json::json!({
             "expression": pip_at_expression(f64::from(x) / zoom, f64::from(y) / zoom, &src),
             "userGesture": true,
@@ -192,6 +193,14 @@ impl Browser {
     /// "Back to tab" in the floating window (CEF does not implement `ActivateContents`, so
     /// the page's script tells the host): the tab and its window come to the front.
     pub(super) fn pip_back_to_tab(&self, tab: TabId) {
+        // Another tab's video just took the floating window (there is only one): this video
+        // left it still playing, which looks like "Back to tab" but is not (0.24.2).
+        let taken = self.pip_requested.get().is_some_and(|(t, at)| t != tab && now_ms() - at < 3000)
+            || self.pip_tab().is_some_and(|t| t != tab);
+        if taken {
+            info!("tab {tab}: video left the floating window for another tab's; not a back to tab");
+            return;
+        }
         let Some(win) = self.window_of(tab) else { return };
         info!("tab {tab}: back to tab from the floating video window");
         let now = now_ms();
@@ -240,6 +249,8 @@ impl Browser {
 
     fn pip_request(&self, tab: TabId, index: u32) {
         let Some(view) = self.tab_view(tab) else { return };
+        self.pip_requested.set(Some((tab, now_ms())));
+        let weak = self.me.clone();
         let params = serde_json::json!({
             "expression": pip_expression(Some(index)),
             "userGesture": true,
@@ -258,9 +269,27 @@ impl Browser {
                     .map(|d| d.lines().next().unwrap_or("").to_string())
                     .unwrap_or_else(|| "refused".into());
                 warning!("tab {tab}: picture-in-picture refused: {why}");
+                Browser::auto_pip_refused(&weak, tab);
             }
-            Err(e) => warning!("tab {tab}: picture-in-picture: {e}"),
+            Err(e) => {
+                warning!("tab {tab}: picture-in-picture: {e}");
+                Browser::auto_pip_refused(&weak, tab);
+            }
         });
+    }
+
+    /// An automatic request that failed no longer holds the floating window for its tab.
+    fn auto_pip_refused(weak: &std::rc::Weak<Browser>, tab: TabId) {
+        if let Some(b) = weak.upgrade() {
+            if b.auto_pip_tab.get() == Some(tab) {
+                b.auto_pip_tab.set(None);
+            }
+        }
+    }
+
+    /// The tab whose video is in the floating window now, as its media script last said.
+    fn pip_tab(&self) -> Option<TabId> {
+        self.views.borrow().iter().find(|(_, v)| v.net.videos.borrow().iter().any(|x| x.pip)).map(|(id, _)| *id)
     }
 
     /// Leaves the floating window (no gesture needed).
@@ -290,6 +319,16 @@ impl Browser {
             return;
         }
         let Some(from) = from.filter(|f| *f != to) else { return };
+        // One floating window: a video already in it (or on its way) keeps it, so two tabs
+        // with media don't take it from each other (0.24.2).
+        if let Some(holder) = self.auto_pip_tab.get().filter(|t| *t != from && self.views.borrow().contains_key(t)) {
+            info!("tab {from}: no automatic picture-in-picture, tab {holder}'s video has the floating window");
+            return;
+        }
+        if let Some(holder) = self.pip_tab().filter(|t| *t != from) {
+            info!("tab {from}: no automatic picture-in-picture, tab {holder}'s video has the floating window");
+            return;
+        }
         let playing = self.views.borrow().get(&from).and_then(|v| {
             let vs = v.net.videos.borrow();
             if vs.iter().any(|x| x.pip) {
