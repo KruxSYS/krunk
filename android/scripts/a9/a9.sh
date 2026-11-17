@@ -79,7 +79,12 @@ profiles() {
   $TB exec -T ovpn cat /state/ovpn/client-udp.ovpn | sed 's/^remote .*/remote 10.250.136.3 18195 udp/' > "$PROF/ovpn-udp.ovpn"
   cp "$PROF/ovpn-tcp.ovpn" "$PROF/ovpn-wrongpw.ovpn"
   chmod 600 "$PROF"/*
-  for f in "$PROF"/*; do adb -s "$DEV" push "$f" /sdcard/Download/ > /dev/null; done
+  for f in "$PROF"/*; do
+    adb -s "$DEV" push "$f" /sdcard/Download/ > /dev/null
+    # adb push does not index the file: MediaStore needs a scan for the share path's content URI.
+    A "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d file:///sdcard/Download/$(basename "$f")" > /dev/null 2>&1
+  done
+  sleep 2
   A ls -l /sdcard/Download | grep -E "conf|ovpn"
 }
 
@@ -181,8 +186,29 @@ share_import() { # share_import FILE
   tapt text "Save"
 }
 
-vpn_screen() { A "am start -a android.intent.action.VIEW -d krunk://vpn $PKG" > /dev/null 2>&1; sleep 3; dump; has text "Use the VPN" || {
-  tapt desc "Menu" && tapt text "Settings" && tapt text "Privacy & security" --contains; tapt text "VPN"; }; }
+# Import a profile pushed by `profiles` through Import profile → the system file picker (the
+# picker grants Krunk read access; a content URI handed over by `adb shell am` is not readable).
+saf_import() { # saf_import FILE
+  vpn_screen; tapt text "Import profile" || return 1; sleep 2; dump
+  has desc "List view" && tapt desc "List view"
+  tapt text "$1" || { result IMP FAIL "$1 not in the picker"; return 1; }
+  waitt text "Import this VPN profile?" 15 || { result IMP FAIL "no import dialog for $1"; shot "import-$1-missing"; return 1; }
+  shot "import-$1"; result IMP PASS "import dialog for $1 (picker)"
+  tapt text "Save"
+}
+
+scroll_to() { # scroll_to text|desc VALUE: swipe up until it is on screen (at most 12 swipes)
+  local i; for ((i = 0; i < 12; i++)); do dump; has "$1" "$2" && return 0; A input swipe 540 1800 540 900 300; sleep 1; done
+  echo "MISSING $2 (scrolled)"; return 1
+}
+
+vpn_screen() { # Menu → Settings → Privacy & security → VPN (krunk://vpn is not an internal page)
+  dump; has text "Use the VPN" && return 0
+  local i; for ((i = 0; i < 4; i++)); do dump; has desc "Menu" && break; A input keyevent KEYCODE_BACK; sleep 1; done
+  tapt desc "Menu" && tapt text "Settings" || return 1
+  scroll_to text "VPN" || return 1
+  tapt text "VPN"; waitt text "Use the VPN" 6
+}
 vpn_on() { # vpn_on PROFILE_NAME: select and switch on; waits for "Connected"
   vpn_screen; tapt text "Use $1" --contains || tapt desc "Use $1" --contains
   dump; [ "$(echo "$UI" | python3 -I "$U" attr text "Use the VPN" checked --clickable)" = true ] || tapt text "Use the VPN"
@@ -293,10 +319,10 @@ ovpn_creds() { # ovpn_creds USER PASS: fill the sign-in dialog that follows the 
 }
 ovpn() {
   stop_clean; launch
-  share_import ovpn-tcp.ovpn && ovpn_creds krunk krunk-test
-  share_import ovpn-udp.ovpn && ovpn_creds krunk krunk-test
-  share_import ovpn-wrongpw.ovpn && ovpn_creds krunk wrong-password
-  share_import ovpn-badca.ovpn && ovpn_creds krunk krunk-test
+  saf_import ovpn-tcp.ovpn && ovpn_creds krunk krunk-test
+  saf_import ovpn-udp.ovpn && ovpn_creds krunk krunk-test
+  saf_import ovpn-wrongpw.ovpn && ovpn_creds krunk wrong-password
+  saf_import ovpn-badca.ovpn && ovpn_creds krunk krunk-test
   sockwatch_start ovpn
   local proto net
   for proto in tcp:10.89.0 udp:10.88.0; do
@@ -374,4 +400,7 @@ t8() {
 }
 
 [ $# -gt 0 ] || { sed -n '2,20p' "$0"; exit 2; }
-for step in "$@"; do "$step"; done
+for step in "$@"; do
+  # step:arg calls a function with one argument (e.g. share_import:wg-split.conf, vpn_on:wg-split)
+  if [[ $step == *:* ]]; then "${step%%:*}" "${step#*:}"; else "$step"; fi
+done
