@@ -242,6 +242,13 @@ androidComponents {
                 coreSources.set(project.rootDir.parentFile.resolve("core/src"))
                 // Everything that changes the built library: manifests and profiles, the lock file,
                 // the build script and its pins, and the wallpaper list compiled into the core.
+                // Since 0.10.0 also the VPN crate and the vendored OpenVPN 3 Core: a change there
+                // left the task up to date and an old library in the APK.
+                manifests.from(
+                    project.rootDir.parentFile.resolve("vpn/Cargo.toml"),
+                    project.rootDir.parentFile.resolve("vpn/src"),
+                    project.rootDir.parentFile.resolve("vendor"),
+                )
                 manifests.from(
                     project.rootDir.parentFile.resolve("Cargo.toml"),
                     project.rootDir.parentFile.resolve("Cargo.lock"),
