@@ -25,8 +25,7 @@ object VpnImportSniff {
             val lower = line.lowercase()
             when {
                 lower == "[interface]" -> iface = true
-                lower.startsWith("privatekey") && line.substring("privatekey".length).trimStart().startsWith("=") ->
-                    privateKey = true
+                isPrivateKey(lower) -> privateKey = true
                 lower == "client" || lower == "tls-client" -> client = true
                 lower.startsWith("remote ") || lower.startsWith("remote\t") -> remote = true
                 lower.startsWith("dev tun") || lower.startsWith("dev tap") -> dev = true
@@ -38,6 +37,10 @@ object VpnImportSniff {
             else -> null
         }
     }
+
+    /** `PrivateKey = ...` (any case, any spacing). */
+    private fun isPrivateKey(lower: String): Boolean =
+        lower.startsWith("privatekey") && lower.substring("privatekey".length).trimStart().startsWith("=")
 
     fun looksLikeProfile(text: String): Boolean = kind(text) != null
 
