@@ -2,13 +2,15 @@
 
 use crate::dns::Resolver;
 use crate::net::Netstack;
+use crate::socks::ProxyAuth;
 use crate::{now_ms, Credentials, IpNet, Profile, StartError, State, Status};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::thread::JoinHandle;
-use std::time::Duration;
-use tokio::sync::{oneshot, watch};
+use std::time::{Duration, Instant};
+use tokio::sync::{oneshot, watch, Notify};
 
 /// How a tunnel session ended.
 pub(crate) enum SessionEnd {
@@ -33,7 +35,16 @@ pub(crate) struct Shared {
     /// Held while `on_status` runs, so reports arrive in the order of the changes.
     report: Mutex<()>,
     on_status: Box<dyn Fn(&Status) + Send + Sync>,
+    /// The device's network changed: the tunnel takes a new socket and handshakes now.
+    pub(crate) roam: Notify,
+    /// Hosts refused recently as "not reachable through this VPN" (newest last).
+    refused: Mutex<VecDeque<(String, Instant)>>,
 }
+
+/// How long a refusal is remembered for [`Vpn::refused_recently`].
+const REFUSAL_MEMORY: Duration = Duration::from_secs(30);
+/// The most refusals remembered.
+const MAX_REFUSALS: usize = 64;
 
 impl Shared {
     pub(crate) fn is_connected(&self) -> bool {
@@ -49,6 +60,24 @@ impl Shared {
     /// The tunnel's routes (WireGuard AllowedIPs, OpenVPN routes and redirect-gateway).
     pub(crate) fn set_routes(&self, routes: Vec<IpNet>) {
         *self.routes.write().unwrap_or_else(PoisonError::into_inner) = routes;
+    }
+
+    /// Remembers that `host` was not reachable through the tunnel (outside the routes, or the
+    /// name not found by the tunnel's DNS).
+    pub(crate) fn note_refused(&self, host: &str) {
+        let host = host.to_ascii_lowercase();
+        let mut r = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        r.retain(|(h, t)| *h != host && t.elapsed() < REFUSAL_MEMORY);
+        if r.len() >= MAX_REFUSALS {
+            r.pop_front();
+        }
+        r.push_back((host, Instant::now()));
+    }
+
+    pub(crate) fn refused_recently(&self, host: &str) -> bool {
+        let host = host.trim_start_matches('[').trim_end_matches(']').to_ascii_lowercase();
+        let r = self.refused.lock().unwrap_or_else(PoisonError::into_inner);
+        r.iter().any(|(h, t)| h.trim_start_matches('[').trim_end_matches(']') == host && t.elapsed() < REFUSAL_MEMORY)
     }
 
     pub(crate) fn routes_allow(&self, ip: IpAddr) -> bool {
@@ -137,6 +166,7 @@ enum Shutdown {
 pub struct Vpn {
     addr: SocketAddr,
     shared: Arc<Shared>,
+    auth: Option<Arc<ProxyAuth>>,
     shutdown: Option<oneshot::Sender<Shutdown>>,
     thread: Option<JoinHandle<()>>,
 }
@@ -152,6 +182,28 @@ impl Vpn {
         profile: Profile,
         creds: Option<Credentials>,
         peer_allowed: PeerAllowed,
+        on_status: Box<dyn Fn(&Status) + Send + Sync>,
+    ) -> Result<Vpn, StartError> {
+        Vpn::start_inner(profile, creds, peer_allowed, None, on_status)
+    }
+
+    /// As [`Vpn::start`], for platforms without an owner check (Android): loopback peers only,
+    /// and every connection must present `auth` (SOCKS5 username/password or an HTTP
+    /// `Proxy-Authorization`, see [`crate::socks`]); others are closed without an answer.
+    pub fn start_authenticated(
+        profile: Profile,
+        creds: Option<Credentials>,
+        auth: ProxyAuth,
+        on_status: Box<dyn Fn(&Status) + Send + Sync>,
+    ) -> Result<Vpn, StartError> {
+        Vpn::start_inner(profile, creds, Box::new(|_, peer| peer.ip().is_loopback()), Some(Arc::new(auth)), on_status)
+    }
+
+    fn start_inner(
+        profile: Profile,
+        creds: Option<Credentials>,
+        peer_allowed: PeerAllowed,
+        auth: Option<Arc<ProxyAuth>>,
         on_status: Box<dyn Fn(&Status) + Send + Sync>,
     ) -> Result<Vpn, StartError> {
         let creds = match &profile {
@@ -197,11 +249,13 @@ impl Vpn {
             }),
             report: Mutex::new(()),
             on_status,
+            roam: Notify::new(),
+            refused: Mutex::new(VecDeque::new()),
         });
         let (stop_tunnel, stop_rx) = watch::channel(false);
         let (stop_proxy, proxy_rx) = watch::channel(false);
         let peer_allowed: Arc<dyn Fn(SocketAddr, SocketAddr) -> bool + Send + Sync> = Arc::from(peer_allowed);
-        let proxy = runtime.spawn(crate::proxy::serve(listener, shared.clone(), peer_allowed, proxy_rx));
+        let proxy = runtime.spawn(crate::proxy::serve(listener, shared.clone(), peer_allowed, auth.clone(), proxy_rx));
         let tunnel = runtime.spawn(run(shared.clone(), profile, creds, stop_rx));
         let ticker = runtime.spawn(tick(shared.clone()));
         drop(_guard);
@@ -226,7 +280,7 @@ impl Vpn {
             });
             runtime.shutdown_timeout(Duration::from_secs(2));
         })?;
-        Ok(Vpn { addr, shared, shutdown: Some(shutdown), thread: Some(thread) })
+        Ok(Vpn { addr, shared, auth, shutdown: Some(shutdown), thread: Some(thread) })
     }
 
     /// The proxy, e.g. `127.0.0.1:53127`.
@@ -236,6 +290,25 @@ impl Vpn {
 
     pub fn status(&self) -> Status {
         self.shared.snapshot()
+    }
+
+    /// The device's network changed (Wi-Fi ↔ mobile, new addresses): WireGuard takes a new UDP
+    /// socket and handshakes at once (the server follows the roaming endpoint); a reconnect
+    /// waiting out its back-off starts now. OpenVPN Core notices the loss itself. Never blocks.
+    pub fn network_changed(&self) {
+        self.shared.roam.notify_one();
+    }
+
+    /// True if, within the last 30 s, a request to `host` (case-insensitive, without port) was
+    /// refused because the address is outside the profile's routes or the name was not found
+    /// through the VPN.
+    pub fn refused_recently(&self, host: &str) -> bool {
+        self.shared.refused_recently(host)
+    }
+
+    /// `(accepted, refused)` credential checks (only with [`Vpn::start_authenticated`]).
+    pub fn auth_counts(&self) -> (u64, u64) {
+        self.auth.as_ref().map_or((0, 0), |a| a.counts())
     }
 
     /// Graceful stop: the proxy answers 503 until it is closed, after the tunnel.
@@ -313,6 +386,8 @@ async fn run(shared: Arc<Shared>, profile: Profile, creds: Option<Credentials>, 
                 tokio::select! {
                     _ = stopped(&mut stop) => return,
                     _ = tokio::time::sleep(wait) => {}
+                    // A new network: no reason to wait.
+                    _ = shared.roam.notified() => backoff = Backoff(0),
                 }
             }
         }

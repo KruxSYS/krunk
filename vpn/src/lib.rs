@@ -21,10 +21,12 @@ pub mod net;
 pub mod ovpn;
 pub mod proxy;
 mod service;
+pub mod socks;
 pub mod wg;
 
 pub use listen::bind_loopback;
 pub use service::{PeerAllowed, Vpn};
+pub use socks::ProxyAuth;
 
 use serde::{Deserialize, Serialize};
 use std::fmt;

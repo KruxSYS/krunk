@@ -7,6 +7,10 @@
 //! - Names resolve inside the tunnel ([`crate::dns`]).
 //! - Fail-closed: while the tunnel is down every request gets `503 VPN not connected`;
 //!   destinations outside the tunnel's routes get `502`. Nothing ever goes direct.
+//! - With a [`ProxyAuth`] (Android) every connection must authenticate first: SOCKS5 with
+//!   username/password (first byte `0x05`, [`crate::socks`]) or an HTTP head with the right
+//!   `Proxy-Authorization`; anything else is closed without an answer. Without one (Windows) the
+//!   owner check decides and SOCKS is not spoken.
 //!
 //! The request head is parsed strictly and bounded: at most 16 KiB and 100 headers, CRLF line
 //! ends only, no obs-fold, no whitespace before the colon, one `Content-Length` at most, no
@@ -17,6 +21,7 @@
 //! proxy itself (`100 Continue`, then the body) and not forwarded; other expectations get 417.
 
 use crate::service::Shared;
+use crate::socks::ProxyAuth;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
@@ -51,7 +56,7 @@ pub enum Host {
 }
 
 impl Host {
-    fn parse(s: &str) -> Option<Host> {
+    pub(crate) fn parse(s: &str) -> Option<Host> {
         if let Some(v6) = s.strip_prefix('[').and_then(|r| r.strip_suffix(']')) {
             return v6.parse::<std::net::Ipv6Addr>().ok().map(|a| Host::Ip(IpAddr::V6(a)));
         }
@@ -418,6 +423,7 @@ pub(crate) async fn serve(
     listener: TcpListener,
     shared: Arc<Shared>,
     peer_allowed: Arc<dyn Fn(SocketAddr, SocketAddr) -> bool + Send + Sync>,
+    auth: Option<Arc<ProxyAuth>>,
     mut stop: watch::Receiver<bool>,
 ) {
     let limit = Arc::new(Semaphore::new(MAX_CONNECTIONS));
@@ -436,6 +442,7 @@ pub(crate) async fn serve(
         };
         let shared = shared.clone();
         let allowed = peer_allowed.clone();
+        let auth = auth.clone();
         tokio::spawn(async move {
             let _permit = permit;
             if !peer.ip().is_loopback() {
@@ -448,16 +455,29 @@ pub(crate) async fn serve(
                 return;
             }
             let _ = stream.set_nodelay(true);
-            handle(stream, shared).await;
+            match auth {
+                None => handle(stream, shared, None).await,
+                Some(auth) => {
+                    // SOCKS5 or HTTP, by the first byte (peeked: it stays in the stream).
+                    let mut first = [0u8; 1];
+                    match tokio::time::timeout(crate::socks::AUTH_TIMEOUT, stream.peek(&mut first)).await {
+                        Ok(Ok(1)) if first[0] == 5 => crate::socks::serve_client(stream, shared, auth).await,
+                        Ok(Ok(1)) => handle(stream, shared, Some(auth)).await,
+                        _ => {}
+                    }
+                }
+            }
         });
     }
 }
 
-async fn handle(mut client: TcpStream, shared: Arc<Shared>) {
+async fn handle(mut client: TcpStream, shared: Arc<Shared>, auth: Option<Arc<ProxyAuth>>) {
     let mut buf = Vec::with_capacity(4096);
-    let end = match tokio::time::timeout(HEAD_TIMEOUT, read_head(&mut client, &mut buf, MAX_HEAD)).await {
+    // An unauthenticated peer gets little time (another app probing the port).
+    let limit = if auth.is_some() { crate::socks::AUTH_TIMEOUT } else { HEAD_TIMEOUT };
+    let end = match tokio::time::timeout(limit, read_head(&mut client, &mut buf, MAX_HEAD)).await {
         Ok(Ok(Some(end))) => end,
-        Ok(Ok(None)) => {
+        Ok(Ok(None)) if auth.is_none() => {
             let _ = client
                 .write_all(&simple_response(431, "Request Header Fields Too Large", "Request header too large\n"))
                 .await;
@@ -467,11 +487,18 @@ async fn handle(mut client: TcpStream, shared: Arc<Shared>) {
     };
     let req = match parse_request(&buf[..end]) {
         Ok(r) => r,
+        // With a credential, nothing is answered before it was checked.
+        Err(_) if auth.is_some() => return,
         Err(r) => {
             let _ = client.write_all(&simple_response(r.status, r.reason, &format!("{}\n", r.reason))).await;
             return;
         }
     };
+    if let Some(auth) = &auth {
+        if !auth.check_headers(&req.headers) {
+            return;
+        }
+    }
     let leftover = buf.split_off(end);
     if !shared.is_connected() {
         let _ = client.write_all(&not_connected()).await;
@@ -482,11 +509,15 @@ async fn handle(mut client: TcpStream, shared: Arc<Shared>) {
     };
     let opened = tokio::select! {
         r = open(&shared, &host, port) => r,
-        _ = shared.disconnected() => Err((503, "VPN not connected", "VPN not connected\n")),
+        _ = shared.disconnected() => Err(OpenFail::NotConnected),
     };
     let upstream = match opened {
         Ok(s) => s,
-        Err((status, reason, text)) => {
+        Err(fail) => {
+            if fail.is_refusal() {
+                shared.note_refused(&host.to_string());
+            }
+            let (status, reason, text) = fail.http();
             let _ = client.write_all(&simple_response(status, reason, text)).await;
             return;
         }
@@ -502,7 +533,7 @@ async fn handle(mut client: TcpStream, shared: Arc<Shared>) {
 
 /// The server's side broke off (reset, or the tunnel went away): the client gets a reset too
 /// (`SO_LINGER` 0, then the close), never a clean end that would pass for a complete response.
-fn abort(client: &TcpStream) {
+pub(crate) fn abort(client: &TcpStream) {
     let _ = socket2::SockRef::from(client).set_linger(Some(Duration::ZERO));
 }
 
@@ -525,18 +556,46 @@ async fn read_head<R: AsyncRead + Unpin>(r: &mut R, buf: &mut Vec<u8>, max: usiz
     }
 }
 
-type OpenError = (u16, &'static str, &'static str);
+/// Why a connection through the tunnel could not be opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenFail {
+    NotConnected,
+    DnsTimeout,
+    NameNotFound,
+    /// Outside the profile's routes.
+    NotRouted,
+    TimedOut,
+    Refused,
+}
+
+impl OpenFail {
+    /// The HTTP answer: status, reason, body.
+    pub(crate) fn http(self) -> (u16, &'static str, &'static str) {
+        match self {
+            OpenFail::NotConnected => (503, "VPN not connected", "VPN not connected\n"),
+            OpenFail::DnsTimeout => (504, "Gateway Timeout", "The VPN's DNS server did not answer\n"),
+            OpenFail::NameNotFound => (502, "Bad Gateway", "The name was not found through the VPN\n"),
+            OpenFail::NotRouted => (502, "Bad Gateway", "This address is not reachable through the VPN\n"),
+            OpenFail::TimedOut => (504, "Gateway Timeout", "The connection through the VPN timed out\n"),
+            OpenFail::Refused => (502, "Bad Gateway", "The connection through the VPN was refused\n"),
+        }
+    }
+
+    /// The destination is not reachable through this VPN at all (shown as "Not reachable
+    /// through this VPN" by the Android error page, see `Vpn::refused_recently`).
+    pub(crate) fn is_refusal(self) -> bool {
+        matches!(self, OpenFail::NameNotFound | OpenFail::NotRouted)
+    }
+}
 
 /// Resolves inside the tunnel, checks the routes, connects.
-async fn open(shared: &Shared, host: &Host, port: u16) -> Result<crate::net::TcpStream, OpenError> {
+pub(crate) async fn open(shared: &Shared, host: &Host, port: u16) -> Result<crate::net::TcpStream, OpenFail> {
     let addrs = match host {
         Host::Ip(ip) => vec![*ip],
         Host::Name(n) => match shared.dns.resolve(&shared.net, n).await {
             Ok(a) => a,
-            Err(crate::dns::DnsError::Timeout) => {
-                return Err((504, "Gateway Timeout", "The VPN's DNS server did not answer\n"))
-            }
-            Err(_) => return Err((502, "Bad Gateway", "The name was not found through the VPN\n")),
+            Err(crate::dns::DnsError::Timeout) => return Err(OpenFail::DnsTimeout),
+            Err(_) => return Err(OpenFail::NameNotFound),
         },
     };
     let usable: Vec<IpAddr> = addrs
@@ -546,12 +605,12 @@ async fn open(shared: &Shared, host: &Host, port: u16) -> Result<crate::net::Tcp
         .take(3)
         .collect();
     if usable.is_empty() {
-        return Err((502, "Bad Gateway", "This address is not reachable through the VPN\n"));
+        return Err(OpenFail::NotRouted);
     }
     let mut timed_out = false;
     for ip in usable {
         if !shared.is_connected() {
-            return Err((503, "VPN not connected", "VPN not connected\n"));
+            return Err(OpenFail::NotConnected);
         }
         match shared.net.tcp_connect(SocketAddr::new(ip, port), CONNECT_TIMEOUT).await {
             Ok(s) => return Ok(s),
@@ -560,10 +619,16 @@ async fn open(shared: &Shared, host: &Host, port: u16) -> Result<crate::net::Tcp
         }
     }
     if timed_out {
-        Err((504, "Gateway Timeout", "The connection through the VPN timed out\n"))
+        Err(OpenFail::TimedOut)
     } else {
-        Err((502, "Bad Gateway", "The connection through the VPN was refused\n"))
+        Err(OpenFail::Refused)
     }
+}
+
+/// A CONNECT-like tunnel that is already answered (SOCKS5): both ways until done. True when
+/// the server's side broke off.
+pub(crate) async fn pipe_tunnel(client: &mut TcpStream, upstream: crate::net::TcpStream) -> bool {
+    pipe(client, upstream, IDLE_TUNNEL).await
 }
 
 /// CONNECT: both ways until done. True when the server's side broke off.
@@ -858,7 +923,6 @@ pub fn chunk_size(line: &[u8]) -> Option<u64> {
     u64::from_str_radix(hex, 16).ok()
 }
 
-/// Both ways until both sides are done, or nothing moves for `idle`.
 /// Both ways until both sides are done, or nothing moves for `idle`. True when the upstream
 /// side broke off (reset, or the tunnel went away).
 async fn pipe(client: &mut TcpStream, upstream: crate::net::TcpStream, idle: Duration) -> bool {

@@ -385,13 +385,10 @@ pub(crate) async fn session(cfg: &Config, shared: &Arc<Shared>, stop: &mut watch
         Err(e) => return SessionEnd::Retry(e),
     };
     let bind: SocketAddr = if endpoint.is_ipv4() { ([0, 0, 0, 0], 0).into() } else { ([0u16; 8], 0).into() };
-    let sock = match UdpSocket::bind(bind).await {
+    let mut sock = match udp_to(bind, endpoint).await {
         Ok(s) => s,
-        Err(_) => return SessionEnd::Retry("No network".into()),
+        Err(e) => return SessionEnd::Retry(e),
     };
-    if sock.connect(endpoint).await.is_err() {
-        return SessionEnd::Retry("The server is unreachable".into());
-    }
     let index = u32::from_le_bytes(crate::random::<4>()) >> 8;
     // The keys are copied straight into boringtun (no copy of ours lives on in this session's
     // state; the config keeps the zeroizing originals).
@@ -434,6 +431,21 @@ pub(crate) async fn session(cfg: &Config, shared: &Arc<Shared>, stop: &mut watch
     loop {
         tokio::select! {
             _ = crate::service::stopped(stop) => return SessionEnd::Stopped,
+            _ = shared.roam.notified() => {
+                // The device's network changed: the old socket is bound to a route that may be
+                // gone. A new one, and a handshake now; the server learns the new endpoint
+                // from it. If there is no network yet, the session ends and retries.
+                sock = match udp_to(bind, endpoint).await {
+                    Ok(s) => s,
+                    Err(e) => return SessionEnd::Retry(e),
+                };
+                recv_errors = 0;
+                probes = 1;
+                last_probe = Instant::now();
+                if let TunnResult::WriteToNetwork(d) = tunn.format_handshake_initiation(&mut out, true) {
+                    let _ = sock.send(d).await;
+                }
+            }
             r = sock.recv(&mut rbuf) => {
                 let n = match r {
                     Ok(n) => {
@@ -529,6 +541,13 @@ pub(crate) async fn session(cfg: &Config, shared: &Arc<Shared>, stop: &mut watch
             }
         }
     }
+}
+
+/// A UDP socket bound to `bind` and connected to the server.
+async fn udp_to(bind: SocketAddr, endpoint: SocketAddr) -> Result<UdpSocket, String> {
+    let sock = UdpSocket::bind(bind).await.map_err(|_| "No network".to_owned())?;
+    sock.connect(endpoint).await.map_err(|_| "The server is unreachable".to_owned())?;
+    Ok(sock)
 }
 
 /// Removes the WireGuard sink from the stack when the session ends, however it ends.
