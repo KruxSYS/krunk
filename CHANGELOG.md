@@ -3,6 +3,12 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.24.2 — 2026-11-17
+
+- **Automatic Picture-in-Picture with two videos.** With Automatic Picture-in-Picture on and
+  videos playing in two tabs, the tabs no longer take the floating window from each other (which
+  could switch you back to the other tab). The video already in the floating window keeps it.
+
 ## 0.24.1 — 2026-11-17
 
 - **Alt+click opens a link in a private tab.** Hold Alt and click a link to open it in a new
