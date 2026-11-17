@@ -537,6 +537,7 @@ struct RegPollRow {
 pub async fn register_poll(
     State(state): State<AppState>,
     client: Client,
+    headers: HeaderMap,
     JsonBody(req): JsonBody<RegPollReq>,
 ) -> ApiResult {
     hit(&state.db, rl::REG_POLL_IP, &ip_key(&state, &client)).await?;
@@ -561,13 +562,40 @@ pub async fn register_poll(
         (Some(id), true, false) => id,
         _ => return Err(reg_poll_error("authorization_pending")),
     };
-    let (session_id, token, csrf) =
-        sessions::create(&mut tx, keys, account_id, &client, sessions::Via::Password, true).await?;
     sqlx::query("UPDATE registrations SET poll_hash = NULL WHERE id = $1").bind(r.id).execute(&mut *tx).await?;
-    sqlx::query("UPDATE accounts SET last_active_at = now() WHERE id = $1").bind(account_id).execute(&mut *tx).await?;
-    ip_event(&mut tx, account_id, "login", &client, Source::Web(session_id)).await?;
+    // The address was confirmed in this very browser: it already has the session the verify page
+    // made (same cookie jar). Keep that one; a second session's cookie would replace it under the
+    // other tab, whose CSRF token would then no longer match (its Sign out failed, 0.24.0 smoke).
+    let existing = match sessions::cookie_token(&headers) {
+        Some(t) => sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM web_sessions WHERE token_hash = $1 AND account_id = $2
+                            AND revoked_at IS NULL AND created_at > now() - make_interval(secs => $3)
+                            AND last_used_at > now() - make_interval(secs => $4))",
+        )
+        .bind(sessions::token_hash(keys, &t).as_slice())
+        .bind(account_id)
+        .bind(sessions::MAX_AGE_S as f64)
+        .bind(sessions::IDLE_S as f64)
+        .fetch_one(&mut *tx)
+        .await?
+        .then_some(t),
+        None => None,
+    };
+    let (csrf, new_token) = match existing {
+        Some(t) => (sessions::csrf_for(keys, &t), None),
+        None => {
+            let (session_id, token, csrf) =
+                sessions::create(&mut tx, keys, account_id, &client, sessions::Via::Password, true).await?;
+            sqlx::query("UPDATE accounts SET last_active_at = now() WHERE id = $1")
+                .bind(account_id)
+                .execute(&mut *tx)
+                .await?;
+            ip_event(&mut tx, account_id, "login", &client, Source::Web(session_id)).await?;
+            (csrf, Some(token))
+        }
+    };
     tx.commit().await?;
-    tracing::info!("signed in by the registration poll");
+    tracing::info!(reused = new_token.is_none(), "signed in by the registration poll");
     let body = SignedIn {
         csrf,
         next: r.next,
@@ -575,7 +603,9 @@ pub async fn register_poll(
         link: r.link_outcome,
     };
     let mut res = Json(body).into_response();
-    res.headers_mut().insert(header::SET_COOKIE, sessions::set_cookie(&token));
+    if let Some(token) = new_token {
+        res.headers_mut().insert(header::SET_COOKIE, sessions::set_cookie(&token));
+    }
     Ok(res)
 }
 

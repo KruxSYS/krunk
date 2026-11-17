@@ -71,6 +71,29 @@ async fn same_browser_verifies_without_the_password() {
     assert_eq!(via, ["password", "password"]);
 }
 
+/// The registering tab and the verify page in ONE browser share the cookie jar: the poll keeps
+/// the session the verify page made, so both tabs' CSRF tokens work and Sign out signs out.
+#[tokio::test]
+async fn same_cookie_jar_keeps_one_session() {
+    let Some(e) = env().await else { return };
+    let mut b = Browser::new();
+    let token = poll_token(&register(&e, &mut b, "jar@example.org", json!({})).await);
+    let link = link_token(&e.db, "jar@example.org", "verify").await;
+    let r = b.post(&e, "verify-email", json!({"token": link})).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    let verify_csrf = b.csrf.clone();
+    let cookie = b.cookie.clone();
+    let r = poll(&e, &mut b, &token).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    assert!(r.headers.get(header::SET_COOKIE).is_none(), "no second session cookie");
+    assert_eq!((b.cookie.clone(), b.csrf.clone()), (cookie, verify_csrf.clone()));
+    let n: i64 = sqlx::query_scalar("SELECT count(*) FROM web_sessions").fetch_one(&e.db).await.unwrap();
+    assert_eq!(n, 1);
+    // Sign out with the verify tab's token works and really ends the session.
+    assert_eq!(b.post(&e, "logout", json!({})).await.status, StatusCode::NO_CONTENT);
+    assert_eq!(b.get(&e, "me").await.status, StatusCode::UNAUTHORIZED);
+}
+
 #[tokio::test]
 async fn another_browser_needs_the_password_once() {
     let Some(e) = env().await else { return };
