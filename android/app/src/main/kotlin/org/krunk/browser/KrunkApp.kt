@@ -13,10 +13,14 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import org.krunk.browser.core.KrunkCore
 import org.krunk.browser.downloads.DownloadController
+import org.krunk.browser.engine.EngineConfig
+import org.krunk.browser.engine.ErrorPage
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
+import org.krunk.browser.engine.blocker.VpnGuardConfig
+import org.krunk.browser.engine.blocker.VpnGuardScope
 import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.browser.notify.SiteNotifications
 import org.krunk.browser.sync.SyncController
@@ -36,6 +40,7 @@ import org.krunk.browser.vpn.FfiVpnEngine
 import org.krunk.browser.vpn.VpnController
 import org.krunk.browser.vpn.VpnGuardSink
 import org.krunk.browser.vpn.VpnNetworkWatch
+import org.krunk.browser.vpn.VpnPhase
 import org.krunk.browser.vpn.VpnSettingsFile
 import org.krunk.browser.vpn.VpnStore
 import org.krunk.ffi.KrunkSync
@@ -63,12 +68,12 @@ class KrunkApp : Application() {
         }
 
         // The VPN (0.10.0) starts before the engine when "Connect when Krunk starts" is on, so its
-        // port is known for the engine's start-up prefs; on and not up: the engine starts closed.
-        // MERGE(M2): pass `vpnPrefs = if (vpn.isOn()) EngineConfig.vpnPrefs(vpnPort) else emptyList()`
-        // to GeckoEngine below once M2's parameter exists; until then the port is not used.
-        @Suppress("UNUSED_VARIABLE")
+        // port is known for the engine's start-up prefs; on and not up: the engine starts closed
+        // (port null: the backstop points at a closed port and pages wait for the guard's filter).
         val vpnPort = vpn.startAtLaunch()
-        GeckoEngine(this, automaticUpdates = settings.filterAutoUpdate, blockerHost = host).also {
+        val vpnPrefs = if (vpn.isOn()) EngineConfig.vpnPrefs(vpnPort) else emptyList()
+        GeckoEngine(this, settings.filterAutoUpdate, host, vpnPrefs).also {
+            engineMade = it
             it.applySettings(settings)
             DebugHooks.install(this, it, core)
             // From here on pages may be offered saved logins: the engine side asks this vault.
@@ -79,18 +84,42 @@ class KrunkApp : Application() {
             vaultScope.launch {
                 vault.state.collect { _ -> it.logins.onVaultState(loginVault.state(), System.currentTimeMillis()) }
             }
-            // The guard (made with the engine) gets the VPN's current values.
+            // The guard (made with the engine) gets the VPN's current values; the error page
+            // learns whether a failed load is the VPN's doing.
             vpn.resendGuard()
+            ErrorPage.vpnSource = object : ErrorPage.VpnSource {
+                override val vpnOn get() = vpn.isOn()
+                override val connected get() = vpn.state.value.phase == VpnPhase.CONNECTED
+                override fun refusedRecently(host: String) = vpn.refusedRecently(host)
+            }
             Log.i(TAG, "engine ready after ${SystemClock.uptimeMillis() - startedAt} ms")
         }
     }
 
+    /** The engine once made; the VPN's guard values must never be the reason it is made. */
+    @Volatile
+    private var engineMade: GeckoEngine? = null
+
     /**
-     * Where the VPN's proxy values go for the engine's guard (contract §3).
-     * MERGE(M2): `if (engineMade) engine.blocker.setVpn(VpnGuardConfig(on, pending, port, pass, scope, lan))`;
-     * does nothing until M2's `BlockerController.setVpn` exists. It must not make the engine.
+     * Where the VPN's proxy values go: `krunk-guard`'s filter (contract §3), on the main thread
+     * and in order. Before the engine exists nothing is sent: it starts with [EngineConfig.vpnPrefs]
+     * and gets the values right after ([VpnController.resendGuard]).
      */
-    private val vpnGuard = VpnGuardSink { _, _, _, _, _, _ -> }
+    private val vpnGuard = VpnGuardSink { on, _, port, pass, scope, lan ->
+        val config = when {
+            !on -> null
+
+            else -> {
+                val s = if (scope == "private") VpnGuardScope.PRIVATE else VpnGuardScope.ALL
+                if (port != null && pass != null) {
+                    VpnGuardConfig.connected(port, pass, s, lan)
+                } else {
+                    VpnGuardConfig.pending(s, lan)
+                }
+            }
+        }
+        vaultScope.launch { engineMade?.blocker?.setVpn(config) }
+    }
 
     private val vpnLazy = lazy {
         VpnController(

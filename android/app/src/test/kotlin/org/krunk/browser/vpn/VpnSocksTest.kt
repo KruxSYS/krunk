@@ -69,7 +69,9 @@ class VpnSocksTest {
                     req.write(head)
                     when (head[3].toInt()) {
                         1 -> req.write(ByteArray(4).also(input::readFully))
+
                         4 -> req.write(ByteArray(16).also(input::readFully))
+
                         3 -> {
                             val n = input.readUnsignedByte()
                             req.write(n)

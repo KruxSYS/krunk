@@ -118,7 +118,7 @@ object VpnRoute {
      * Opens [url] the way the VPN says: direct (VPN off, out of scope, localhost, LAN with the
      * option), through its SOCKS5 proxy with the session's credential ([VpnHttp] over
      * [VpnSocks]; the proxy resolves the name), or not at all ([VpnNotConnected]). Never the
-     * platform's proxy support or `java.net.Authenticator` (process-wide). With the VPN off this
+     * platform's proxy support or the JDK's process-wide password callback. With the VPN off this
      * is exactly `url.openConnection()`.
      */
     @Throws(IOException::class)

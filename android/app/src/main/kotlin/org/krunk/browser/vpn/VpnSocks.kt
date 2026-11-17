@@ -16,7 +16,7 @@ class VpnNotReachable : IOException("Not reachable through this VPN")
 
 /**
  * Krunk's own connections through the VPN's proxy: SOCKS5 (RFC 1928) with username/password
- * (RFC 1929), written out by hand — never `java.net.Authenticator`, which is process-wide and
+ * (RFC 1929), written out by hand — never the JDK's password callback, which is process-wide and
  * could hand the token to other hosts, and never the platform's proxy support.
  *
  * The target's name goes to the proxy unresolved (ATYP 3), so the lookup happens through the
@@ -145,7 +145,9 @@ object VpnSocks {
 
     private fun ipv6(h: String): ByteArray? {
         val text = h.substringBefore('%')
-        if (text.count { it == ':' } < 2 || !text.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' || it == ':' || it == '.' }) {
+        if (text.count { it == ':' } < 2 ||
+            !text.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' || it == ':' || it == '.' }
+        ) {
             return null
         }
         // Only hex digits, colons and dots: the platform parses a literal without any lookup.
