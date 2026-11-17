@@ -266,7 +266,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 |---|---|---|---|---|
 | AI agent (BYO provider) | yes — 0.12.0 | roadmap | — | 5 |
 | Userscripts, macros | yes — 0.12.0 | roadmap (userscripts via a bundled WebExtension) | — | 5 |
-| VPN (WireGuard/OpenVPN, Krunk-only) | yes — 0.14.0 | roadmap (Android `VpnService`) | — | 5 |
+| VPN (WireGuard/OpenVPN, Krunk-only) | yes — 0.14.0 | **yes (0.10.0):** Settings › Privacy & security › VPN; WireGuard and OpenVPN in user space inside Krunk's process (no `VpnService`, other apps unaffected), engine routed by a `krunk-guard` channel filter (SOCKS5 with a per-session credential), Krunk's own requests through the same proxy; fail-closed; Everywhere / Private tabs only; address-bar mark and sheet | — | done |
 | Update channel (signed manifest) | yes — Updates | **yes (0.5.0, website APK only):** Settings › About › Check for updates; channel `android-arm64`, Ed25519-signed with the Windows update key; only when the user taps it (no start-up, timer or background check); size, SHA-256, package, versionCode and signing certificate checked before the system installer. The Play build has none (Play updates it); F-Droid later, if there is demand | — | done |
 | Default browser flow | yes — 0.12.1 | roadmap (`RoleManager.ROLE_BROWSER` request) | — | 3 |
 | Custom Tabs for other apps | n/a | roadmap (`CustomTabsService`) | — | 4 |

@@ -1934,7 +1934,7 @@ Light, dark and system themes; phone and tablet layouts; TalkBack-friendly contr
 levels, for the vault a recovery phrase, a password generator, payment cards, import and export of
 logins and a system-wide Autofill service (the vault fills in Krunk's own pages only),
 downloads over several connections and a choice of the download folder, pointer lock (the
-engine has none on Android), media controls and picture-in-picture, account and sync, VPN, the AI agent, userscripts,
+engine has none on Android), media controls and picture-in-picture, the AI agent, userscripts,
 extensions, a Play Store listing and F-Droid. Builds made without the release key (any
 debug build, or `./gradlew assembleDirectRelease -Pkrunk.allowDebugSignedRelease=true` on another
 machine) are signed with a debug key and cannot be updated in place by a published release:
@@ -1972,6 +1972,48 @@ reads it over a separate connection, only when tapped, and says so. Nothing of i
 synced or logged.
 Settings › Privacy › Certificate exceptions lists the accepted certificates and removes one at
 once.
+
+**VPN (0.10.0).** Settings › Privacy & security › VPN imports WireGuard (`.conf`) and OpenVPN
+(`.ovpn`) files from a VPN provider (file picker, or "Share"/"Open with" from a file manager or a
+mail app; a profile shared as text is recognised and not put into the address bar). Import
+warnings (options Krunk ignores, such as scripts) are shown before saving. **Only Krunk's own
+connections use it**: pages in normal and private tabs, service workers, WebSockets, downloads,
+the blocker's list updates, and Krunk's own requests (sync, the update check and download,
+favicons, search suggestions, the certificate check of the error panel). Other apps on the phone
+are not affected: there is no Android `VpnService`, no key icon in the status bar, no VPN in the
+system settings. Options: **Connect when Krunk starts**; **Everywhere** or **Private tabs only**
+(then only private tabs, and Krunk's requests made for them, use the VPN; sync and updates go
+direct); **Reach the local network directly** (off by default; localhost always is); **Show the
+VPN in the address bar** (a mark next to the shield: green connected, amber connecting, red not
+connected; tapping it opens a sheet with the profile, the tunnel address, the traffic, Connect /
+Disconnect and the scope).
+- **Fail-closed.** While the VPN is on but not connected (connecting, reconnecting, the server
+  down, no network) Krunk loads nothing: pages show **VPN not connected** (Retry, Open VPN
+  settings), Krunk's own requests fail. Nothing goes direct. An address outside what the profile
+  routes shows **Not reachable through this VPN**.
+- **How it works.** The same `vpn` crate as on Windows, inside `libkrunk_ffi.so`: WireGuard
+  (boringtun) or OpenVPN 3 Core in user space, smoltcp as the TCP/IP stack, and a proxy on
+  `127.0.0.1` (a random port). Android cannot tell which app opened a loopback connection, so each
+  VPN session has a new random 32-byte credential that only Krunk's process knows: the engine
+  connects with SOCKS5 and that credential as the password, Krunk's own requests send it as
+  `Proxy-Authorization`; any other app that finds the port is disconnected without an answer. The
+  engine is pointed at the proxy by a channel filter in Krunk's built-in `krunk-guard` extension
+  (the pattern of Firefox's IP Protection), with the engine's proxy settings as a backstop that
+  also points at the proxy without the credential. These settings live on the engine's default
+  branch and are never saved: after a restart with the VPN off nothing of it is left. While the
+  VPN is on, DNS prefetch, HTTPS DNS records, DNS-over-HTTPS, HTTP/3 and WebTransport are off,
+  and WebRTC uses no local addresses and no direct UDP (calls need a TURN server reachable over
+  TCP). Names are resolved by the VPN's DNS server inside the tunnel; the system resolver is used
+  only for the VPN server's own name.
+- **Profiles** are stored encrypted (AES-GCM, key wrapped by the Android Keystore) in
+  `files/krunk-vpn/`, never synced and kept out of backup and device transfer.
+- **In the background** the tunnel runs as long as Android keeps Krunk's process; there is no
+  foreground service and no notification. When Android suspends or stops the app (Doze, battery
+  savers, which differ per phone maker), the tunnel stops with it and reconnects when Krunk comes
+  back. Fail-closed holds throughout. A change of network (Wi-Fi ↔ mobile) reconnects at once.
+- **Not covered:** other apps; UDP through the tunnel (so no HTTP/3 and no direct WebRTC media);
+  OpenVPN's interactive challenges (MFA codes). Tested on the x86_64 emulator against Krunk's own
+  test servers only, not on an arm64 phone and not with a commercial provider.
 
 **Password vault (since 0.3.0).** Krunk keeps the user names and passwords you sign in with in
 a vault, opened with one vault password that only you know (⋮ menu › Passwords, or Settings ›
@@ -2050,11 +2092,12 @@ Device-to-device transfer (the direct copy to a new phone, Android 12 and later)
 elsewhere, use Bookmarks › Export. `adb backup` is gone in current Android; on a debug build
 `adb shell run-as org.krunk.browser` reaches the files. Private tabs write nothing to the
 database, and their pages are kept out of the Recents thumbnail and screenshots. The password
-vault (`files/krunk-vault`) is in neither backup nor transfer; see "Password vault" above.
+vault (`files/krunk-vault`) and the VPN profiles (`files/krunk-vpn`) are in neither backup nor
+transfer; see "Password vault" and "VPN" above.
 
 **Promises.** No telemetry; the app makes no network requests of its own: only the pages you
 open, search suggestions while you type (on by default, off in private tabs, can be switched off)
-and the favicon of a page you visited. The Google Play Services passkey library that GeckoView
+and the favicon of a page you visited (all of them through the VPN while it is on). The Google Play Services passkey library that GeckoView
 depends on is bundled (passkeys need it) and only used when a site asks for a passkey; for devices
 without Google Play services, `./gradlew assembleDebug -Pkrunk.noGms=true` builds without it.
 
