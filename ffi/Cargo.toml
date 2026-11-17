@@ -21,7 +21,9 @@ required-features = ["cli"]
 
 [features]
 cli = ["uniffi/cli"]
-# OpenVPN profiles in the Android library (WireGuard is always in). Android 0.10.0 M6.
+default = ["openvpn"]
+# OpenVPN profiles in the Android library (WireGuard is always in). On since Android 0.10.0 (spike
+# S1: builds with NDK 30 for both ABIs, +2.7 MB per library, system resolver instead of hickory).
 openvpn = ["vpn/openvpn"]
 
 [dependencies]

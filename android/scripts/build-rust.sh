@@ -59,7 +59,17 @@ IFS=',' read -r -a abi_list <<< "$ABIS"
 for abi in "${abi_list[@]}"; do
   TARGET_FLAGS+=(--target "$abi")
 done
-cargo ndk "${TARGET_FLAGS[@]}" --platform "$MIN_SDK" --output-dir "$JNI_OUT" \
+# OpenVPN 3 Core (vpn/openvpn) runs bindgen on its C header. cargo-ndk passes the sysroot through
+# BINDGEN_EXTRA_CLANG_ARGS_<triple_with_underscores> but bindgen's unversioned --target then fails
+# in NDK 30's sys/cdefs.h ("Unversioned target triples are not supported"). bindgen reads the
+# hyphenated form first and cargo-ndk leaves it alone: give it a versioned target (Android 0.10.0
+# spike S1, .pipeline/NOTES-android-0.10.0.md).
+SYSROOT="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot"
+BINDGEN_ENV=()
+for triple in aarch64-linux-android x86_64-linux-android; do
+  BINDGEN_ENV+=("BINDGEN_EXTRA_CLANG_ARGS_$triple=--target=$triple$MIN_SDK --sysroot=$SYSROOT -I$SYSROOT/usr/include/$triple")
+done
+env "${BINDGEN_ENV[@]}" cargo ndk "${TARGET_FLAGS[@]}" --platform "$MIN_SDK" --output-dir "$JNI_OUT" \
   build --locked -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
 # Debug builds carry ~130 MB of DWARF per ABI, which AGP does not strip for debug variants: strip
 # here (the host library keeps its symbols for backtraces in JVM tests). Release builds are
