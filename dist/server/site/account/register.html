@@ -30,11 +30,18 @@
     <div class="turnstile" data-turnstile></div>
     <button type="submit" class="primary">Create account</button>
   </form>
-  <div id="done" class="card" hidden>
-    <p><strong>Check your email.</strong> We sent a link to confirm the address. It works for 24 hours.</p>
-    <p class="hint">Nothing arrived? Look in the spam folder, or <a href="/account/resend">send it again</a>.</p>
+  <div id="check" class="card while-waiting" hidden>
+    <p><strong>Check your email.</strong> We sent a link to confirm the address. Click it, here or
+      on another device, and this page signs you in by itself. The link works for 24 hours.</p>
+    <p id="waiting" class="hint" hidden>Still waiting? Look in the spam folder, or
+      <a href="/account/resend" target="_blank" rel="noopener">send the email again</a> (this page keeps waiting).</p>
   </div>
-  <ul class="links"><li>Already have an account? <a href="/account/login">Sign in</a></li></ul>
+  <div id="done" class="card" hidden>
+    <p><strong id="done-text"></strong></p>
+    <p id="done-hint" hidden></p>
+    <p><a class="btn primary" href="/account/">Go to your account</a></p>
+  </div>
+  <ul class="links"><li>Already have an account? <a id="to-login" href="/account/login">Sign in</a></li></ul>
   <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>
 </main>
 <footer class="wrap"><p><a href="/">Krunk</a> · <a href="/privacy">Privacy</a></p></footer>

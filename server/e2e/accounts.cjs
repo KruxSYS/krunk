@@ -115,18 +115,15 @@ function totp(secret, offsetSteps) {
   ok(vmail && !/<|tracking|img/i.test(vmail.Text), 'verify mail arrived, plain text');
   const vlink = vmail && linkIn(vmail);
   ok(vlink && vlink.startsWith(`${BASE}/account/verify?token=`), 'verify mail has the link');
+  // One-step registration: the browser that registered confirms without the password and is
+  // signed in on /account/. The sign-in form is tested below from a signed-out state.
   await page.goto(vlink);
-  await page.waitForSelector('#form:not([hidden])');
+  await page.waitForURL(`${BASE}/account/`);
   ok(!page.url().includes('token='), 'verify: token removed from the address bar');
-  await page.fill('input[name=password]', 'not my password');
-  await page.click('button[type=submit]');
-  await page.waitForFunction(() => document.getElementById('status').textContent.length > 0);
-  ok((await status()).includes('wrong'), 'verify: the wrong password is refused');
-  await page.fill('input[name=password]', PW1);
-  await page.click('button[type=submit]');
-  await page.waitForSelector('#done:not([hidden])');
+  await page.waitForSelector('#overview:not([hidden])');
   await shot('verified');
-  ok(true, 'verify: confirmed');
+  ok(true, 'verify: confirmed and signed in, no password');
+  await ctx.clearCookies();
 
   // Sign in.
   await page.goto(`${BASE}/account/login`);

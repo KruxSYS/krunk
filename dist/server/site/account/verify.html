@@ -22,13 +22,15 @@
   <p id="closed" class="closed" hidden>Accounts are coming soon. Krunk works fully without one; an account will only be needed for sync.</p>
   <p id="status" class="status" role="status" aria-live="polite"></p>
   <form id="form" class="card" hidden novalidate>
-    <p>Enter your password to confirm this address.</p>
+    <p>This link was opened in another browser than the one you registered in. Enter your
+      password once to confirm the address and sign in.</p>
     <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-    <button type="submit" class="primary">Confirm</button>
+    <button type="submit" class="primary">Confirm and sign in</button>
   </form>
   <div id="done" class="card" hidden>
-    <p><strong>Your email address is confirmed.</strong></p>
-    <p><a class="btn primary" href="/account/login">Sign in</a></p>
+    <p><strong id="done-text"></strong></p>
+    <p id="done-hint" hidden></p>
+    <p><a class="btn primary" href="/account/">Go to your account</a></p>
   </div>
   <ul class="links"><li><a href="/account/resend">Send a new link</a></li></ul>
   <p class="never">The Krunk website never asks for your sync passphrase or recovery key.</p>

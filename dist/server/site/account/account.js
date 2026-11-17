@@ -193,11 +193,82 @@
   // After signing in, go back to where the user came from: the device approval page, the
   // dashboard's "Add a device" or "Your data", or the delete page. Only these paths are accepted,
   // so the parameter can't send anyone elsewhere.
+  // The server keeps the same list (accounts.rs safe_next) for the `next` a registration stores.
+  function isSafeNext(n) {
+    return typeof n === 'string' && (/^\/link\?code=[0-9A-Za-z-]{1,12}$/.test(n) ||
+      /^\/account\/(#(add-device|export))?$/.test(n) || n === '/account/delete');
+  }
   function safeNext() {
     var n = new URLSearchParams(location.search).get('next');
-    if (!n) return null;
-    return /^\/link\?code=[0-9A-Za-z-]{1,12}$/.test(n) || /^\/account\/(#(add-device|export))?$/.test(n) ||
-      n === '/account/delete' ? n : null;
+    return isSafeNext(n) ? n : null;
+  }
+  // The `next` parameter for a link between the sign-in and registration pages.
+  function carryNext(a) {
+    var n = safeNext();
+    if (a && n) a.href = a.getAttribute('href').split('?')[0] + '?next=' + encodeURIComponent(n);
+  }
+  // A /link code carried in `next` (registration from a Krunk "Sign in" tab: auto-link).
+  function nextLinkCode(n) {
+    var m = n && /^\/link\?code=([0-9A-Za-z-]{1,12})$/.exec(n);
+    return m ? m[1] : null;
+  }
+
+  // After a registration's sign-in (the verify page, or the registering page's poll):
+  // `b` = {csrf, next, link, linked}. Linked: this Krunk browser is signed in, so never /link.
+  // Unavailable: its code ran out meanwhile, one more click in Krunk finishes. Otherwise on to
+  // `next` or the account page. `stay`: show the linked result here instead of moving on (the
+  // registering tab is the Krunk tab itself).
+  function registrationDone(b, stay) {
+    csrf = b.csrf || csrf;
+    var next = isSafeNext(b.next) ? b.next : null;
+    if (b.link === 'linked' || b.link === 'unavailable') {
+      if (b.link === 'linked' && !stay) { location.href = '/account/'; return; }
+      $('#done-text').textContent = 'Email confirmed, you\u2019re signed in.';
+      var hint = $('#done-hint');
+      if (b.link === 'linked') {
+        hint.textContent = 'This Krunk browser is now signed in to your account' +
+          (b.linked && b.linked.label ? ' as \u201c' + b.linked.label + '\u201d.' : '.');
+      } else {
+        hint.textContent = 'To sign in Krunk too, open Krunk \u2192 Settings \u2192 Account \u2192 Sign in to finish.';
+      }
+      show(hint, true);
+      Array.prototype.forEach.call(document.querySelectorAll('.while-waiting'), function (x) { show(x, false); });
+      show($('#done'), true);
+      say('');
+      return;
+    }
+    location.href = next || '/account/';
+  }
+
+  // The "check your email" card polls web/register/poll: every 3 s for 10 minutes, then every
+  // 15 s until the link's 24 hours are over; slow_down and 429 make it wait longer, never stop.
+  // After 2 minutes it suggests the spam folder or another mail (a resent link completes this
+  // same registration, so the poll goes on).
+  function waitForRegistration(token) {
+    var start = Date.now();
+    var DAY = 24 * 3600 * 1000;
+    function again(extra) {
+      var gap = Date.now() - start < 10 * 60 * 1000 ? 3000 : 15000;
+      setTimeout(run, gap + (extra || 0));
+    }
+    function run() {
+      if (Date.now() - start > 2 * 60 * 1000) show($('#waiting'), true);
+      if (Date.now() - start > DAY) {
+        say('The link has expired. Register again, or sign in if you confirmed the address.', 'error');
+        return;
+      }
+      api('POST', 'register/poll', { reg_poll: token }).then(function (r) {
+        if (r.ok) { registrationDone(r.body, true); return; }
+        if (r.body.error === 'expired_token') {
+          say('This page stopped waiting. Once you have confirmed the address, sign in.', 'error');
+          return;
+        }
+        if (r.body.error === 'slow_down') { again(5000); return; }
+        if (r.status === 429) { again(Math.max(60, Number(r.retryAfter) || 60) * 1000); return; }
+        again(); // pending, a network failure or a server hiccup: keep waiting
+      });
+    }
+    again();
   }
   // A device code as the server reads it (devices.rs normalize_user_code): Crockford symbols,
   // O→0, I/L→1, dashes and spaces dropped; 8 symbols are shown as XXXX-XXXX.
@@ -298,6 +369,7 @@
 
   pages.login = function (cfg) {
     var form = $('#form');
+    carryNext($('#to-register'));
     show(form, true);
     loadTurnstile(cfg.turnstile_site_key, 'login');
     onSubmit(form, 'login', function () {
@@ -319,14 +391,21 @@
 
   pages.register = function (cfg) {
     var form = $('#form');
+    var next = safeNext();
+    carryNext($('#to-login'));
     show(form, true);
     loadTurnstile(cfg.turnstile_site_key, 'register');
     onSubmit(form, 'register', function () {
       if (!samePasswords(form, 'password', 'password2') || needToken()) return null;
-      return { email: value(form, 'email'), password: value(form, 'password'), turnstile: tsToken() };
-    }, function () {
+      var b = { email: value(form, 'email'), password: value(form, 'password'), turnstile: tsToken() };
+      if (next) b.next = next;
+      if (nextLinkCode(next)) b.link_code = nextLinkCode(next);
+      return b;
+    }, function (r) {
       show(form, false);
-      show($('#done'), true);
+      show($('#check'), true);
+      Array.prototype.forEach.call(document.querySelectorAll('.links'), function (x) { show(x, false); });
+      if (typeof r.body.reg_poll === 'string') waitForRegistration(r.body.reg_poll);
     }, function (r) {
       tsReset();
       say(errorText(r), 'error');
@@ -340,20 +419,33 @@
     return t && /^[A-Za-z0-9_-]{43}$/.test(t) ? t : null;
   }
 
+  // Confirms at once in the browser that registered (its registration cookie); anywhere else the
+  // server answers password_required and the password is asked once. Either way it signs in.
   pages.verify = function () {
     var token = takeToken();
     var form = $('#form');
     if (!token) { say('This link is incomplete. Open it again from the email, or request a new one.', 'error'); return; }
-    show(form, true);
-    onSubmit(form, 'verify-email', function () {
-      return { token: token, password: value(form, 'password') };
-    }, function () {
-      show(form, false);
-      show($('#done'), true);
-    }, function (r) {
+    function failed(r) {
       if (r.status === 400 || r.status === 410) show(form, false);
       say(errorText(r), 'error');
+    }
+    say('Confirming your email address\u2026');
+    api('POST', 'verify-email', { token: token }).then(function (r) {
+      if (r.ok) { registrationDone(r.body, false); return; }
+      if (r.status === 401 && r.body.error === 'password_required') {
+        say('');
+        show(form, true);
+        field(form, 'password').focus();
+        return;
+      }
+      failed(r);
     });
+    onSubmit(form, 'verify-email', function () {
+      return { token: token, password: value(form, 'password') };
+    }, function (r) {
+      show(form, false);
+      registrationDone(r.body, false);
+    }, failed);
   };
 
   pages.reset = function (cfg) {
@@ -447,7 +539,7 @@
       say('');
       api('GET', 'link/' + encodeURIComponent(c)).then(function (r) {
         if (!r.ok) {
-          say(r.status === 404 ? 'This code is not valid or has expired. Check it below, or start again in Krunk to get a new one.' : errorText(r), 'error');
+          say(r.status === 404 ? 'This code is not valid or has expired. Check it below, or get a new one: open Krunk \u2192 Settings \u2192 Account \u2192 Sign in.' : errorText(r), 'error');
           askCode(c);
           show(form, false);
           return;
@@ -1271,7 +1363,7 @@
 
     // ---- Activity -------------------------------------------------------------------------------
     var KINDS = {
-      register: 'Account created', login: 'Signed in', qr_sign_in: 'Signed in by QR', logout: 'Signed out',
+      register: 'Account created', email_verified: 'Email confirmed (signed in)', login: 'Signed in', qr_sign_in: 'Signed in by QR', logout: 'Signed out',
       password_change: 'Password changed', password_changed: 'Password changed', password_reset: 'Password reset by email',
       totp_enabled: 'Two-step verification turned on', totp_disabled: 'Two-step verification turned off',
       device_linked: 'Device added', device_revoked: 'Device removed', sessions_revoked: 'Signed out everywhere else',
