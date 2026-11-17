@@ -21,6 +21,8 @@ required-features = ["cli"]
 
 [features]
 cli = ["uniffi/cli"]
+# OpenVPN profiles in the Android library (WireGuard is always in). Android 0.10.0 M6.
+openvpn = ["vpn/openvpn"]
 
 [dependencies]
 lb_core = { path = "../core", package = "core" }
