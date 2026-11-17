@@ -16,7 +16,8 @@ pub(crate) enum SessionEnd {
     Stopped,
     /// Lost or never made: try again after the back-off.
     Retry(String),
-    /// Refused for good (password, certificate): no retry.
+    /// Refused for good (password, certificate): no retry. Only OpenVPN refuses for good.
+    #[cfg_attr(not(feature = "openvpn"), allow(dead_code))]
     Failed(String),
 }
 
@@ -154,6 +155,7 @@ impl Vpn {
         on_status: Box<dyn Fn(&Status) + Send + Sync>,
     ) -> Result<Vpn, StartError> {
         let creds = match &profile {
+            #[cfg(feature = "openvpn")]
             Profile::OpenVpn(p) => {
                 let c = creds.or_else(|| p.inline_credentials().cloned());
                 if p.needs_credentials() && c.is_none() {
@@ -161,7 +163,10 @@ impl Vpn {
                 }
                 c
             }
-            Profile::WireGuard(_) => None,
+            Profile::WireGuard(_) => {
+                drop(creds);
+                None
+            }
         };
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -278,6 +283,8 @@ async fn tick(shared: Arc<Shared>) {
 
 /// Connect, and reconnect with back-off, until stopped or failed for good.
 async fn run(shared: Arc<Shared>, profile: Profile, creds: Option<Credentials>, mut stop: watch::Receiver<bool>) {
+    #[cfg(not(feature = "openvpn"))]
+    drop(creds);
     shared.report();
     let mut backoff = Backoff(0);
     loop {
@@ -286,6 +293,7 @@ async fn run(shared: Arc<Shared>, profile: Profile, creds: Option<Credentials>, 
         shared.dns.clear_cache();
         let end = match &profile {
             Profile::WireGuard(cfg) => crate::wg::session(cfg, &shared, &mut stop).await,
+            #[cfg(feature = "openvpn")]
             Profile::OpenVpn(p) => crate::ovpn::session(p, creds.as_ref(), &shared, &mut stop).await,
         };
         if shared.session_connected.load(Ordering::Acquire) {

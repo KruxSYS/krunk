@@ -11,13 +11,20 @@ rust-version = "1.88"
 name = "krunk_vpn"
 path = "src/lib.rs"
 
+[features]
+# OpenVPN profiles through the vendored OpenVPN 3 Core (C++, built with CMake). Without it an
+# OpenVPN file is recognised but refused (`ImportError::Unsupported`, OPENVPN_UNSUPPORTED).
+default = ["openvpn"]
+openvpn = ["dep:openvpn-connect"]
+
 [dependencies]
 # WireGuard: only the `noise` protocol state machine (no `device`, no TUN). BSD-3-Clause.
 boringtun = { version = "=0.7.1", default-features = false }
 # The TCP/IP stack over the tunnel's IP packets. 0BSD.
 smoltcp = { version = "=0.14.0", default-features = false, features = ["std", "async", "medium-ip", "proto-ipv4", "proto-ipv6", "socket-tcp", "socket-udp"] }
 # OpenVPN 3 Core (MPL-2.0), vendored and pinned (../vendor/README.md): external TUN, sources built in.
-openvpn-connect = { path = "../vendor/openvpn-connect", version = "=0.1.2", default-features = false, features = ["external-tun", "vendor"] }
+# Optional (feature `openvpn`): a build without it imports WireGuard only.
+openvpn-connect = { path = "../vendor/openvpn-connect", version = "=0.1.2", default-features = false, features = ["external-tun", "vendor"], optional = true }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
 serde = { version = "1", features = ["derive"] }
 zeroize = { version = "1.8", features = ["std"] }

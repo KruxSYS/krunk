@@ -42,6 +42,7 @@ fn state_file(service: &str, path: &str) -> String {
     compose(&["exec", "-T", service, "cat", path])
 }
 
+#[cfg_attr(not(feature = "openvpn"), allow(dead_code))]
 fn creds(password: &str) -> Option<Credentials> {
     Some(Credentials { username: Zeroizing::new("krunk".into()), password: Zeroizing::new(password.into()) })
 }
@@ -145,6 +146,7 @@ fn wireguard_through_the_proxy() {
     r.vpn.stop();
 }
 
+#[cfg(feature = "openvpn")]
 #[test]
 fn openvpn_udp_through_the_proxy() {
     let Some(_g) = testbed() else { return };
@@ -153,6 +155,7 @@ fn openvpn_udp_through_the_proxy() {
     r.vpn.stop();
 }
 
+#[cfg(feature = "openvpn")]
 #[test]
 fn openvpn_tcp_through_the_proxy() {
     let Some(_g) = testbed() else { return };
@@ -163,6 +166,7 @@ fn openvpn_tcp_through_the_proxy() {
 
 /// A refused password or certificate gives `failed`, without a retry loop, and the proxy
 /// stays closed (503).
+#[cfg(feature = "openvpn")]
 #[test]
 fn openvpn_refusals_fail() {
     let Some(_g) = testbed() else { return };
@@ -191,14 +195,17 @@ fn openvpn_refusals_fail() {
 }
 
 /// Starts the service again even when the test fails half-way.
+#[cfg(feature = "openvpn")]
 struct Restart(&'static str);
 
+#[cfg(feature = "openvpn")]
 impl Drop for Restart {
     fn drop(&mut self) {
         compose(&["start", self.0]);
     }
 }
 
+#[cfg(feature = "openvpn")]
 fn stop_and_return(r: &Running, service: &'static str, limit_503: Duration) {
     let before = wait_state(r, State::Connected, Duration::from_secs(30));
     let proxy = r.vpn.proxy_addr();
@@ -229,6 +236,7 @@ fn stop_and_return(r: &Running, service: &'static str, limit_503: Duration) {
     assert!(seen.contains(&State::Reconnecting), "{seen:?}");
 }
 
+#[cfg(feature = "openvpn")]
 #[test]
 fn server_stopped_gives_503_then_reconnects() {
     let Some(_g) = testbed() else { return };

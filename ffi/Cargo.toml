@@ -31,6 +31,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 zeroize = "1.8"
 base64ct = { version = "1.8", features = ["alloc"] }
+# The in-browser VPN, WireGuard only (no OpenVPN 3 Core on Android yet).
+vpn = { path = "../vpn", default-features = false }
 
 [dev-dependencies]
 # The in-memory sync server for the sync tests (never in the library that ships).

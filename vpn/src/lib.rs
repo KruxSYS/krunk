@@ -17,6 +17,7 @@
 pub mod dns;
 mod listen;
 pub mod net;
+#[cfg(feature = "openvpn")]
 pub mod ovpn;
 pub mod proxy;
 mod service;
@@ -56,6 +57,7 @@ impl Kind {
 pub enum Profile {
     WireGuard(wg::Config),
     /// The `.ovpn` text after the import rewrite, plus optional inline credentials.
+    #[cfg(feature = "openvpn")]
     OpenVpn(ovpn::Profile),
 }
 
@@ -63,6 +65,7 @@ impl Profile {
     pub fn kind(&self) -> Kind {
         match self {
             Profile::WireGuard(_) => Kind::WireGuard,
+            #[cfg(feature = "openvpn")]
             Profile::OpenVpn(_) => Kind::OpenVpn,
         }
     }
@@ -71,6 +74,7 @@ impl Profile {
     pub fn server(&self) -> String {
         match self {
             Profile::WireGuard(c) => c.endpoint().to_owned(),
+            #[cfg(feature = "openvpn")]
             Profile::OpenVpn(p) => p.server().to_owned(),
         }
     }
@@ -80,6 +84,7 @@ impl fmt::Debug for Profile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Profile::WireGuard(c) => f.debug_tuple("WireGuard").field(c).finish(),
+            #[cfg(feature = "openvpn")]
             Profile::OpenVpn(p) => f.debug_tuple("OpenVpn").field(p).finish(),
         }
     }
@@ -125,6 +130,12 @@ impl fmt::Display for ImportError {
 
 impl std::error::Error for ImportError {}
 
+/// The import error for an OpenVPN file in a build without the `openvpn` feature.
+pub const OPENVPN_UNSUPPORTED: &str = "OpenVPN is not supported on this platform";
+
+/// Whether this build can connect OpenVPN profiles (the `openvpn` cargo feature).
+pub const OPENVPN_SUPPORTED: bool = cfg!(feature = "openvpn");
+
 /// Parses an imported file (at most 64 KiB) of either kind; the kind is detected from the
 /// content, the file name only gives the profile its name.
 pub fn import(file_name: &str, text: &str) -> Result<(Profile, ProfileInfo), ImportError> {
@@ -148,6 +159,9 @@ pub fn import(file_name: &str, text: &str) -> Result<(Profile, ProfileInfo), Imp
             };
             Ok((Profile::WireGuard(parsed.config), info))
         }
+        #[cfg(not(feature = "openvpn"))]
+        Some(Kind::OpenVpn) => Err(ImportError::Unsupported(OPENVPN_UNSUPPORTED.to_owned())),
+        #[cfg(feature = "openvpn")]
         Some(Kind::OpenVpn) => {
             let parsed = ovpn::inspect(text)?;
             let name = profile_name(file_name, parsed.name.as_deref(), "OpenVPN");
@@ -379,6 +393,13 @@ mod tests {
         assert_eq!(import("x.conf", &big).unwrap_err(), ImportError::TooLarge);
         assert_eq!(import("x.conf", "just text").unwrap_err(), ImportError::Unrecognized);
         assert_eq!(import("x.conf", "[Interface]\0").unwrap_err(), ImportError::Unrecognized);
+    }
+
+    #[cfg(not(feature = "openvpn"))]
+    #[test]
+    fn openvpn_unsupported_without_the_feature() {
+        let e = import("x.ovpn", "client\nremote vpn.example 1194\n").unwrap_err();
+        assert_eq!(e, ImportError::Unsupported(OPENVPN_UNSUPPORTED.to_owned()));
     }
 
     #[test]

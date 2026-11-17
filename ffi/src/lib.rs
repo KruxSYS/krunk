@@ -22,6 +22,7 @@ mod theme;
 mod update;
 mod urls;
 mod vault;
+mod vpn;
 
 pub use blocker::*;
 pub use downloads::*;
@@ -37,6 +38,7 @@ pub use theme::*;
 pub use update::*;
 pub use urls::*;
 pub use vault::*;
+pub use vpn::*;
 
 /// The shared core's version (the Windows release it came from), e.g. `0.15.3`.
 #[uniffi::export]
