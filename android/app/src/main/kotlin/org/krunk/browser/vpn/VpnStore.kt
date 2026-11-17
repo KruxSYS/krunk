@@ -89,7 +89,15 @@ class VpnStore(
             wipe()
             key(create = true)
         }
-        val current = if (File(dir, INDEX_FILE).isFile) decodeIndex(open(key, read(File(dir, INDEX_FILE)), AAD_INDEX)) else emptyList()
+        val current = if (File(
+                dir,
+                INDEX_FILE,
+            ).isFile
+        ) {
+            decodeIndex(open(key, read(File(dir, INDEX_FILE)), AAD_INDEX))
+        } else {
+            emptyList()
+        }
         var id: String
         do {
             id = newId()
@@ -154,7 +162,11 @@ class VpnStore(
             try {
                 wrap.unprotect(read(file))
             } catch (e: WrapFailure) {
-                throw VpnStoreException("the device key cannot open the VPN profiles", lost = e.kind != WrapFailureKind.FAILED)
+                throw VpnStoreException(
+                    "the device key cannot open the VPN profiles",
+                    lost =
+                        e.kind != WrapFailureKind.FAILED,
+                )
             }
         } else {
             if (!create) throw VpnStoreException("no key")
@@ -192,7 +204,11 @@ class VpnStore(
         }
         return try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key, "AES"), GCMParameterSpec(TAG_BITS, sealed, 1, IV_LENGTH))
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(key, "AES"),
+                GCMParameterSpec(TAG_BITS, sealed, 1, IV_LENGTH),
+            )
             cipher.updateAAD(aad)
             cipher.doFinal(sealed, 1 + IV_LENGTH, sealed.size - 1 - IV_LENGTH)
         } catch (e: GeneralSecurityException) {

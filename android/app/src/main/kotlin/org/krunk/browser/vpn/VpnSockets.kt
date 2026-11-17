@@ -217,7 +217,11 @@ class VpnTunnelConnection internal constructor(
         head.append("Connection: close\r\n")
         for ((k, v) in requestProps) {
             val lower = k.lowercase()
-            if (lower == "host" || lower == "connection" || lower == "proxy-authorization" || lower == "content-length") continue
+            if (lower == "host" || lower == "connection" || lower == "proxy-authorization" ||
+                lower == "content-length"
+            ) {
+                continue
+            }
             if ('\r' in v || '\n' in v || '\r' in k || '\n' in k) continue
             head.append(k).append(": ").append(v).append("\r\n")
         }
@@ -340,7 +344,9 @@ class VpnTunnelConnection internal constructor(
             if (left > 0) return true
             val size = line().substringBefore(';').trim().toLongOrNull(16) ?: throw IOException("bad chunk")
             if (size == 0L) {
-                while (line().isNotEmpty()) Unit
+                // Trailer fields, up to the empty line.
+                var trailer = line()
+                while (trailer.isNotEmpty()) trailer = line()
                 done = true
                 return false
             }

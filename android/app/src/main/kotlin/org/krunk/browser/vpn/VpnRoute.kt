@@ -28,12 +28,17 @@ object VpnRouteRules {
         lanDirect: Boolean,
     ): Route = when {
         !vpnOn -> Route.DIRECT
+
         // Never leaves the device.
         isLocalHost -> Route.DIRECT
+
         // "Private tabs only": normal tabs and Krunk's own requests go direct (Windows 0.22.0).
         scope == VpnScope.PRIVATE && !forPrivateTab -> Route.DIRECT
+
         isLan && lanDirect -> Route.DIRECT
+
         !connected -> Route.BLOCKED
+
         else -> Route.PROXY
     }
 }
@@ -72,7 +77,10 @@ object VpnHosts {
     private fun ipv4(h: String): List<Int>? {
         val parts = h.split('.')
         if (parts.size != 4) return null
-        val n = parts.map { p -> p.toIntOrNull()?.takeIf { it in 0..255 && p.isNotEmpty() && p.all(Char::isDigit) } ?: return null }
+        val n = parts.map { p ->
+            p.toIntOrNull()?.takeIf { it in 0..255 && p.isNotEmpty() && p.all(Char::isDigit) }
+                ?: return null
+        }
         return n
     }
 }
@@ -129,7 +137,9 @@ object VpnRoute {
         val s = state
         return when (decide(url.host, forPrivateTab, s)) {
             Route.DIRECT -> url.openConnection() as HttpURLConnection
+
             Route.BLOCKED -> throw VpnNotConnected()
+
             Route.PROXY -> {
                 val port = s.port ?: throw VpnNotConnected()
                 val token = s.tokenHex ?: throw VpnNotConnected()

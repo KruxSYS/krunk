@@ -68,6 +68,7 @@ data class VpnSettings(
                     val c = text[i++]
                     when (c) {
                         '"' -> return sb.toString()
+
                         '\\' -> {
                             if (i >= text.length) return null
                             val e = text[i++]
@@ -78,6 +79,7 @@ data class VpnSettings(
                                 else -> return null
                             }
                         }
+
                         else -> sb.append(c)
                     }
                 }
