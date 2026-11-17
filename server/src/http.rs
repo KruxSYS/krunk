@@ -82,6 +82,7 @@ pub fn router(state: AppState) -> Router {
     // requests only from the site's own origin.
     let web = Router::new()
         .route("/api/v1/web/register", post(accounts::register))
+        .route("/api/v1/web/register/poll", post(accounts::register_poll))
         .route("/api/v1/web/verify-email", post(accounts::verify_email))
         .route("/api/v1/web/resend-verification", post(accounts::resend))
         .route("/api/v1/web/login", post(accounts::login))

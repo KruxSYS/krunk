@@ -496,11 +496,12 @@ struct EscrowRow {
 pub async fn keys_escrow(State(state): State<AppState>, d: DeviceAuth) -> ApiResult {
     hit(&state.db, rl::KEYS_ESCROW, &rl::id_key(&d.account_id)).await?;
     let mut tx = state.db.begin().await?;
-    let row: Option<EscrowRow> =
-        sqlx::query_as("SELECT rr_gen, rr_wrap_pp, rr_wrap_rk, pp_kdf, rr_wrap_vault FROM escrow WHERE account_id = $1")
-            .bind(d.account_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let row: Option<EscrowRow> = sqlx::query_as(
+        "SELECT rr_gen, rr_wrap_pp, rr_wrap_rk, pp_kdf, rr_wrap_vault FROM escrow WHERE account_id = $1",
+    )
+    .bind(d.account_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let row = row.ok_or_else(no_keyset)?;
     let (email, label, keyed): (String, String, bool) = sqlx::query_as(
         "SELECT a.email::text, d.label, d.has_keys FROM accounts a JOIN devices d ON d.account_id = a.id WHERE d.id = $1",

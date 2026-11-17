@@ -86,6 +86,8 @@ pub const PAIR_START: Limit = l("pair-start/account", 10, MIN);
 pub const PAIR_STATUS: Limit = l("pair-status/session", 300, 10 * MIN);
 pub const PAIR_CLAIM_IP: Limit = l("pair-claim/ip", 20, HOUR);
 pub const PAIR_POLL_IP: Limit = l("pair-poll/ip", 600, HOUR);
+/// The "check your email" page polls every 3 s for its first 10 minutes, then every 15 s.
+pub const REG_POLL_IP: Limit = l("reg-poll/ip", 1500, HOUR);
 pub const PAIR_ACT: Limit = l("pair-act/account", 30, HOUR);
 // The account section and its lifecycle (S10).
 pub const USAGE: Limit = l("usage/session", 60, MIN);

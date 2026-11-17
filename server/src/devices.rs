@@ -40,6 +40,10 @@ use sqlx::PgConnection;
 use uuid::Uuid;
 
 pub const LINK_TTL_S: i64 = 600;
+/// How long a link grant waits once a registration from its `/link` tab attached it (auto-link):
+/// long enough to open the confirmation mail. `link/token` answers `authorization_pending` until
+/// then.
+pub const AUTO_LINK_TTL_S: i64 = 3600;
 pub const POLL_INTERVAL_S: i32 = 5;
 pub const ACCESS_TTL_S: i64 = 900;
 pub const REFRESH_IDLE_DAYS: i64 = 90;
@@ -675,6 +679,56 @@ async fn pending_grant(
         .await?)
 }
 
+/// Auto-link, at registration: the device-code HMAC of the grant behind `code` if the code is
+/// pending and unexpired, the grant was asked for by Krunk itself (its stored user agent parses
+/// as `Krunk/x.y`; Krunk's tabs send the engine's user agent, so the register request's own can't
+/// tell) and the registration comes from the same client IP as the grant. Such a grant then waits
+/// [`AUTO_LINK_TTL_S`]. `None` otherwise: the code is ignored and `/link` works as always. Run for
+/// every registration, so the grant's extension says nothing about the address.
+pub(crate) async fn attach_for_registration(
+    conn: &mut PgConnection,
+    keys: &Keys,
+    code: &str,
+    client: &Client,
+) -> Result<Option<Vec<u8>>, sqlx::Error> {
+    let Some(normalized) = normalize_user_code(code) else { return Ok(None) };
+    let row: Option<(Vec<u8>, Option<String>, bool)> = sqlx::query_as(
+        "SELECT device_code_hash, user_agent, ip IS NOT DISTINCT FROM $2::inet
+         FROM link_grants WHERE user_code_hash = $1 AND status = 'pending' AND expires_at > now() FOR UPDATE",
+    )
+    .bind(user_code_hash(keys, &normalized).as_slice())
+    .bind(client.ip().to_string())
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some((hash, ua, same_ip)) = row else { return Ok(None) };
+    if !same_ip || agent_version(ua.as_deref()).is_none() {
+        tracing::info!(same_ip, "link code on a registration ignored");
+        return Ok(None);
+    }
+    sqlx::query(
+        "UPDATE link_grants SET expires_at = greatest(expires_at, now() + make_interval(secs => $2))
+         WHERE device_code_hash = $1",
+    )
+    .bind(&hash)
+    .bind(AUTO_LINK_TTL_S as f64)
+    .execute(&mut *conn)
+    .await?;
+    tracing::info!("link grant attached to a registration");
+    Ok(Some(hash))
+}
+
+/// The grant a registration attached, if it is still pending and unexpired (locked).
+pub(crate) async fn attached_grant(conn: &mut PgConnection, hash: &[u8]) -> Result<Option<GrantView>, sqlx::Error> {
+    sqlx::query_as(
+        "SELECT label, platform, country, extract(epoch FROM now() - created_at)::float8 AS age_s,
+                device_code_hash AS hash
+         FROM link_grants WHERE device_code_hash = $1 AND status = 'pending' AND expires_at > now() FOR UPDATE",
+    )
+    .bind(hash)
+    .fetch_optional(conn)
+    .await
+}
+
 #[derive(Serialize)]
 struct LinkView {
     user_code: String,
@@ -739,10 +793,24 @@ pub async fn link_approve(
         drop(tx);
         return Err(act_not_found(&state, &s, &client).await);
     };
-    let (device_id, short) = approve_grant(&mut tx, &state, &s, &client, &g).await?;
+    let (device_id, short) = approve_grant(&mut tx, &state, &Approver::from(&s), &client, &g).await?;
     tx.commit().await?;
     tracing::info!(device = %device_id, "link approved");
     Ok(Json(json!({ "device_id": device_id, "short": short })).into_response())
+}
+
+/// Who approves a link grant: the signed-in account, and the website session the event is
+/// recorded under (`/link`, "Add a device", or the session a verification just created).
+pub(crate) struct Approver {
+    pub account_id: Uuid,
+    pub email: String,
+    pub session_id: Uuid,
+}
+
+impl From<&WebSession> for Approver {
+    fn from(s: &WebSession) -> Self {
+        Approver { account_id: s.account_id, email: s.email.clone(), session_id: s.id }
+    }
 }
 
 /// Approves a pending, locked link grant for the signed-in account: the device quota, the next
@@ -751,7 +819,7 @@ pub async fn link_approve(
 pub(crate) async fn approve_grant(
     tx: &mut PgConnection,
     state: &AppState,
-    s: &WebSession,
+    s: &Approver,
     client: &Client,
     g: &GrantView,
 ) -> Result<(Uuid, i32), ApiError> {
@@ -810,7 +878,7 @@ pub(crate) async fn approve_grant(
         }),
     )
     .await?;
-    events::record(&mut *tx, s.account_id, "device_linked", client, Source::Web(s.id)).await?;
+    events::record(&mut *tx, s.account_id, "device_linked", client, Source::Web(s.session_id)).await?;
     Ok((device_id, short))
 }
 

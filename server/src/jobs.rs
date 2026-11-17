@@ -10,6 +10,8 @@
 //!   whose refresh tokens went 90 days unused (signed out), and revoked devices after 30 days.
 //! - S6: expired approvals and rotation leases. A device signed out for being idle that ever
 //!   held sync keys starts a key rotation, like any other removal (PROTOCOL §7).
+//! - One-step registration (2026-11-17): registrations a day past expiry or a day after they
+//!   completed.
 //! - 0.11.7 (audit P1): spent refresh tokens after 120 days, the longest refresh-token life
 //!   (90 days idle) plus 30 days, so reuse detection still sees every token that could be live.
 
@@ -17,7 +19,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 
 pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::Error> {
-    let steps: [(&str, &str); 21] = [
+    let steps: [(&str, &str); 22] = [
         (
             "session ips",
             "UPDATE web_sessions SET ip = NULL WHERE ip IS NOT NULL AND last_used_at < now() - make_interval(days => $1)",
@@ -45,6 +47,12 @@ pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::E
             "DELETE FROM email_outbox WHERE coalesce(sent_at, failed_at) < now() - interval '7 days'",
         ),
         ("link grants", "DELETE FROM link_grants WHERE expires_at < now() - interval '10 minutes'"),
+        // One-step registration: a day past expiry, or a day after it completed.
+        (
+            "registrations",
+            "DELETE FROM registrations WHERE expires_at < now() - interval '1 day'
+             OR (verified_at < now() - interval '1 day')",
+        ),
         // 0.13.0: pairings, the mail log (90 days, like the IPs) and the deletion list (30 days,
         // longer than the 14 days of dumps that restore-db.sh may bring back).
         ("pairings", "DELETE FROM pair_grants WHERE expires_at < now() - interval '10 minutes'"),

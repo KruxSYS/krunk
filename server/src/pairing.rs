@@ -335,7 +335,7 @@ pub async fn approve(
         .fetch_optional(&mut *tx)
         .await?;
         let g = g.ok_or_else(expired)?;
-        let (id, _) = devices::approve_grant(&mut tx, &state, &s, &client, &g).await?;
+        let (id, _) = devices::approve_grant(&mut tx, &state, &devices::Approver::from(&s), &client, &g).await?;
         device_id = Some(id);
     } else {
         let when = Utc::now().format("%Y-%m-%d %H:%M UTC").to_string();
@@ -544,7 +544,7 @@ pub async fn web_poll(State(state): State<AppState>, client: Client, JsonBody(re
     match (r.status.as_str(), r.expired) {
         ("approved", _) => {
             let (session_id, token, csrf) =
-                sessions::create(&mut tx, keys, r.account_id, &client, sessions::Via::Qr).await?;
+                sessions::create(&mut tx, keys, r.account_id, &client, sessions::Via::Qr, false).await?;
             sqlx::query(spent).bind(r.id).execute(&mut *tx).await?;
             sqlx::query("UPDATE accounts SET last_active_at = now() WHERE id = $1")
                 .bind(r.account_id)

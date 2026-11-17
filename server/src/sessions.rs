@@ -47,13 +47,39 @@ pub fn clear_cookie() -> HeaderValue {
 
 /// The session token from the `Cookie` header(s), if it has the right shape.
 pub fn cookie_token(headers: &HeaderMap) -> Option<String> {
+    named_cookie(headers, COOKIE)
+}
+
+/// The registration cookie (one-step registration): set by `web/register`, it lets the same
+/// browser confirm the address without typing the password again. `SameSite=Lax`, so it comes
+/// along when the link in the mail opens the verify page; HttpOnly and `__Host-` like the session
+/// cookie, and only its HMAC is stored (`registrations.cookie_hash`). It grants nothing else.
+pub const REG_COOKIE: &str = "__Host-krunk_reg";
+pub const REG_MAX_AGE_S: i64 = 24 * 3600;
+
+pub fn set_reg_cookie(token: &str) -> HeaderValue {
+    HeaderValue::from_str(&format!(
+        "{REG_COOKIE}={token}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age={REG_MAX_AGE_S}"
+    ))
+    .expect("a base64url token is a valid header value")
+}
+
+pub fn clear_reg_cookie() -> HeaderValue {
+    HeaderValue::from_static("__Host-krunk_reg=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0")
+}
+
+pub fn reg_cookie_token(headers: &HeaderMap) -> Option<String> {
+    named_cookie(headers, REG_COOKIE)
+}
+
+fn named_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(';'))
         .filter_map(|kv| kv.trim().split_once('='))
-        .find(|(k, _)| *k == COOKIE)
+        .find(|(k, _)| *k == name)
         .map(|(_, v)| v.trim().to_string())
         .filter(|v| crypto::b64url_decode::<32>(v).is_some())
 }
@@ -76,19 +102,22 @@ impl Via {
     }
 }
 
-/// Creates a session; returns `(id, token, csrf)`.
+/// Creates a session; returns `(id, token, csrf)`. `reauth`: the sign-in itself proved the
+/// password just now (login, email verification, registration poll), so the session starts
+/// re-authenticated for [`REAUTH_S`].
 pub async fn create(
     conn: &mut PgConnection,
     keys: &Keys,
     account_id: Uuid,
     client: &Client,
     via: Via,
+    reauth: bool,
 ) -> Result<(Uuid, String, String), sqlx::Error> {
     let token = crypto::new_token();
     let id = Uuid::new_v4();
     sqlx::query(
-        "INSERT INTO web_sessions (id, account_id, token_hash, ip, country, user_agent, via)
-         VALUES ($1, $2, $3, $4::inet, $5, $6, $7)",
+        "INSERT INTO web_sessions (id, account_id, token_hash, ip, country, user_agent, via, reauth_at)
+         VALUES ($1, $2, $3, $4::inet, $5, $6, $7, CASE WHEN $8 THEN now() END)",
     )
     .bind(id)
     .bind(account_id)
@@ -97,6 +126,7 @@ pub async fn create(
     .bind(client.info.country.as_deref())
     .bind(client.user_agent.as_deref())
     .bind(via.name())
+    .bind(reauth)
     .execute(conn)
     .await?;
     let csrf = csrf_for(keys, &token);
@@ -235,6 +265,21 @@ mod tests {
             HeaderValue::from_static("x__Host-krunk_session=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
         );
         assert_eq!(cookie_token(&h), None);
+    }
+
+    #[test]
+    fn registration_cookie() {
+        let t = crypto::new_token();
+        let s = set_reg_cookie(&t).to_str().unwrap().to_string();
+        for attr in ["__Host-krunk_reg=", "Path=/", "Secure", "HttpOnly", "SameSite=Lax", "Max-Age=86400"] {
+            assert!(s.contains(attr), "{s}");
+        }
+        assert!(!s.contains("Domain"));
+        let mut h = HeaderMap::new();
+        h.insert(header::COOKIE, HeaderValue::from_str(&format!("{COOKIE}=x; {REG_COOKIE}={t}")).unwrap());
+        assert_eq!(reg_cookie_token(&h).as_deref(), Some(t.as_str()));
+        assert_eq!(cookie_token(&h), None, "the session cookie is not the registration cookie");
+        assert!(clear_reg_cookie().to_str().unwrap().contains("Max-Age=0"));
     }
 
     #[test]

@@ -23,7 +23,7 @@ use crate::ratelimit::{self as rl, hit};
 use crate::sessions::{self, WebSession};
 use crate::totp;
 use axum::extract::State;
-use axum::http::{header, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::{DateTime, Utc};
@@ -79,6 +79,23 @@ fn email_token_hash(keys: &Keys, token: &str) -> [u8; 32] {
     crypto::hmac(&keys.token_hmac, "krunk-email-token", &[token.as_bytes()])
 }
 
+fn reg_poll_hash(keys: &Keys, token: &str) -> [u8; 32] {
+    crypto::hmac(&keys.token_hmac, "krunk-reg-poll", &[token.as_bytes()])
+}
+
+fn reg_cookie_hash(keys: &Keys, token: &str) -> [u8; 32] {
+    crypto::hmac(&keys.token_hmac, "krunk-reg-cookie", &[token.as_bytes()])
+}
+
+/// The server's copy of the site's `safeNext()` (account.js): the only places a sign-in may go
+/// on to.
+pub(crate) fn safe_next(n: &str) -> bool {
+    let link = n
+        .strip_prefix("/link?code=")
+        .is_some_and(|c| (1..=12).contains(&c.len()) && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
+    link || matches!(n, "/account/" | "/account/#add-device" | "/account/#export" | "/account/delete")
+}
+
 fn backup_code_hash(keys: &Keys, normalized: &str) -> [u8; 32] {
     crypto::hmac(&keys.token_hmac, "krunk-backup-code", &[normalized.as_bytes()])
 }
@@ -102,6 +119,7 @@ pub(crate) fn check_lengths(fields: &[(&str, usize)]) -> Result<(), ApiError> {
 pub(crate) const EMAIL_MAX: usize = 254;
 pub(crate) const PASSWORD_MAX: usize = 1024;
 const TOKEN_MAX: usize = 64;
+const NEXT_MAX: usize = 64;
 pub(crate) const TURNSTILE_MAX: usize = 2048;
 pub(crate) const CODE_MAX: usize = 32;
 
@@ -111,13 +129,28 @@ pub struct RegisterReq {
     email: String,
     password: String,
     turnstile: String,
+    /// Where the site goes once signed in (a `safeNext()` path; anything else is dropped).
+    #[serde(default)]
+    next: Option<String>,
+    /// The `/link` code of the Krunk tab the registration started from (auto-link).
+    #[serde(default)]
+    link_code: Option<String>,
 }
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct VerifyReq {
     token: String,
-    password: String,
+    /// Not needed in the browser that registered (`__Host-krunk_reg`); elsewhere the first try
+    /// without it answers 401 `password_required`.
+    #[serde(default)]
+    password: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegPollReq {
+    reg_poll: String,
 }
 
 #[derive(Deserialize)]
@@ -348,14 +381,23 @@ fn ip_key(state: &AppState, client: &Client) -> [u8; 32] {
 
 // ---- Handlers -------------------------------------------------------------------------------
 
-/// `POST web/register` → 202 `{status:"check_email"}`, whatever the address.
+/// `POST web/register` → 202 `{status:"check_email", reg_poll}` + the registration cookie,
+/// whatever the address: the same rows, mail and work for a new, an unverified and a verified
+/// address (the last gets a "you already have an account" mail and a registration that never
+/// completes). `reg_poll` is for `web/register/poll`.
 pub async fn register(
     State(state): State<AppState>,
     client: Client,
     JsonBody(req): JsonBody<RegisterReq>,
 ) -> ApiResult {
     hit(&state.db, rl::REGISTER_IP, &ip_key(&state, &client)).await?;
-    check_lengths(&[(&req.email, EMAIL_MAX), (&req.password, PASSWORD_MAX), (&req.turnstile, TURNSTILE_MAX)])?;
+    check_lengths(&[
+        (&req.email, EMAIL_MAX),
+        (&req.password, PASSWORD_MAX),
+        (&req.turnstile, TURNSTILE_MAX),
+        (req.next.as_deref().unwrap_or(""), NEXT_MAX),
+        (req.link_code.as_deref().unwrap_or(""), CODE_MAX),
+    ])?;
     let email = email_or_400(&req.email)?;
     policy(&req.password, &email)?;
     state.turnstile.verify(&state.db, &req.turnstile, "register", client.ip()).await?;
@@ -366,6 +408,7 @@ pub async fn register(
     })?;
     let keys = &state.config.keys;
     let site = &state.config.public_base_url;
+    let next = req.next.filter(|n| safe_next(n));
     let mut tx = state.db.begin().await?;
     let existing: Option<(Uuid, bool)> =
         sqlx::query_as("SELECT id, email_verified_at IS NOT NULL FROM accounts WHERE email = $1::citext FOR UPDATE")
@@ -409,8 +452,131 @@ pub async fn register(
         mail::enqueue(&mut tx, Some(id), &email, Template::Verify, json!({ "link": link })).await?;
         ip_event(&mut tx, id, "register", &client, Source::None).await?;
     }
+    // The registration, for every address alike. Earlier registrations of this account are
+    // voided (the query runs, matching nothing, when no mail was sent): their password is gone.
+    sqlx::query("UPDATE registrations SET voided = true WHERE account_id = $1 AND NOT voided")
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+    let attached = match req.link_code.as_deref() {
+        Some(code) => crate::devices::attach_for_registration(&mut tx, keys, code, &client).await?,
+        None => None,
+    };
+    let reg_poll = crypto::new_token();
+    let reg_cookie = crypto::new_token();
+    sqlx::query(
+        "INSERT INTO registrations (id, poll_hash, cookie_hash, account_id, next, link_device_code_hash, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now() + make_interval(hours => $7))",
+    )
+    .bind(Uuid::new_v4())
+    .bind(reg_poll_hash(keys, &reg_poll).as_slice())
+    .bind(reg_cookie_hash(keys, &reg_cookie).as_slice())
+    .bind(account_id)
+    .bind(next.as_deref())
+    .bind(attached.as_deref())
+    .bind(VERIFY_TTL_H)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
-    Ok(status(StatusCode::ACCEPTED, "check_email"))
+    let mut res =
+        (StatusCode::ACCEPTED, Json(json!({ "status": "check_email", "reg_poll": reg_poll }))).into_response();
+    res.headers_mut().insert(header::SET_COOKIE, sessions::set_reg_cookie(&reg_cookie));
+    Ok(res)
+}
+
+/// What a registration's sign-in (verify page or the registering page's poll) reports.
+#[derive(Serialize)]
+struct SignedIn {
+    csrf: String,
+    next: Option<String>,
+    /// `linked`: the Krunk the registration started from is now signed in; `unavailable`: its
+    /// code expired or was denied meanwhile (sign in from Krunk again); `null`: no auto-link.
+    link: Option<String>,
+    linked: Option<LinkedDevice>,
+}
+
+#[derive(Serialize)]
+struct LinkedDevice {
+    label: String,
+    platform: String,
+}
+
+fn linked_device(outcome: Option<&str>, label: Option<String>, platform: Option<String>) -> Option<LinkedDevice> {
+    match (outcome, label, platform) {
+        (Some("linked"), Some(label), Some(platform)) => {
+            Some(LinkedDevice { label: crate::devices::display_label(&label), platform })
+        }
+        _ => None,
+    }
+}
+
+fn reg_poll_error(code: &'static str) -> ApiError {
+    let message = match code {
+        "authorization_pending" => "Waiting for the email address to be confirmed.",
+        _ => "This registration has expired. Sign in, or register again.",
+    };
+    ApiError::bad_request(code, message)
+}
+
+#[derive(sqlx::FromRow)]
+struct RegPollRow {
+    id: Uuid,
+    account_id: Option<Uuid>,
+    expired: bool,
+    verified: bool,
+    voided: bool,
+    next: Option<String>,
+    link_outcome: Option<String>,
+    linked_label: Option<String>,
+    linked_platform: Option<String>,
+}
+
+/// `POST web/register/poll {reg_poll}` → 400 `authorization_pending` until the registration's
+/// address is confirmed, then once 200 with a website session (cookie + `SignedIn`); 400
+/// `expired_token` when unknown, spent or expired.
+pub async fn register_poll(
+    State(state): State<AppState>,
+    client: Client,
+    JsonBody(req): JsonBody<RegPollReq>,
+) -> ApiResult {
+    hit(&state.db, rl::REG_POLL_IP, &ip_key(&state, &client)).await?;
+    if req.reg_poll.len() > TOKEN_MAX || crypto::b64url_decode::<32>(&req.reg_poll).is_none() {
+        return Err(reg_poll_error("expired_token"));
+    }
+    let keys = &state.config.keys;
+    let mut tx = state.db.begin().await?;
+    let row: Option<RegPollRow> = sqlx::query_as(
+        "SELECT id, account_id, expires_at < now() AS expired, verified_at IS NOT NULL AS verified, voided, next,
+                link_outcome, linked_label, linked_platform
+         FROM registrations WHERE poll_hash = $1 FOR UPDATE",
+    )
+    .bind(reg_poll_hash(keys, &req.reg_poll).as_slice())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(r) = row else { return Err(reg_poll_error("expired_token")) };
+    if r.expired {
+        return Err(reg_poll_error("expired_token"));
+    }
+    let account_id = match (r.account_id, r.verified, r.voided) {
+        (Some(id), true, false) => id,
+        _ => return Err(reg_poll_error("authorization_pending")),
+    };
+    let (session_id, token, csrf) =
+        sessions::create(&mut tx, keys, account_id, &client, sessions::Via::Password, true).await?;
+    sqlx::query("UPDATE registrations SET poll_hash = NULL WHERE id = $1").bind(r.id).execute(&mut *tx).await?;
+    sqlx::query("UPDATE accounts SET last_active_at = now() WHERE id = $1").bind(account_id).execute(&mut *tx).await?;
+    ip_event(&mut tx, account_id, "login", &client, Source::Web(session_id)).await?;
+    tx.commit().await?;
+    tracing::info!("signed in by the registration poll");
+    let body = SignedIn {
+        csrf,
+        next: r.next,
+        linked: linked_device(r.link_outcome.as_deref(), r.linked_label, r.linked_platform),
+        link: r.link_outcome,
+    };
+    let mut res = Json(body).into_response();
+    res.headers_mut().insert(header::SET_COOKIE, sessions::set_cookie(&token));
+    Ok(res)
 }
 
 #[derive(sqlx::FromRow)]
@@ -445,33 +611,126 @@ async fn lookup_token(state: &AppState, token: &str, kind: &str) -> Result<Token
     }
 }
 
-/// `POST web/verify-email` `{token, password}` → 200.
+fn password_required() -> ApiError {
+    ApiError::new(StatusCode::UNAUTHORIZED, "password_required", "Enter your password to confirm this address.")
+}
+
+#[derive(sqlx::FromRow)]
+struct VerifiedReg {
+    id: Uuid,
+    next: Option<String>,
+    link_device_code_hash: Option<Vec<u8>>,
+}
+
+/// `POST web/verify-email` `{token, password?}` → 200 `SignedIn` + a website session; the
+/// account's registration completes too (its page's poll signs in, and the Krunk it started from
+/// is linked). The password is not needed in the browser that registered (its
+/// `__Host-krunk_reg` matches a live registration of this very account); anywhere else the first
+/// try without one gets 401 `password_required`, and the link stays usable.
 pub async fn verify_email(
     State(state): State<AppState>,
     client: Client,
+    headers: HeaderMap,
     JsonBody(req): JsonBody<VerifyReq>,
 ) -> ApiResult {
     hit(&state.db, rl::VERIFY_IP, &ip_key(&state, &client)).await?;
-    check_lengths(&[(&req.token, TOKEN_MAX), (&req.password, PASSWORD_MAX)])?;
+    check_lengths(&[(&req.token, TOKEN_MAX), (req.password.as_deref().unwrap_or(""), PASSWORD_MAX)])?;
     let row = lookup_token(&state, &req.token, "verify").await?;
-    if !state.passwords.verify(&req.password, Some(&row.pw_phc)).await {
-        return Err(wrong_password());
+    let keys = &state.config.keys;
+    let same_browser = match sessions::reg_cookie_token(&headers) {
+        Some(c) => {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM registrations WHERE cookie_hash = $1 AND account_id = $2
+                            AND NOT voided AND expires_at > now())",
+            )
+            .bind(reg_cookie_hash(keys, &c).as_slice())
+            .bind(row.account_id)
+            .fetch_one(&state.db)
+            .await?
+        }
+        None => false,
+    };
+    if !same_browser {
+        match req.password.as_deref().filter(|p| !p.is_empty()) {
+            None => return Err(password_required()),
+            Some(p) if !state.passwords.verify(p, Some(&row.pw_phc)).await => return Err(wrong_password()),
+            Some(_) => {}
+        }
     }
     let mut tx = state.db.begin().await?;
+    // A registration of the address since the checks above deleted this token (and voided the
+    // registration), so the token is the guard.
     let n = sqlx::query("UPDATE email_tokens SET used_at = now() WHERE hash = $1 AND used_at IS NULL")
-        .bind(email_token_hash(&state.config.keys, &req.token).as_slice())
+        .bind(email_token_hash(keys, &req.token).as_slice())
         .execute(&mut *tx)
         .await?
         .rows_affected();
     if n != 1 {
         return Err(ApiError::bad_request("invalid_link", "This link is not valid. Request a new one."));
     }
-    sqlx::query("UPDATE accounts SET email_verified_at = coalesce(email_verified_at, now()) WHERE id = $1")
+    sqlx::query("UPDATE accounts SET email_verified_at = coalesce(email_verified_at, now()), last_active_at = now() WHERE id = $1")
         .bind(row.account_id)
         .execute(&mut *tx)
         .await?;
+    let (session_id, token, csrf) =
+        sessions::create(&mut tx, keys, row.account_id, &client, sessions::Via::Password, true).await?;
+    ip_event(&mut tx, row.account_id, "email_verified", &client, Source::Web(session_id)).await?;
+    let regs: Vec<VerifiedReg> = sqlx::query_as(
+        "UPDATE registrations SET verified_at = now()
+         WHERE account_id = $1 AND NOT voided AND verified_at IS NULL AND expires_at > now()
+         RETURNING id, next, link_device_code_hash",
+    )
+    .bind(row.account_id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let next = regs.iter().find_map(|r| r.next.clone());
+    let mut link = None;
+    let mut linked = None;
+    if let Some(r) = regs.iter().find(|r| r.link_device_code_hash.is_some()) {
+        let hash = r.link_device_code_hash.as_deref().unwrap_or_default();
+        let approver = crate::devices::Approver { account_id: row.account_id, email: row.email.clone(), session_id };
+        // A savepoint: whatever goes wrong with the link (quota, say), the address stays confirmed.
+        let mut sp = sqlx::Acquire::begin(&mut tx).await?;
+        let outcome = match crate::devices::attached_grant(&mut sp, hash).await? {
+            Some(g) => match crate::devices::approve_grant(&mut sp, &state, &approver, &client, &g).await {
+                Ok(_) => Some(g),
+                Err(e) => {
+                    tracing::info!(error = e.code, "auto-link at verification failed");
+                    None
+                }
+            },
+            None => None,
+        };
+        match outcome {
+            Some(g) => {
+                sp.commit().await?;
+                tracing::info!("device linked at verification");
+                sqlx::query(
+                    "UPDATE registrations SET link_outcome = 'linked', linked_label = $2, linked_platform = $3 WHERE id = $1",
+                )
+                .bind(r.id)
+                .bind(&g.label)
+                .bind(&g.platform)
+                .execute(&mut *tx)
+                .await?;
+                linked = linked_device(Some("linked"), Some(g.label), Some(g.platform));
+                link = Some("linked".to_string());
+            }
+            None => {
+                sp.rollback().await?;
+                sqlx::query("UPDATE registrations SET link_outcome = 'unavailable' WHERE id = $1")
+                    .bind(r.id)
+                    .execute(&mut *tx)
+                    .await?;
+                link = Some("unavailable".to_string());
+            }
+        }
+    }
     tx.commit().await?;
-    Ok(status(StatusCode::OK, "verified"))
+    let mut res = Json(SignedIn { csrf, next, link, linked }).into_response();
+    res.headers_mut().insert(header::SET_COOKIE, sessions::set_cookie(&token));
+    res.headers_mut().append(header::SET_COOKIE, sessions::clear_reg_cookie());
+    Ok(res)
 }
 
 /// `POST web/resend-verification` → 202, whatever the address.
@@ -553,7 +812,8 @@ pub async fn login(State(state): State<AppState>, client: Client, JsonBody(req):
     }
     let mut tx = state.db.begin().await?;
     login_succeeded(&mut tx, &ekey).await?;
-    let (session_id, token, csrf) = sessions::create(&mut tx, keys, row.id, &client, sessions::Via::Password).await?;
+    let (session_id, token, csrf) =
+        sessions::create(&mut tx, keys, row.id, &client, sessions::Via::Password, true).await?;
     sqlx::query("UPDATE accounts SET last_active_at = now() WHERE id = $1").bind(row.id).execute(&mut *tx).await?;
     ip_event(&mut tx, row.id, "login", &client, Source::Web(session_id)).await?;
     tx.commit().await?;
@@ -901,6 +1161,27 @@ pub async fn totp_disable(
 mod tests {
     use super::*;
     use crate::api::truncate_chars;
+
+    #[test]
+    fn next_paths_match_the_site() {
+        for ok in ["/link?code=ABCD-EFGH", "/account/", "/account/#add-device", "/account/#export", "/account/delete"] {
+            assert!(safe_next(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "/",
+            "https://evil.example/",
+            "//evil.example",
+            "/link?code=",
+            "/link?code=ABCD-EFGH&x=1",
+            "/link?code=ABCDEFGHJKMNP",
+            "/account",
+            "/account/#other",
+            "/link?code=AB%2F",
+        ] {
+            assert!(!safe_next(bad), "{bad}");
+        }
+    }
 
     #[test]
     fn emails() {
