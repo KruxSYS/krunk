@@ -2,9 +2,13 @@ use std::net::IpAddr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::slice;
 use std::str;
-use std::sync::{Once, OnceLock, mpsc};
+use std::sync::Once;
+#[cfg(not(target_os = "android"))]
+use std::sync::{OnceLock, mpsc};
 
+#[cfg(not(target_os = "android"))]
 use hickory_resolver::TokioResolver;
+#[cfg(not(target_os = "android"))]
 use tokio::runtime::{Builder, Runtime};
 
 use crate::{ovpn_rust_backend_register, ovpn_rust_backend_vtable, ovpn_rust_ip_address};
@@ -15,12 +19,14 @@ mod tls;
 const IPV4_FAMILY: u8 = 4;
 const IPV6_FAMILY: u8 = 6;
 
+#[cfg(not(target_os = "android"))]
 struct ResolverRuntime {
     runtime: Runtime,
     resolver: TokioResolver,
 }
 
 static INSTALL: Once = Once::new();
+#[cfg(not(target_os = "android"))]
 static RESOLVER: OnceLock<Result<ResolverRuntime, String>> = OnceLock::new();
 
 /// Installs the Rust implementation used by the native OpenVPN Core adapter.
@@ -112,7 +118,30 @@ fn resolve_host(host: &str) -> Result<Vec<IpAddr>, String> {
     if let Ok(address) = host.parse() {
         return Ok(vec![address]);
     }
+    resolve_name(host)
+}
 
+/// Android (Krunk patch): the system resolver, bionic `getaddrinfo`. hickory-resolver reads the
+/// Android DNS configuration through JNI (`ndk_context`), which a library loaded by JNA/UniFFI
+/// never initialises. Core calls this from its own thread and waits for the answer, so a
+/// blocking lookup is what the callback needs.
+#[cfg(target_os = "android")]
+fn resolve_name(host: &str) -> Result<Vec<IpAddr>, String> {
+    use std::net::ToSocketAddrs;
+    let mut addresses: Vec<IpAddr> = Vec::new();
+    for address in (host, 0u16).to_socket_addrs().map_err(|error| error.to_string())? {
+        if !addresses.contains(&address.ip()) {
+            addresses.push(address.ip());
+        }
+    }
+    if addresses.is_empty() {
+        return Err(format!("no addresses for {host}"));
+    }
+    Ok(addresses)
+}
+
+#[cfg(not(target_os = "android"))]
+fn resolve_name(host: &str) -> Result<Vec<IpAddr>, String> {
     let state = resolver_runtime()?;
     let resolver = state.resolver.clone();
     let host = host.to_owned();
@@ -130,6 +159,7 @@ fn resolve_host(host: &str) -> Result<Vec<IpAddr>, String> {
         .map_err(|error| format!("DNS runtime stopped before returning a result: {error}"))?
 }
 
+#[cfg(not(target_os = "android"))]
 fn resolver_runtime() -> Result<&'static ResolverRuntime, String> {
     RESOLVER
         .get_or_init(|| {

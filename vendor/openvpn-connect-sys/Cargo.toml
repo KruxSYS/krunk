@@ -86,9 +86,6 @@ version = "0.10.7"
 [dependencies.getrandom]
 version = "0.3.4"
 
-[dependencies.hickory-resolver]
-version = "0.26.1"
-
 [dependencies.hmac]
 version = "0.12.1"
 
@@ -136,9 +133,6 @@ version = "0.10.6"
 [dependencies.sha2]
 version = "0.10.9"
 
-[dependencies.tokio]
-version = "1"
-features = ["rt-multi-thread"]
 
 [dependencies.x509-parser]
 version = "0.18.1"
@@ -166,3 +160,12 @@ priority = -1
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
+
+# Krunk patch: no hickory (and its JNI/ndk-context Android system-config path) on Android; the
+# Rust backend resolves with bionic getaddrinfo there (src/rust_backend.rs).
+[target.'cfg(not(target_os = "android"))'.dependencies.hickory-resolver]
+version = "0.26.1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies.tokio]
+version = "1"
+features = ["rt-multi-thread"]

@@ -24,6 +24,12 @@ directory is the `.crate` archive unpacked as it is, plus only these changes:
   Krunk never uses a TAP adapter. With it, `source scripts/xwin-env.sh && cargo xwin build`
   needs no extra flags.
 - `openvpn-connect-sys/build.rs`: `cargo:rerun-if-changed=win-include`.
+- `openvpn-connect-sys/src/rust_backend.rs`, `Cargo.toml`, `Cargo.toml.orig` (Krunk for Android
+  0.10.0): on Android the Rust backend resolves the server name with `std::net::ToSocketAddrs`
+  (bionic `getaddrinfo`) instead of hickory-resolver, whose Android system-config path needs JNI
+  (`ndk_context`) that a JNA-loaded library never has; `hickory-resolver` and `tokio` are
+  `cfg(not(target_os = "android"))` dependencies, so hickory, `jni` and `ndk-context` drop out of
+  the Android build. Recorded in `openvpn-connect-sys/PATCHES.md`.
 - `rustfmt.toml` in both (rustfmt defaults, so `cargo fmt --all -- --check` keeps the upstream
   formatting) and `openvpn-connect-sys/.gitignore` (`!build/`: the root `.gitignore` ignores
   `build/`, which here holds the build script's modules).

@@ -41,3 +41,16 @@ The C++ bridge also reserves headroom when it receives clear packets from an
 external TUN. OpenVPN Core prepends data-channel framing before encrypting a
 packet; a zero-headroom buffer raised `buffer_headroom` for CBC sessions. The
 native callback self-test now checks the received bytes and headroom.
+
+## Krunk change: no Hickory on Android (Krunk for Android 0.10.0, spike S1)
+
+On Android, Hickory reads the system DNS configuration through JNI
+(`hickory-resolver/src/system_conf/android.rs`, `ndk_context::android_context()`),
+which is only initialised by NativeActivity-style apps, never by a library that
+JNA/UniFFI loads. So on `target_os = "android"` the Rust backend's resolver
+callback (`src/rust_backend.rs`, `resolve_name`) uses `std::net::ToSocketAddrs`,
+i.e. bionic `getaddrinfo` (the system resolver), called directly on Core's
+resolver thread, which already waits for the answer. `hickory-resolver` and
+`tokio` are dependencies only off Android (`Cargo.toml` and `Cargo.toml.orig`,
+`[target.'cfg(not(target_os = "android"))'.dependencies]`), so `hickory-*`, `jni`
+and `ndk-context` are not in the Android build. Other platforms are unchanged.
