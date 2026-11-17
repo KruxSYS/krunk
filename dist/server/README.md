@@ -155,6 +155,60 @@ and only when accounts are open. Mail goes through an outbox in Postgres, sent b
 Usage, Activity with full IPs, the data download, sync reset and account deletion
 (PROTOCOL §11.2). New mails: `qr_sign_in`, `sync_reset`, `account_deleted`.
 
+**One-step registration (service 2026-11-17).** Register → click the link in the mail → signed
+in. When the registration started from Krunk's **Sign in** (the `/link?code=…` tab), that Krunk
+is signed in to the new account too, with no further sign-in, code check or password.
+- **`next` is kept.** The sign-in and registration pages pass `?next=` to each other, and only
+  paths the site's `safeNext()` accepts (`/link?code=…`, `/account/`, `/account/#add-device`,
+  `/account/#export`, `/account/delete`). The server keeps the same list (`accounts.rs::safe_next`).
+- **`POST web/register`** `{email, password, turnstile, next?, link_code?}` → 202
+  `{status:"check_email", reg_poll}` and the cookie **`__Host-krunk_reg`** (random, HttpOnly,
+  Secure, `SameSite=Lax` so it comes along on the click from the mail client, 24 hours; only its
+  HMAC is stored). Every address gets the same answer, cookie, rows and work, including an
+  already verified address, whose registration simply never completes. So nothing reveals whether
+  an account exists. A later registration of the same unverified address voids the earlier ones,
+  as it already replaced their password.
+- **`POST web/register/poll`** `{reg_poll}` → 400 `authorization_pending` until the address is
+  confirmed. Then, once, 200 with a website session (cookie + `{csrf, next, link, linked}`);
+  afterwards, or when unknown or expired, 400 `expired_token`. It is limited to 1500 an hour per IP
+  (`reg-poll/ip`). The "check your email" card polls every 3 s for 10 minutes, then every 15 s for
+  the link's 24 hours, and waits longer on `slow_down`/429. A resent mail completes the same
+  registration.
+- **`POST web/verify-email`** `{token, password?}` → 200 `{csrf, next, link, linked}` with a
+  website session, so verifying signs you in. In the browser that registered (its
+  `__Host-krunk_reg` matches a live, not voided registration of this very account) no password is
+  needed. Anywhere else the first try answers 401 `password_required`, without spending the link,
+  and the page asks for the password once. A password that is sent must be right, even in the
+  registering browser. The pre-registration hijack defence is unchanged: only someone holding both
+  the mailbox and the password (or the registering browser) confirms.
+- **Auto-link.** `link_code` is attached to the registration only if:
+  - the grant is pending and unexpired;
+  - the grant was asked for by Krunk's own client (the user agent stored at `link/authorize`
+    parses as `Krunk/x.y`);
+  - the register request comes from the **same client IP** as the grant.
+
+  Otherwise the code is ignored and `/link` works as always. This is checked on the grant's user
+  agent, not the register request's, because Krunk's tabs send the engine's user agent (Chrome on
+  Windows, GeckoView on Android). The same-IP check is the one that stops a `/link` URL sent to
+  someone else (device-code phishing).
+  - An attached grant waits an hour (`AUTO_LINK_TTL_S`), and `link/token` keeps answering
+    `authorization_pending`. The extension is done for every address alike.
+  - Verifying approves it for the new account through the shared `approve_grant`: device quota,
+    `short`, device row, the `device_linked` mail and the event. This runs in a savepoint inside
+    the verification's transaction. If the grant expired or was denied meanwhile, or the quota is
+    full, the address is still confirmed and `link` is `"unavailable"`: the page says "Open Krunk →
+    Settings → Account → Sign in to finish", and with the fresh session that is one click on `/link`.
+  - Krunk apps up to 0.23.0 / Android 0.10.0 stop polling after the code's own 10 minutes. With
+    those, a slower confirmation ends the same way.
+- **Re-auth right after a sign-in.** Sign-ins by password (`web/login`, verification, the
+  registration poll) start with `reauth_at = now()`. For 10 minutes after signing in, the actions
+  that need a recent password therefore don't ask again: `/link` approval, "Add a device", removing
+  devices, "sign out everywhere else". The manual `/link` path still needs the code ticked.
+- **Data:** migration `0010_registrations.sql` adds the `registrations` table only. Housekeeping
+  deletes registrations a day after they expire or complete. Activity shows `email_verified`.
+- **Password entries:** registering from Krunk = 1 (the register form), or 2 when the mail is
+  opened in another browser. An existing user signing in from Krunk = 1.
+
 **Testing accounts** (staging or a local stack). The test values go into `staging.env` at the
 repository root: gitignored, so never in a commit and never in a live deploy, which is a copy of a
 commit plus its `.env`. The mail sink isn't in compose at all; a script attaches it to the

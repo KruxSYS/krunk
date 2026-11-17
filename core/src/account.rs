@@ -24,6 +24,11 @@ use serde::{Deserialize, Serialize};
 pub const PLATFORM: &str = "windows";
 /// The longest wait between two polls Krunk accepts from the server.
 const MAX_INTERVAL_S: u64 = 60;
+/// The longest a sign-in keeps waiting (one-step registration, service 2026-11-17): a code
+/// that a registration from its `/link` tab attached waits on the server for the confirmation
+/// mail (an hour), so while the server still answers `authorization_pending` Krunk keeps
+/// polling past the code's own 10 minutes, up to this cap from the start.
+pub const MAX_LINK_WAIT_S: i64 = 3600;
 /// Response bodies of the account API are small.
 pub const MAX_RESPONSE: usize = 64 * 1024;
 
@@ -277,8 +282,11 @@ pub struct Linking {
     pub device_code: Secret,
     pub user_code: String,
     pub verify_url: String,
-    /// When the code expires (ms since the epoch).
+    /// When the code expires (ms since the epoch). Moved on to `give_up_at_ms` once the server
+    /// still answers `authorization_pending` after it (the code waits for a registration).
     pub expires_at_ms: i64,
+    /// Polling ends here whatever the server says ([`MAX_LINK_WAIT_S`] after the start).
+    pub give_up_at_ms: i64,
     pub interval_s: u64,
     /// The sign-in link as a QR code, a checked `data:` URL (0.13.0).
     pub qr: Option<String>,
@@ -319,6 +327,7 @@ impl Linking {
             verify_url: a.verification_uri_complete,
             user_code: a.user_code,
             expires_at_ms: now_ms + (a.expires_in.min(3600) as i64) * 1000,
+            give_up_at_ms: now_ms + MAX_LINK_WAIT_S * 1000,
             interval_s: a.interval.clamp(1, MAX_INTERVAL_S),
             qr: a.qr_svg.as_deref().and_then(qr_data_url),
         })
@@ -337,11 +346,23 @@ impl Linking {
                 Next::Poll(s.interval_s * 1000)
             }
         };
+        // The server is the judge of the code's lifetime: "pending" after the local deadline means
+        // it waits longer (a registration attached it), so wait on, up to the cap.
+        let extend = |s: &mut Linking| {
+            let next_at = now_ms + (s.interval_s as i64) * 1000;
+            if next_at > s.expires_at_ms && next_at <= s.give_up_at_ms {
+                s.expires_at_ms = s.give_up_at_ms;
+            }
+        };
         match p {
             Poll::Done(t) => Next::SignedIn(t),
-            Poll::Pending => wait(self),
+            Poll::Pending => {
+                extend(self);
+                wait(self)
+            }
             Poll::SlowDown => {
                 self.interval_s = (self.interval_s + 5).min(MAX_INTERVAL_S);
+                extend(self);
                 wait(self)
             }
             Poll::Expired => Next::Stop(EXPIRED_TEXT),
@@ -530,10 +551,6 @@ mod tests {
             matches!(l.next(Poll::Failed(Failure::Offline), 1_030_000), Next::Poll(15000)),
             "a hiccup: keep waiting"
         );
-        assert!(
-            matches!(l.next(Poll::Pending, 1_590_000), Next::Stop(EXPIRED_TEXT)),
-            "the next poll would be after expiry"
-        );
         assert!(matches!(l.next(Poll::Expired, 1_100_000), Next::Stop(EXPIRED_TEXT)));
         assert!(matches!(l.next(Poll::Denied, 1_100_000), Next::Stop(DENIED_TEXT)));
         assert!(matches!(l.next(Poll::Failed(Failure::NotAvailable), 1_100_000), Next::Stop(_)));
@@ -548,6 +565,26 @@ mod tests {
         a.interval = 999;
         let mut l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
         assert!(matches!(l.next(Poll::SlowDown, 0), Next::Poll(60000)));
+    }
+
+    #[test]
+    fn linking_waits_past_the_code_while_the_server_says_pending() {
+        let start = 1_000_000;
+        let mut l = Linking::start(authorized(), Some("https://krunk.209.wf"), start).unwrap();
+        assert_eq!(l.give_up_at_ms, start + MAX_LINK_WAIT_S * 1000);
+        // A hiccup near the code's end doesn't stretch it: only the server's "pending" does.
+        assert!(matches!(l.next(Poll::Failed(Failure::Offline), 1_598_000), Next::Stop(EXPIRED_TEXT)));
+        let mut l = Linking::start(authorized(), Some("https://krunk.209.wf"), start).unwrap();
+        assert!(matches!(l.next(Poll::Pending, 1_598_000), Next::Poll(5000)), "past the 10 minutes: wait on");
+        assert_eq!(l.expires_at_ms, l.give_up_at_ms);
+        assert!(matches!(l.next(Poll::Pending, 3_000_000), Next::Poll(5000)));
+        assert!(matches!(l.next(Poll::Failed(Failure::Server), 3_100_000), Next::Poll(5000)));
+        assert!(matches!(l.next(Poll::SlowDown, 3_200_000), Next::Poll(10000)));
+        // The server ends it as soon as the code is gone or denied ...
+        assert!(matches!(l.clone().next(Poll::Expired, 3_300_000), Next::Stop(EXPIRED_TEXT)));
+        assert!(matches!(l.clone().next(Poll::Denied, 3_300_000), Next::Stop(DENIED_TEXT)));
+        // ... and the cap an hour after the start, whatever it says.
+        assert!(matches!(l.next(Poll::Pending, start + 3_595_000), Next::Stop(EXPIRED_TEXT)));
     }
 
     #[test]
