@@ -32,6 +32,7 @@ mod s10;
 mod s3;
 mod s6;
 mod s7;
+mod websignin;
 
 static N: AtomicU32 = AtomicU32::new(0);
 

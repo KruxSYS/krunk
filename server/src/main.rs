@@ -34,6 +34,7 @@ mod secrets;
 mod sessions;
 mod totp;
 mod turnstile;
+mod websignin;
 
 use std::net::SocketAddr;
 use std::process::ExitCode;

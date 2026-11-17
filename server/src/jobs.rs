@@ -19,7 +19,7 @@ use sqlx::PgPool;
 use std::time::Duration;
 
 pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::Error> {
-    let steps: [(&str, &str); 22] = [
+    let steps: [(&str, &str); 23] = [
         (
             "session ips",
             "UPDATE web_sessions SET ip = NULL WHERE ip IS NOT NULL AND last_used_at < now() - make_interval(days => $1)",
@@ -47,6 +47,7 @@ pub async fn run_once(db: &PgPool, ip_retention_days: i32) -> Result<(), sqlx::E
             "DELETE FROM email_outbox WHERE coalesce(sent_at, failed_at) < now() - interval '7 days'",
         ),
         ("link grants", "DELETE FROM link_grants WHERE expires_at < now() - interval '10 minutes'"),
+        ("web sign-in codes", "DELETE FROM web_sign_in_codes WHERE expires_at < now() - interval '1 hour'"),
         // One-step registration: a day past expiry, or a day after it completed.
         (
             "registrations",

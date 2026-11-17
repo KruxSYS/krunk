@@ -91,7 +91,7 @@ pub async fn usage(State(state): State<AppState>, s: WebSession) -> ApiResult {
         "SELECT a.created_at AS created, a.pw_changed_at AS password_changed, a.totp_enabled AS totp,
                 a.email_verified_at IS NOT NULL AS email_verified,
                 (SELECT count(*) FROM backup_codes b WHERE b.account_id = a.id AND b.used_at IS NULL) AS backup_codes_left,
-                (SELECT max(at) FROM ip_events e WHERE e.account_id = a.id AND e.kind IN ('login', 'qr_sign_in'))
+                (SELECT max(at) FROM ip_events e WHERE e.account_id = a.id AND e.kind IN ('login', 'qr_sign_in', 'email_verified', 'device_sign_in'))
                   AS last_sign_in
          FROM accounts a WHERE a.id = $1",
     )

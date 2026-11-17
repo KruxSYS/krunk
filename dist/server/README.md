@@ -209,6 +209,26 @@ is signed in to the new account too, with no further sign-in, code check or pass
 - **Password entries:** registering from Krunk = 1 (the register form), or 2 when the mail is
   opened in another browser. An existing user signing in from Krunk = 1.
 
+**Website sign-in from a signed-in Krunk (service 2026-11-17, Krunk 0.24.0 / Android 0.11.0).**
+Opening the website in a Krunk that is signed in to the account signs the website in too.
+- A visit without a website session ends on `/account/login`. When Krunk (signed in, not a
+  private tab, not right after a website sign-out) sees that navigation on its own site, it calls
+  **`POST device/web-sign-in`** (bearer) → `{code, expires_in: 60}` and opens
+  `/account/login?auto=<code>` (keeping `next`). Only the code's HMAC is stored
+  (`web_sign_in_codes`); it is single use and dies with the device. Limits: 30 codes an hour per
+  device, 60 redemptions an hour per IP.
+- The page takes the code out of the address bar and sends **`POST web/device-sign-in`**
+  `{code}` → 200 `{csrf}` + a website session with `via = 'device'` and `via_device`, so the
+  signed-in browsers list says "Signed in by <device>", and Activity says "Signed in by Krunk"
+  (`device_sign_in`). If the code is bad or expired, the normal form shows.
+- Such a session starts **without** re-auth. Changing the password, two-step verification,
+  removing devices or deleting the account still ask for the password, so a device token never
+  gives full control of the account.
+- Signing out on the website goes to `/account/login?signed_out=1`; Krunk then leaves the site
+  signed out until it restarts.
+- Migration `0011_device_web_sign_in.sql`: the code table, the nullable `web_sessions.via_device`
+  column, and `via` allowing `'device'` (the check is only widened).
+
 **Testing accounts** (staging or a local stack). The test values go into `staging.env` at the
 repository root: gitignored, so never in a commit and never in a live deploy, which is a copy of a
 commit plus its `.env`. The mail sink isn't in compose at all; a script attaches it to the

@@ -87,6 +87,9 @@ pub const PAIR_STATUS: Limit = l("pair-status/session", 300, 10 * MIN);
 pub const PAIR_CLAIM_IP: Limit = l("pair-claim/ip", 20, HOUR);
 pub const PAIR_POLL_IP: Limit = l("pair-poll/ip", 600, HOUR);
 /// The "check your email" page polls every 3 s for its first 10 minutes, then every 15 s.
+/// Website sign-in from a signed-in Krunk: codes per device, redemptions per IP.
+pub const WEB_SIGN_IN_DEVICE: Limit = l("web-sign-in/device", 30, HOUR);
+pub const WEB_SIGN_IN_IP: Limit = l("web-sign-in/ip", 60, HOUR);
 pub const REG_POLL_IP: Limit = l("reg-poll/ip", 1500, HOUR);
 pub const PAIR_ACT: Limit = l("pair-act/account", 30, HOUR);
 // The account section and its lifecycle (S10).

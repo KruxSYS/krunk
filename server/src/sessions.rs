@@ -91,6 +91,8 @@ pub enum Via {
     Password,
     /// A phone that a signed-in browser approved by QR code (`web/pair/*`).
     Qr,
+    /// A Krunk signed in to the account opened the site (`web/device-sign-in`, websignin.rs).
+    Device,
 }
 
 impl Via {
@@ -98,6 +100,7 @@ impl Via {
         match self {
             Via::Password => "password",
             Via::Qr => "qr",
+            Via::Device => "device",
         }
     }
 }

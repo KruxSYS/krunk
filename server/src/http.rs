@@ -14,6 +14,7 @@ use crate::ratelimit;
 use crate::records;
 use crate::sessions;
 use crate::turnstile::Turnstile;
+use crate::websignin;
 use axum::extract::{ConnectInfo, DefaultBodyLimit, MatchedPath, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
@@ -83,6 +84,7 @@ pub fn router(state: AppState) -> Router {
     let web = Router::new()
         .route("/api/v1/web/register", post(accounts::register))
         .route("/api/v1/web/register/poll", post(accounts::register_poll))
+        .route("/api/v1/web/device-sign-in", post(websignin::redeem))
         .route("/api/v1/web/verify-email", post(accounts::verify_email))
         .route("/api/v1/web/resend-verification", post(accounts::resend))
         .route("/api/v1/web/login", post(accounts::login))
@@ -128,6 +130,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/v1/token/refresh", post(devices::refresh))
         .route("/api/v1/device/unlink", post(devices::unlink))
         .route("/api/v1/device/me", get(devices::device_me))
+        .route("/api/v1/device/web-sign-in", post(websignin::issue))
         // S6: keys, approvals, sync state, and devices and sessions seen from a device.
         .route("/api/v1/sync/state", get(keys::sync_state))
         .route("/api/v1/keys/head", get(keys::keys_head))

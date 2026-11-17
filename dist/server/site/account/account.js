@@ -367,7 +367,29 @@
   // ---- Pages --------------------------------------------------------------------------------
   var pages = {};
 
+  // A Krunk signed in to the account opened this page with a one-time code (`auto`): trade it
+  // for a website session and go on. Any failure just shows the form (no loop: Krunk acts on
+  // navigations only, and the code is taken out of the address bar here).
+  function autoSignIn(then) {
+    var params = new URLSearchParams(location.search);
+    var code = params.get('auto');
+    if (!code) { then(); return; }
+    params.delete('auto');
+    history.replaceState(null, '', location.pathname + (params.toString() ? '?' + params.toString() : ''));
+    if (!/^[A-Za-z0-9_-]{43}$/.test(code)) { then(); return; }
+    say('Signing you in with Krunk\u2026');
+    api('POST', 'device-sign-in', { code: code }).then(function (r) {
+      if (r.ok) { location.replace(safeNext() || '/account/'); return; }
+      say('');
+      then();
+    });
+  }
+
   pages.login = function (cfg) {
+    autoSignIn(function () { loginForm(cfg); });
+  };
+
+  function loginForm(cfg) {
     var form = $('#form');
     carryNext($('#to-register'));
     show(form, true);
@@ -387,7 +409,7 @@
       }
       say(errorText(r), 'error');
     });
-  };
+  }
 
   pages.register = function (cfg) {
     var form = $('#form');
@@ -882,6 +904,7 @@
         r.body.filter(function (x) { return x.kind === 'web'; }).forEach(function (x) {
           var badges = x.current ? [['self', 'This browser']] : [];
           if (x.via === 'qr') badges.push(['info', 'Signed in by QR']);
+          if (x.via === 'device') badges.push(['info', x.label ? 'Signed in by ' + x.label : 'Signed in by Krunk']);
           var li = row('', 'browser', uaSummary(x.user_agent), badges);
           // `ip` since the 0.13.0 server (the owner sees the full address); `ip_masked` before.
           li.appendChild(meta([timeSpan('signed in ', x.created),
@@ -951,7 +974,8 @@
     }
 
     $('#logout').addEventListener('click', function () {
-      api('POST', 'logout', {}).then(function () { location.href = '/account/login'; });
+      // signed_out=1: a Krunk signed in to the account doesn't sign the site straight back in.
+      api('POST', 'logout', {}).then(function () { location.href = '/account/login?signed_out=1'; });
     });
 
     var openAll = $('#revoke-all-open');
@@ -1363,7 +1387,7 @@
 
     // ---- Activity -------------------------------------------------------------------------------
     var KINDS = {
-      register: 'Account created', email_verified: 'Email confirmed (signed in)', login: 'Signed in', qr_sign_in: 'Signed in by QR', logout: 'Signed out',
+      register: 'Account created', email_verified: 'Email confirmed (signed in)', login: 'Signed in', qr_sign_in: 'Signed in by QR', device_sign_in: 'Signed in by Krunk', logout: 'Signed out',
       password_change: 'Password changed', password_changed: 'Password changed', password_reset: 'Password reset by email',
       totp_enabled: 'Two-step verification turned on', totp_disabled: 'Two-step verification turned off',
       device_linked: 'Device added', device_revoked: 'Device removed', sessions_revoked: 'Signed out everywhere else',

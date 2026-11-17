@@ -1058,7 +1058,8 @@ pub struct SessionItem {
     country: Option<String>,
     user_agent: Option<String>,
     label: Option<String>,
-    /// 0.13.0: how a website session was signed in, `password` or `qr` (devices: absent).
+    /// 0.13.0: how a website session was signed in, `password`, `qr` or (2026-11-17) `device`, a
+    /// Krunk signed in to the account (its name in `label`); devices: absent.
     #[serde(skip_serializing_if = "Option::is_none")]
     via: Option<String>,
     current: bool,
@@ -1094,11 +1095,12 @@ pub async fn list_sessions(
     current: Option<Uuid>,
 ) -> Result<Vec<SessionItem>, sqlx::Error> {
     let web: Vec<SessionRow> = sqlx::query_as(
-        "SELECT id, created_at, last_used_at, host(ip) AS ip, country, user_agent, NULL::text AS label,
-                coalesce(via, 'password') AS via
-         FROM web_sessions WHERE account_id = $1 AND revoked_at IS NULL
-           AND created_at > now() - make_interval(secs => $2) AND last_used_at > now() - make_interval(secs => $3)
-         ORDER BY last_used_at DESC",
+        "SELECT s.id, s.created_at, s.last_used_at, host(s.ip) AS ip, s.country, s.user_agent,
+                CASE WHEN s.via = 'device' THEN d.label END AS label, coalesce(s.via, 'password') AS via
+         FROM web_sessions s LEFT JOIN devices d ON d.id = s.via_device
+         WHERE s.account_id = $1 AND s.revoked_at IS NULL
+           AND s.created_at > now() - make_interval(secs => $2) AND s.last_used_at > now() - make_interval(secs => $3)
+         ORDER BY s.last_used_at DESC",
     )
     .bind(account_id)
     .bind(crate::sessions::MAX_AGE_S as f64)
