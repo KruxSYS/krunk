@@ -7,19 +7,20 @@ use super::*;
 /// A native client (Krunk): no cookies, no Origin; a bearer token when it has one.
 pub(super) struct Device {
     pub ip: IpAddr,
+    pub ua: &'static str,
 }
 
 impl Device {
     pub fn new() -> Device {
         let n = next();
-        Device { ip: format!("198.18.{}.{}", n / 250, n % 250 + 1).parse().unwrap() }
+        Device { ip: format!("198.18.{}.{}", n / 250, n % 250 + 1).parse().unwrap(), ua: "Krunk/0.8.0 (it-test)" }
     }
 
     pub async fn call(&self, e: &Env, method: Method, path: &str, body: Option<Value>, bearer: Option<&str>) -> Resp {
         let mut b = Request::builder()
             .method(method.clone())
             .uri(format!("/api/v1/{path}"))
-            .header(header::USER_AGENT, "Krunk/0.8.0 (it-test)");
+            .header(header::USER_AGENT, self.ua);
         if method != Method::GET {
             b = b.header(header::CONTENT_TYPE, "application/json");
         }
@@ -180,6 +181,8 @@ async fn link_flow_in_every_state() {
         (Some("Krunk 0.8.0 on Windows 11"), Some("windows"))
     );
     assert_eq!(r.body["user_code"], uc.as_str());
+    // A sign-in counts as a re-auth for 10 minutes (one-step registration); let it lapse.
+    lapse_reauth(&e.db).await;
     let r = b.post(&e, &format!("link/{uc}/approve"), json!({"confirm_code": uc})).await;
     assert_eq!((r.status, err(&r)), (StatusCode::FORBIDDEN, "reauth_required"));
     assert_eq!(b.post(&e, "reauth", json!({"password": PW})).await.status, StatusCode::NO_CONTENT);
@@ -253,7 +256,7 @@ async fn code_lookups_are_limited() {
     // limit is used up.
     let r = b.post(&e, "link/AAAA-AAAA/deny", json!({})).await;
     assert_eq!(r.status, StatusCode::TOO_MANY_REQUESTS);
-    let mut fresh = Browser { ip: "203.0.113.200".parse().unwrap(), cookie: None, csrf: None };
+    let mut fresh = Browser::at("203.0.113.200".parse().unwrap());
     login(&e, &mut fresh, "guess@example.org", PW, None).await;
     fresh.post(&e, "reauth", json!({"password": PW})).await;
     for i in 0..5 {
@@ -273,6 +276,7 @@ async fn code_lookups_are_limited() {
         let (_, uc) = d.authorize(&e).await;
         assert_eq!(owner.get(&e, &format!("link/{uc}")).await.status, StatusCode::OK);
         if i == 0 {
+            lapse_reauth(&e.db).await;
             let r = owner.post(&e, &format!("link/{uc}/approve"), json!({"confirm_code": uc})).await;
             assert_eq!(err(&r), "reauth_required");
             owner.post(&e, "reauth", json!({"password": PW})).await;
@@ -285,7 +289,7 @@ async fn code_lookups_are_limited() {
     let mut answered = 5;
     let mut limited = false;
     for _ in 0..4 {
-        let mut s = Browser { ip, cookie: None, csrf: None };
+        let mut s = Browser::at(ip);
         let r = login(&e, &mut s, "guess@example.org", PW, None).await;
         assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
         for _ in 0..5 {

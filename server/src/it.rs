@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower::ServiceExt;
 
+mod reg;
 mod s10;
 mod s3;
 mod s6;
@@ -119,24 +120,42 @@ struct Browser {
     ip: IpAddr,
     cookie: Option<String>,
     csrf: Option<String>,
+    /// The registration cookie (`__Host-krunk_reg`).
+    reg: Option<String>,
+    ua: &'static str,
 }
 
 impl Browser {
     fn new() -> Browser {
         let n = next();
-        Browser { ip: format!("203.0.{}.{}", n / 250, n % 250 + 1).parse().unwrap(), cookie: None, csrf: None }
+        Browser {
+            ip: format!("203.0.{}.{}", n / 250, n % 250 + 1).parse().unwrap(),
+            cookie: None,
+            csrf: None,
+            reg: None,
+            ua: "it-test/1.0",
+        }
+    }
+
+    /// Another browser on the same IP (another profile, or a phone on the same network).
+    fn at(ip: IpAddr) -> Browser {
+        Browser { ip, ..Browser::new() }
     }
 
     async fn call(&mut self, e: &Env, method: Method, path: &str, body: Option<Value>) -> Resp {
         let mut b = Request::builder()
             .method(method.clone())
             .uri(format!("/api/v1/web/{path}"))
-            .header(header::USER_AGENT, "it-test/1.0");
+            .header(header::USER_AGENT, self.ua);
         if method != Method::GET {
             b = b.header(header::ORIGIN, "https://krunk.209.wf").header(header::CONTENT_TYPE, "application/json");
         }
-        if let Some(c) = &self.cookie {
-            b = b.header(header::COOKIE, format!("{}={c}", sessions::COOKIE));
+        let cookies: Vec<String> = [(sessions::COOKIE, &self.cookie), (sessions::REG_COOKIE, &self.reg)]
+            .iter()
+            .filter_map(|(n, v)| v.as_ref().map(|v| format!("{n}={v}")))
+            .collect();
+        if !cookies.is_empty() {
+            b = b.header(header::COOKIE, cookies.join("; "));
         }
         if let Some(c) = &self.csrf {
             b = b.header(sessions::CSRF_HEADER, c);
@@ -147,9 +166,14 @@ impl Browser {
         let (parts, body) = res.into_parts();
         let bytes = axum::body::to_bytes(body, 1 << 20).await.unwrap();
         let raw = String::from_utf8_lossy(&bytes).into_owned();
-        if let Some(set) = parts.headers.get(header::SET_COOKIE).and_then(|v| v.to_str().ok()) {
-            let v = set.split(';').next().unwrap().split_once('=').unwrap().1.to_string();
-            self.cookie = (!v.is_empty()).then_some(v);
+        for set in parts.headers.get_all(header::SET_COOKIE).iter().filter_map(|v| v.to_str().ok()) {
+            let (name, v) = set.split(';').next().unwrap().split_once('=').unwrap();
+            let v = (!v.is_empty()).then(|| v.to_string());
+            match name {
+                sessions::COOKIE => self.cookie = v,
+                sessions::REG_COOKIE => self.reg = v,
+                other => panic!("unexpected cookie {other}"),
+            }
         }
         let body: Value = serde_json::from_str(&raw).unwrap_or(Value::Null);
         if let Some(c) = body.get("csrf").and_then(|v| v.as_str()) {
@@ -189,7 +213,22 @@ async fn registered_and_verified(e: &Env, email: &str, pw: &str) -> Browser {
     let t = link_token(&e.db, email, "verify").await;
     let r = b.post(e, "verify-email", json!({"token": t, "password": pw})).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    // Verifying signs in (one-step registration); these tests start from a verified account
+    // with no sessions or sign-in events, so that session is taken back.
+    sqlx::query("DELETE FROM web_sessions WHERE account_id = (SELECT id FROM accounts WHERE email = $1::citext)")
+        .bind(email)
+        .execute(&e.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM ip_events WHERE kind = 'email_verified'").execute(&e.db).await.unwrap();
+    b.cookie = None;
+    b.csrf = None;
     b
+}
+
+/// Sign-ins start re-authenticated for 10 minutes; tests of the re-auth itself let it lapse.
+async fn lapse_reauth(db: &PgPool) {
+    sqlx::query("UPDATE web_sessions SET reauth_at = now() - interval '11 minutes'").execute(db).await.unwrap();
 }
 
 async fn login(e: &Env, b: &mut Browser, email: &str, pw: &str, totp: Option<&str>) -> Resp {
@@ -223,11 +262,19 @@ async fn register_verify_login_logout() {
     assert_eq!((mails[0].0.as_str(), mails[0].1.as_str()), ("Alice@example.org", "verify"));
     let token = link_token(&e.db, "Alice@example.org", "verify").await;
     assert!(mails[0].2["link"].as_str().unwrap().starts_with("https://krunk.209.wf/account/verify?token="));
-    let r = b.post(&e, "verify-email", json!({"token": token, "password": "not the password"})).await;
+    // Another browser (no registration cookie) needs the password.
+    let mut other = Browser::new();
+    let r = other.post(&e, "verify-email", json!({"token": token})).await;
+    assert_eq!((r.status, err(&r)), (StatusCode::UNAUTHORIZED, "password_required"));
+    let r = other.post(&e, "verify-email", json!({"token": token, "password": "not the password"})).await;
     assert_eq!(r.status, StatusCode::UNAUTHORIZED, "verifying needs the password too");
-    let r = b.post(&e, "verify-email", json!({"token": token, "password": PW})).await;
-    assert_eq!((r.status, r.body["status"].as_str()), (StatusCode::OK, Some("verified")));
-    let r = b.post(&e, "verify-email", json!({"token": token, "password": PW})).await;
+    let r = b.post(&e, "verify-email", json!({"token": token, "password": "not the password"})).await;
+    assert_eq!(r.status, StatusCode::UNAUTHORIZED, "a wrong password counts even in the registering browser");
+    let r = other.post(&e, "verify-email", json!({"token": token, "password": PW})).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
+    assert!(r.body["csrf"].is_string() && other.cookie.is_some(), "verifying signs in");
+    assert_eq!(other.get(&e, "me").await.body["reauth_valid"], true);
+    let r = other.post(&e, "verify-email", json!({"token": token, "password": PW})).await;
     assert_eq!((r.status, err(&r)), (StatusCode::BAD_REQUEST, "invalid_link"), "single use");
 
     let r = login(&e, &mut b, "ALICE@example.ORG", PW, None).await;
@@ -246,11 +293,20 @@ async fn register_verify_login_logout() {
     assert_eq!(r.body["totp"], false);
     assert_eq!(r.body["csrf"].as_str(), b.csrf.as_deref());
     // The session row: hashed token, IP, country unknown, user agent.
+    // (The other browser's verification session is ignored here.)
     let (ua, ip): (Option<String>, Option<String>) =
-        sqlx::query_as("SELECT user_agent, host(ip) FROM web_sessions").fetch_one(&e.db).await.unwrap();
+        sqlx::query_as("SELECT user_agent, host(ip) FROM web_sessions WHERE ip = $1::inet")
+            .bind(b.ip.to_string())
+            .fetch_one(&e.db)
+            .await
+            .unwrap();
     assert_eq!(ua.as_deref(), Some("it-test/1.0"));
     assert_eq!(ip, Some(b.ip.to_string()));
-    let stored: Vec<u8> = sqlx::query_scalar("SELECT token_hash FROM web_sessions").fetch_one(&e.db).await.unwrap();
+    let stored: Vec<u8> = sqlx::query_scalar("SELECT token_hash FROM web_sessions WHERE ip = $1::inet")
+        .bind(b.ip.to_string())
+        .fetch_one(&e.db)
+        .await
+        .unwrap();
     assert_ne!(stored, crate::crypto::b64url_decode::<32>(b.cookie.as_ref().unwrap()).unwrap().to_vec());
 
     // Logout without the CSRF header is refused; with it, the session ends.
@@ -274,7 +330,24 @@ async fn nothing_reveals_whether_an_account_exists() {
     let new = b
         .post(&e, "register", json!({"email": "carol@example.org", "password": PW, "turnstile": ts("register")}))
         .await;
-    assert_eq!((known.status, &known.raw), (new.status, &new.raw));
+    // The same answer but for the random poll token, and the same cookie.
+    let shape = |r: &Resp| {
+        let mut b = r.body.clone();
+        let poll = b["reg_poll"].take();
+        assert_eq!(poll.as_str().map(str::len), Some(43));
+        let set = r
+            .headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .map(|v| {
+                let v = v.to_str().unwrap();
+                v.replacen(v.split(';').next().unwrap(), "", 1)
+            })
+            .collect::<Vec<_>>();
+        (r.status, b, set)
+    };
+    assert_eq!(shape(&known), shape(&new));
+    assert_ne!(known.body["reg_poll"], new.body["reg_poll"]);
     // The existing owner is told someone tried.
     assert!(outbox(&e.db).await.iter().any(|(t, tpl, _)| t == "bob@example.org" && tpl == "register_exists"));
 
@@ -561,6 +634,7 @@ async fn password_change_and_reauth() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.raw);
     assert_eq!(a.get(&e, "me").await.status, StatusCode::OK, "this session stays");
     assert_eq!(other.get(&e, "me").await.status, StatusCode::UNAUTHORIZED, "other sessions end");
+    lapse_reauth(&e.db).await;
     assert_eq!(a.get(&e, "me").await.body["reauth_valid"], false);
     assert_eq!(a.post(&e, "reauth", json!({"password": PW})).await.status, StatusCode::UNAUTHORIZED);
     assert_eq!(a.post(&e, "reauth", json!({"password": "fresh passphrase 2"})).await.status, StatusCode::NO_CONTENT);

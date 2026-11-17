@@ -650,12 +650,12 @@ pub async fn verify_email(
         }
         None => false,
     };
-    if !same_browser {
-        match req.password.as_deref().filter(|p| !p.is_empty()) {
-            None => return Err(password_required()),
-            Some(p) if !state.passwords.verify(p, Some(&row.pw_phc)).await => return Err(wrong_password()),
-            Some(_) => {}
-        }
+    // A password, when given, must be right even in the browser that registered.
+    match req.password.as_deref().filter(|p| !p.is_empty()) {
+        None if same_browser => {}
+        None => return Err(password_required()),
+        Some(p) if !state.passwords.verify(p, Some(&row.pw_phc)).await => return Err(wrong_password()),
+        Some(_) => {}
     }
     let mut tx = state.db.begin().await?;
     // A registration of the address since the checks above deleted this token (and voided the

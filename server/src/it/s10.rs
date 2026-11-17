@@ -39,6 +39,7 @@ async fn pairing_a_native_device() {
     // Starting needs a recent re-auth.
     let mut fresh = registered_and_verified(&e, "pair-fresh@example.org", PW).await;
     assert_eq!(login(&e, &mut fresh, "pair-fresh@example.org", PW, None).await.status, StatusCode::OK);
+    lapse_reauth(&e.db).await;
     let r = fresh.post(&e, "pair/start", json!({})).await;
     assert_eq!((r.status, err(&r)), (StatusCode::FORBIDDEN, "reauth_required"));
 
