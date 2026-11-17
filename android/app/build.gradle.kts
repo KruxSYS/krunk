@@ -298,8 +298,8 @@ android {
         applicationId = "org.krunk.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 17
-        versionName = "0.9.0"
+        versionCode = 18
+        versionName = "0.10.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Devices (arm64-v8a) and the emulator (x86_64); GeckoView's other ABIs are dropped.
