@@ -106,7 +106,7 @@ function totp(secret, offsetSteps) {
   await page.fill('input[name=password]', PW1);
   await page.fill('input[name=password2]', PW1);
   await page.click('button[type=submit]');
-  await page.waitForSelector('#done:not([hidden])');
+  await page.waitForSelector('#check:not([hidden])');
   await shot('register-done');
   ok(true, 'register: "check your email"');
 
@@ -239,7 +239,7 @@ function totp(secret, offsetSteps) {
   ok((await page.textContent('h1')) === 'Privacy', 'privacy page');
   await shot('privacy');
   await page.goto(`${BASE}/`);
-  await page.waitForSelector('.topnav a[href="/account/"]');
+  await page.waitForSelector('header a[href="/account/"]'); // the restyled site's header (was .topnav)
   await shot('home');
 
   // A cross-site page can't post with the cookie (SameSite) and is refused by Origin anyway.
