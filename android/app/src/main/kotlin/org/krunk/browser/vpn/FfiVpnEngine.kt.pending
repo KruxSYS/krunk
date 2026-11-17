@@ -1,0 +1,72 @@
+package org.krunk.browser.vpn
+
+import org.krunk.ffi.KrunkVpn
+import org.krunk.ffi.VpnException
+import org.krunk.ffi.VpnStatusListener
+import org.krunk.ffi.VpnState as FfiState
+import org.krunk.ffi.VpnStatus as FfiStatus
+
+/**
+ * [VpnEngine] on the FFI object `KrunkVpn` (contract §2). The only file of the app that names
+ * the generated VPN types; everything else uses [VpnEngine].
+ */
+class FfiVpnEngine(private val vpn: KrunkVpn = KrunkVpn()) : VpnEngine {
+    override fun importProfile(fileName: String, bytes: ByteArray): VpnProfileInfo = mapped {
+        val info = vpn.importProfile(fileName, bytes)
+        VpnProfileInfo(info.kind, info.name, info.server, info.needsCredentials, info.warnings)
+    }
+
+    override fun start(
+        fileName: String,
+        bytes: ByteArray,
+        username: String?,
+        password: String?,
+        token: ByteArray,
+        onStatus: (VpnStatus) -> Unit,
+    ): Int = mapped {
+        val listener = object : VpnStatusListener {
+            override fun onStatus(status: FfiStatus) = onStatus(convert(status))
+        }
+        vpn.start(fileName, bytes, username, password, token, listener).toInt()
+    }
+
+    override fun stop() = vpn.stop()
+
+    override fun stopForExit() = vpn.stopForExit()
+
+    override fun status(): VpnStatus? = vpn.status()?.let(::convert)
+
+    override fun networkChanged() = vpn.networkChanged()
+
+    override fun refusedRecently(host: String): Boolean = vpn.refusedRecently(host)
+
+    override fun debugAuthCounts(): List<Long> = vpn.debugAuthCounts().map { it.toLong() }
+
+    private fun convert(s: FfiStatus) = VpnStatus(
+        state = when (s.state) {
+            FfiState.CONNECTING -> VpnState.CONNECTING
+            FfiState.CONNECTED -> VpnState.CONNECTED
+            FfiState.RECONNECTING -> VpnState.RECONNECTING
+            FfiState.FAILED -> VpnState.FAILED
+            FfiState.STOPPED -> VpnState.STOPPED
+        },
+        error = s.error,
+        sinceMs = s.sinceMs,
+        rxBytes = s.rxBytes.toLong(),
+        txBytes = s.txBytes.toLong(),
+        tunnelIp = s.tunnelIp,
+        server = s.server,
+    )
+
+    private inline fun <T> mapped(block: () -> T): T = try {
+        block()
+    } catch (e: VpnException) {
+        throw when (e) {
+            is VpnException.Import -> VpnEngineException.Import(e.reason)
+            is VpnException.Unsupported -> VpnEngineException.Unsupported()
+            is VpnException.NeedsCredentials -> VpnEngineException.NeedsCredentials()
+            is VpnException.Start -> VpnEngineException.Start(e.reason)
+            is VpnException.BadToken -> VpnEngineException.BadToken()
+        }
+    }
+}
