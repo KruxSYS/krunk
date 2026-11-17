@@ -1189,6 +1189,19 @@ mod tests {
         assert!(rewrite_response(b"HTTP/1.1 200 OK\r\nBad Name: 1\r\n\r\n").is_none());
     }
 
+    /// The proxy credential is never forwarded to the server (absolute-form requests; CONNECT
+    /// forwards nothing of the head).
+    #[test]
+    fn credential_is_not_forwarded() {
+        let r = p("GET http://example.com/x HTTP/1.1\r\nProxy-Authorization: Basic a3J1bms6c2VjcmV0\r\n\
+                   proxy-authorization: Basic eA==\r\nAccept: */*\r\n\r\n")
+        .unwrap();
+        let out = String::from_utf8(rewrite_request(&r)).unwrap();
+        assert!(!out.to_ascii_lowercase().contains("proxy-authorization"), "{out}");
+        assert!(!out.contains("a3J1bms6c2VjcmV0") && !out.contains("eA=="), "{out}");
+        assert!(out.contains("Accept: */*\r\n"));
+    }
+
     #[test]
     fn fail_closed_body() {
         let r = String::from_utf8(not_connected()).unwrap();

@@ -11,8 +11,9 @@
 //!   resolved inside the tunnel like everything else.
 //! - **HTTP** with `Proxy-Authorization: Basic base64("krunk:" + hex)`: Krunk's own requests.
 //!
-//! A connection that does not authenticate is closed without an answer an app could use (no 407,
-//! no proxy banner beyond the RFC 1929 failure byte), within [`AUTH_TIMEOUT`]. The comparison runs
+//! A connection that does not authenticate is closed without any reply (no 407, no SOCKS
+//! "no acceptable method" or RFC 1929 failure byte), within [`AUTH_TIMEOUT`]. The only byte a
+//! prober sees is the method choice (`05 02`) that RFC 1929 needs before the credential. The comparison runs
 //! in constant time. The token never leaves this process's memory and is zeroized on drop.
 
 use crate::proxy::{Host, OpenFail};
@@ -149,8 +150,7 @@ async fn authenticate(client: &mut TcpStream, auth: &ProxyAuth) -> std::io::Resu
     let mut methods = vec![0u8; usize::from(hdr[1])];
     client.read_exact(&mut methods).await?;
     if hdr[0] != 5 || !methods.contains(&2) {
-        // "No acceptable methods": only username/password is ever offered.
-        client.write_all(&[5, 0xff]).await?;
+        // Only username/password is ever accepted; anything else is closed without a reply.
         return Ok(false);
     }
     client.write_all(&[5, 2]).await?;
@@ -163,7 +163,10 @@ async fn authenticate(client: &mut TcpStream, auth: &ProxyAuth) -> std::io::Resu
     let mut pass = Zeroizing::new(vec![0u8; usize::from(plen[0])]);
     client.read_exact(&mut pass).await?;
     let ok = ver_len[0] == 1 && auth.check_user_pass(&user, &pass);
-    client.write_all(&[1, if ok { 0 } else { 1 }]).await?;
+    if ok {
+        client.write_all(&[1, 0]).await?;
+    }
+    // A wrong credential: closed without the RFC 1929 failure status.
     Ok(ok)
 }
 

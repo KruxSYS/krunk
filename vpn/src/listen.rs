@@ -1,6 +1,8 @@
 //! The loopback listener of the proxy (and of the host's stand-in that refuses everything).
 //!
-//! It binds `127.0.0.1:0`. On Windows it is bound with `SO_EXCLUSIVEADDRUSE`, so no other
+//! It binds `127.0.0.1:0`. On Linux and Android a plain bind (no `SO_REUSEADDR` or
+//! `SO_REUSEPORT`) is already exclusive: no other socket can bind the same address and port
+//! while it listens (Android apps cannot take it either). On Windows it is bound with `SO_EXCLUSIVEADDRUSE`, so no other
 //! process can bind the same port (with `SO_REUSEADDR` or a more specific address) and take
 //! connections meant for Krunk's proxy while the engine points at it.
 
@@ -58,5 +60,18 @@ mod tests {
         let (s, peer) = a.accept().unwrap();
         assert_eq!(peer, c.local_addr().unwrap());
         assert_eq!(s.local_addr().unwrap(), aa);
+    }
+
+    /// No other socket can take the proxy's port while it listens (no SO_REUSEADDR/REUSEPORT on
+    /// Linux/Android, SO_EXCLUSIVEADDRUSE on Windows).
+    #[test]
+    fn a_second_bind_on_the_same_port_fails() {
+        let a = super::bind_loopback().unwrap();
+        let port = a.local_addr().unwrap().port();
+        assert!(std::net::TcpListener::bind(("127.0.0.1", port)).is_err());
+        let s = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+        let _ = s.set_reuse_address(true);
+        let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+        assert!(s.bind(&addr.into()).and_then(|_| s.listen(8)).is_err());
     }
 }

@@ -4,9 +4,9 @@ use crate::dns::Resolver;
 use crate::net::Netstack;
 use crate::socks::ProxyAuth;
 use crate::{now_ms, Credentials, IpNet, Profile, StartError, State, Status};
+use std::collections::VecDeque;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -466,6 +466,122 @@ mod tests {
         let seen = seen.lock().unwrap();
         assert_eq!(seen.first(), Some(&State::Connecting));
         assert_eq!(seen.last(), Some(&State::Stopped));
+    }
+
+    fn token() -> [u8; 32] {
+        let mut t = [0u8; 32];
+        for (i, b) in t.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(13).wrapping_add(5);
+        }
+        t
+    }
+
+    fn unreachable_profile() -> Profile {
+        let text = "[Interface]\nPrivateKey = yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=\nAddress = 10.66.0.2/32\n\
+                    [Peer]\nPublicKey = xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=\nAllowedIPs = 10.66.0.0/24\nEndpoint = 192.0.2.1:9\n";
+        crate::import("t.conf", text).unwrap().0
+    }
+
+    /// Sends `bytes`, reads until the proxy closes (or 7 s); everything that came back.
+    fn exchange(addr: SocketAddr, bytes: &[u8]) -> Vec<u8> {
+        let mut c = std::net::TcpStream::connect(addr).unwrap();
+        c.set_read_timeout(Some(Duration::from_secs(7))).unwrap();
+        let _ = c.write_all(bytes);
+        let mut r = Vec::new();
+        let _ = c.read_to_end(&mut r);
+        r
+    }
+
+    /// With a credential: HTTP and SOCKS5 without it or with a wrong one are closed without an
+    /// answer; with it they get the fail-closed answer.
+    #[test]
+    fn authenticated_proxy_missing_wrong_right() {
+        let auth = ProxyAuth::new(&token());
+        let hex: String = token().iter().map(|b| format!("{b:02x}")).collect();
+        use base64ct::Encoding;
+        let basic = base64ct::Base64::encode_string(format!("krunk:{hex}").as_bytes());
+        let vpn = Vpn::start_authenticated(unreachable_profile(), None, auth, Box::new(|_| {})).unwrap();
+        let addr = vpn.proxy_addr();
+        // HTTP: missing, wrong, right.
+        assert!(exchange(addr, b"CONNECT example.com:443 HTTP/1.1\r\n\r\n").is_empty());
+        assert!(
+            exchange(addr, b"CONNECT example.com:443 HTTP/1.1\r\nProxy-Authorization: Basic eA==\r\n\r\n").is_empty()
+        );
+        assert!(exchange(addr, b"GET /bad HTTP/1.1\r\n\r\n").is_empty(), "no 400 before the credential");
+        let ok = exchange(
+            addr,
+            format!("CONNECT example.com:443 HTTP/1.1\r\nProxy-Authorization: Basic {basic}\r\n\r\n").as_bytes(),
+        );
+        assert!(String::from_utf8_lossy(&ok).starts_with("HTTP/1.1 503 VPN not connected\r\n"));
+        // SOCKS5: no username/password method offered → closed without a reply.
+        assert!(exchange(addr, &[5, 1, 0]).is_empty());
+        // Wrong password.
+        let mut wrong = vec![5, 1, 2, 1, 5];
+        wrong.extend_from_slice(b"krunk");
+        wrong.push(64);
+        wrong.extend_from_slice(&[b'0'; 64]);
+        assert_eq!(exchange(addr, &wrong), vec![5, 2], "method choice, then closed");
+        // Right one, CONNECT example.com:443 by name: the tunnel is down → reply 1.
+        let mut right = vec![5, 1, 2, 1, 5];
+        right.extend_from_slice(b"krunk");
+        right.push(64);
+        right.extend_from_slice(hex.as_bytes());
+        let mut req = right.clone();
+        req.extend_from_slice(&[5, 1, 0, 3, 11]);
+        req.extend_from_slice(b"example.com");
+        req.extend_from_slice(&443u16.to_be_bytes());
+        assert_eq!(exchange(addr, &req), vec![5, 2, 1, 0, 5, 1, 0, 1, 0, 0, 0, 0, 0, 0]);
+        // UDP ASSOCIATE is refused (7) even when authenticated.
+        let mut udp = right.clone();
+        udp.extend_from_slice(&[5, 3, 0, 1, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(exchange(addr, &udp), vec![5, 2, 1, 0, 5, 7, 0, 1, 0, 0, 0, 0, 0, 0]);
+        // A peer that says nothing is dropped after the short limit.
+        let t = std::time::Instant::now();
+        assert!(exchange(addr, b"").is_empty());
+        assert!(t.elapsed() < Duration::from_secs(7), "closed within the 5 s auth limit");
+        let (ok, refused) = vpn.auth_counts();
+        assert_eq!(ok, 3);
+        assert!(refused >= 2, "{refused}");
+        vpn.stop();
+    }
+
+    /// Without a credential (Windows) a SOCKS greeting is just a bad HTTP head.
+    #[test]
+    fn no_socks_without_a_credential() {
+        let vpn = Vpn::start(unreachable_profile(), None, Box::new(|_, _| true), Box::new(|_| {})).unwrap();
+        let r = exchange(vpn.proxy_addr(), &[5, 1, 2, 13, 10, 13, 10]);
+        assert!(String::from_utf8_lossy(&r).starts_with("HTTP/1.1 400 "), "{r:?}");
+        assert_eq!(vpn.auth_counts(), (0, 0));
+        vpn.stop();
+    }
+
+    #[test]
+    fn refusals_are_remembered_briefly() {
+        let vpn = Vpn::start(unreachable_profile(), None, Box::new(|_, _| true), Box::new(|_| {})).unwrap();
+        assert!(!vpn.refused_recently("outside.example"));
+        vpn.shared.note_refused("Outside.Example");
+        vpn.shared.note_refused("2001:db8::1");
+        assert!(vpn.refused_recently("outside.example"));
+        assert!(vpn.refused_recently("[2001:db8::1]"));
+        assert!(!vpn.refused_recently("other.example"));
+        for i in 0..100 {
+            vpn.shared.note_refused(&format!("h{i}.example"));
+        }
+        assert!(!vpn.refused_recently("outside.example"), "bounded: the oldest went");
+        assert!(vpn.refused_recently("h99.example"));
+        vpn.stop();
+    }
+
+    /// `network_changed` never blocks, also when no session listens, and cuts a back-off.
+    #[test]
+    fn network_changed_is_safe_any_time() {
+        let vpn = Vpn::start(unreachable_profile(), None, Box::new(|_, _| true), Box::new(|_| {})).unwrap();
+        let t = std::time::Instant::now();
+        for _ in 0..10 {
+            vpn.network_changed();
+        }
+        assert!(t.elapsed() < Duration::from_millis(100));
+        vpn.stop();
     }
 
     /// At exit the tunnel stops but the proxy keeps its port, answering 503.
