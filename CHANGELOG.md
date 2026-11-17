@@ -3,6 +3,11 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.24.1 — 2026-11-17
+
+- **Alt+click opens a link in a private tab.** Hold Alt and click a link to open it in a new
+  private tab (it used to download the link instead).
+
 ## 0.24.0 — 2026-11-17
 
 - **Krunk signs you in to krunk.209.wf.** When Krunk is signed in to your Krunk account (with or

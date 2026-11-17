@@ -1106,7 +1106,21 @@ wrap_download_handler! {
         key: u64,
     }
     impl DownloadHandler {
-        fn can_download(&self, _browser: Option<&mut Browser>, _url: Option<&CefString>, _request_method: Option<&CefString>) -> c_int {
+        fn can_download(&self, _browser: Option<&mut Browser>, url: Option<&CefString>, request_method: Option<&CefString>) -> c_int {
+            // 0.24.1: Alt+click on a link opens it in a private tab. Blink turns an Alt+click
+            // into a download (no new-tab request), which the engine checks here first, while
+            // Alt is still held.
+            use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
+            // SAFETY: a plain key-state query.
+            let alt = (unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } as u16 & 0x8000) != 0;
+            let url = text(url);
+            let get = request_method.map_or(true, |m| m.to_string().eq_ignore_ascii_case("GET"));
+            if alt && get && (url.starts_with("http://") || url.starts_with("https://")) {
+                if let Some(view) = lookup(self.key) {
+                    view.ev.open_selection.with(|f| f(super::view::OpenIn::PrivateTab, url));
+                    return 0;
+                }
+            }
             1
         }
 
