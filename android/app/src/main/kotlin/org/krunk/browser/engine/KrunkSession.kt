@@ -333,6 +333,9 @@ class KrunkSession(
                 session.load(GeckoSession.Loader().uri(page))
                 return GeckoResult.fromValue(AllowOrDeny.DENY)
             }
+            if (!internal && request.target == GeckoSession.NavigationDelegate.TARGET_WINDOW_CURRENT) {
+                if (signInWebsite(request.uri)) return GeckoResult.fromValue(AllowOrDeny.DENY)
+            }
             return GeckoResult.fromValue(if (internal) AllowOrDeny.DENY else AllowOrDeny.ALLOW)
         }
 
@@ -358,6 +361,27 @@ class KrunkSession(
             if (cert == null && CertErrors.isCertificateError(error.code)) readCertificate(u, error.code)
             return GeckoResult.fromValue(page)
         }
+    }
+
+    /** The website sign-in address this tab opened last (kept out of history: it holds a code). */
+    private var webSignInUrl: String? = null
+
+    /**
+     * Website sign-in (0.11.0): `true` when the navigation to [url] is the site's sign-in page and
+     * Krunk signs the site in instead (the caller cancels the navigation). The page with a fresh
+     * code opens in this tab; on any failure the original address does (the core's guard lets it
+     * through then).
+     */
+    private fun signInWebsite(url: String): Boolean {
+        val signIn = engine.webSignIn ?: return false
+        val target = signIn.check(url, private) ?: return false
+        scope.launch {
+            val signed = signIn.url(target.next)
+            if (closed) return@launch
+            webSignInUrl = signed
+            load(signed ?: url)
+        }
+        return true
     }
 
     /**
@@ -981,7 +1005,7 @@ class KrunkSession(
             lastVisitedURL: String?,
             flags: Int,
         ): GeckoResult<Boolean>? {
-            val record = recordHistory && isRecordableVisit(flags)
+            val record = recordHistory && isRecordableVisit(flags) && url != webSignInUrl
             if (record) listener.onVisited(this@KrunkSession, url)
             return GeckoResult.fromValue(record)
         }

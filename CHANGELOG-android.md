@@ -3,6 +3,21 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.11.0 — 2026-11-17
+
+- **Signed in to Krunk, signed in to the website.** While Krunk is signed in to your Krunk
+  account (with or without sync), opening krunk.209.wf signs the website in for you: no password,
+  no code to type. The website lists it under your signed-in browsers as "Signed in by" this
+  phone.
+- **Signing out stays signed out.** If you sign out on the website, Krunk leaves it signed out
+  until you restart the app. Private tabs never sign the website in.
+- The website still asks for your password before sensitive changes, such as changing your
+  password or deleting your account.
+- **New account from the sign-in page.** Settings › Account › **Sign in** opens the website's
+  sign-in page; **Create an account** there now signs this phone in once you confirm your
+  email address. Krunk keeps waiting for that confirmation for up to an hour instead of giving up
+  after 10 minutes.
+
 ## 0.10.0 — 2026-11-17
 
 - **A VPN for Krunk only.** Settings › Privacy & security › **VPN** imports a WireGuard (`.conf`)

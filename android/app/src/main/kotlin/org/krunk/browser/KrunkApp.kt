@@ -18,6 +18,7 @@ import org.krunk.browser.engine.ErrorPage
 import org.krunk.browser.engine.GeckoEngine
 import org.krunk.browser.engine.LoadSource
 import org.krunk.browser.engine.VpnLoadGuard
+import org.krunk.browser.engine.WebSignIn
 import org.krunk.browser.engine.blocker.AllowList
 import org.krunk.browser.engine.blocker.BlockerController
 import org.krunk.browser.engine.blocker.VpnGuardConfig
@@ -85,6 +86,13 @@ class KrunkApp : Application() {
             // Site permissions and site notifications (0.4.0).
             it.permissions = sitePermissions
             it.runtime.webNotificationDelegate = siteNotifications
+            // Signed in to the Krunk account: opening the website signs it in (0.11.0).
+            it.webSignIn = object : WebSignIn {
+                override fun check(url: String, private: Boolean) =
+                    sync.autoSignInCheck(url, private)?.let { t -> WebSignIn.Target(t.next) }
+
+                override suspend fun url(next: String?) = sync.webSignInUrl(next)
+            }
             vaultScope.launch {
                 vault.state.collect { _ -> it.logins.onVaultState(loginVault.state(), System.currentTimeMillis()) }
             }

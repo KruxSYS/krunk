@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.krunk.ffi.AutoSignInTarget
 import org.krunk.ffi.DeviceTabs
 import org.krunk.ffi.KrunkSync
 import org.krunk.ffi.LinkInfo
@@ -167,6 +168,12 @@ class SyncController(
         runCatchingSync { call { it.setCollection(name, on) } }
 
     suspend fun remoteTabs(): List<DeviceTabs> = withContext(io) { sync.remoteTabs() }
+
+    /** Website sign-in (0.11.0): see [org.krunk.browser.engine.WebSignIn]. Main thread, no network. */
+    fun autoSignInCheck(url: String, private: Boolean): AutoSignInTarget? = sync.autoSignInCheck(url, private)
+
+    /** The website's sign-in page with a fresh code, or `null`. A secret: never logged. */
+    suspend fun webSignInUrl(next: String?): String? = runCatchingSync { call { it.webSignInUrl(next) } }.getOrNull()
 
     /** "Sync now", and the schedule's runs. */
     suspend fun syncNow(): Result<RunReport> = runCatchingSync {

@@ -21,6 +21,8 @@ class SyncTest {
             "keys/chain?from=anchor",
             // The core's real key refresh (core/src/sync/client.rs).
             "keys/chain?from=3,1",
+            // Website sign-in (0.11.0): core account::WEB_SIGN_IN as the ffi sends it.
+            "device/web-sign-in",
         )) {
             assertTrue(ok, SyncHttp.pathAllowed(ok))
         }

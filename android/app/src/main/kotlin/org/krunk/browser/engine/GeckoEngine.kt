@@ -46,6 +46,9 @@ class GeckoEngine(
     /** Site permissions: every session gets its delegate (set once the store exists, see KrunkApp). */
     var permissions: SitePermissions? = null
 
+    /** Signs Krunk's own website in while the app is signed in to the account (set by KrunkApp). */
+    var webSignIn: WebSignIn? = null
+
     /** For the engine calls that want one (handing a picked file to a page). */
     val appContext: Context = context.applicationContext
 
