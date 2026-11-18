@@ -157,6 +157,7 @@ impl Browser {
             },
             Some(popup_rect),
         );
+        self.watch_suggest_presses(tab, main_frame, rect);
     }
 
     /// A payment-card field got the focus: the saved cards (masked), or "Unlock" while the
@@ -206,6 +207,7 @@ impl Browser {
             },
             Some(popup_rect),
         );
+        self.watch_suggest_presses(tab, main_frame, rect);
     }
 
     fn card_choices(&self) -> Vec<lb_core::protocol::CardChoice> {
@@ -506,6 +508,52 @@ impl Browser {
     /// The dropdown was hidden without a choice.
     pub(super) fn suggest_dismissed(&self) {
         self.suggest.open.borrow_mut().take();
+        crate::ffi::scroll_lock::unwatch_presses();
+    }
+
+    /// 0.25.2: a press anywhere outside the open dropdown (and its field, in the main frame)
+    /// closes it. Before, only the page's blur report did, and pages that cancel `mousedown`
+    /// (or a press on Krunk's toolbar) left it open.
+    fn watch_suggest_presses(&self, tab: TabId, main_frame: bool, rect: FieldRect) {
+        let window = self.popup.try_borrow().ok().and_then(|p| p.as_ref().map(|p| p.window.hwnd()));
+        let keep = if main_frame { self.field_screen_rect(tab, rect).into_iter().collect() } else { Vec::new() };
+        let weak = self.me.clone();
+        crate::ffi::scroll_lock::watch_presses(
+            window,
+            keep,
+            std::rc::Rc::new(move || {
+                if let Some(b) = weak.upgrade() {
+                    b.defer(|b| b.suggest_press_outside());
+                }
+            }),
+        );
+    }
+
+    fn suggest_press_outside(&self) {
+        if self.suggest.open.borrow().is_some()
+            && matches!(self.popup_kind(), Some(PopupKind::Suggest | PopupKind::CardFill))
+        {
+            info!("login suggestions closed: a press outside");
+            self.hide_popup();
+        }
+    }
+
+    /// A main-frame field's rectangle on the screen (physical pixels).
+    fn field_screen_rect(&self, tab: TabId, rect: FieldRect) -> Option<lb_core::scroll_lock::Rect> {
+        let win = self.window_of(tab)?;
+        let f = self.frame(win)?;
+        let scale = f.window.scale();
+        let (_, content) = self.frame_areas(&f);
+        let page = self.devtools_split_of(&f).map(|s| s.page).unwrap_or(content);
+        let zoom = self.tab_view(tab).map(|v| v.zoom()).unwrap_or(1.0);
+        let zoom = if zoom.is_finite() && zoom > 0.0 { zoom } else { 1.0 };
+        let k = zoom * scale;
+        let (ox, oy) = f.window.client_to_screen(page.x, page.y);
+        let left = ox + (rect.x * k).floor() as i32;
+        let top = oy + (rect.y * k).floor() as i32;
+        let right = ox + ((rect.x + rect.width) * k).ceil() as i32;
+        let bottom = oy + ((rect.y + rect.height) * k).ceil() as i32;
+        Some(lb_core::scroll_lock::Rect { left, top, right, bottom })
     }
 
     // ------------------------------------------------------------ the locked-vault index
