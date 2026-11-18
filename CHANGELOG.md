@@ -3,7 +3,7 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
-## 0.25.2 — unreleased
+## Unreleased
 
 - **The AI assistant can read your userscripts and macros.** It could list them and write new
   ones, but never see an existing script's code, so it couldn't explain, fix or change one. Two
