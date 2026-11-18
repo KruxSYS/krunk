@@ -1682,6 +1682,7 @@ impl Browser {
     /// Shows `to` on top, then hides `from` (and its DevTools).
     fn swap_views(&self, win: WindowId, from: Option<TabId>, to: TabId) {
         if let Some(t) = self.tab_view(to) {
+            let _s = crate::perf::Span::new("set_visible_to");
             t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
         }
         self.warm.borrow_mut().forget(to);
@@ -1887,24 +1888,57 @@ impl Browser {
         }
         // The tab left is still on screen: its hover-card picture now (0.15.0).
         if let Some(f) = from.filter(|f| *f != to) {
-            self.preview_leaving(f);
+            {
+                let _s = crate::perf::Span::new("preview_leaving");
+                self.preview_leaving(f);
+            }
         }
-        self.close_ext_popup();
-        self.sessionlog_focus();
-        self.auto_pip_switch(from, to);
-        self.ext_tab_event("tabActivated", serde_json::json!({ "tabId": to, "windowId": win }));
-        self.pointer_tab_activated(to);
-        self.hide_status();
+        {
+            let _s = crate::perf::Span::new("close_ext_popup");
+            self.close_ext_popup();
+        }
+        {
+            let _s = crate::perf::Span::new("sessionlog_focus");
+            self.sessionlog_focus();
+        }
+        {
+            let _s = crate::perf::Span::new("auto_pip_switch");
+            self.auto_pip_switch(from, to);
+        }
+        {
+            let _s = crate::perf::Span::new("ext_tab_event");
+            self.ext_tab_event("tabActivated", serde_json::json!({ "tabId": to, "windowId": win }));
+        }
+        {
+            let _s = crate::perf::Span::new("pointer_tab_activated");
+            self.pointer_tab_activated(to);
+        }
+        {
+            let _s = crate::perf::Span::new("hide_status");
+            self.hide_status();
+        }
         if let Some(f) = from.filter(|f| *f != to) {
-            self.js_dialog_tab_left(f, false);
-            self.fullscreen_tab_gone(f);
+            {
+                let _s = crate::perf::Span::new("js_dialog_tab_left");
+                self.js_dialog_tab_left(f, false);
+            }
+            {
+                let _s = crate::perf::Span::new("fullscreen_tab_gone");
+                self.fullscreen_tab_gone(f);
+            }
         }
         if self.address_focus.get().is_some_and(|held| held != to) {
             self.address_focus.set(None);
         }
-        self.hide_popup();
+        {
+            let _s = crate::perf::Span::new("hide_popup");
+            self.hide_popup();
+        }
         if let Some(f) = from {
-            self.stop_find(f);
+            {
+                let _s = crate::perf::Span::new("stop_find");
+                self.stop_find(f);
+            }
         }
         // No gap between the two pages (0.7.0, R7): the new view gets its place while still
         // hidden, is shown on top of the old one, and only then is the old one hidden. (Before,
@@ -1961,9 +1995,15 @@ impl Browser {
                             v.frame_ready.set(false);
                         }
                     }
-                    t.show_beneath(&above);
+                    {
+                        let _s = crate::perf::Span::new("t_show_beneath");
+                        t.show_beneath(&above);
+                    }
                     if out_of_sight {
-                        self.reveal_after_frames(to, &t);
+                        {
+                            let _s = crate::perf::Span::new("reveal_after_frames");
+                            self.reveal_after_frames(to, &t);
+                        }
                     }
                 }
                 let weak = self.me.clone();
@@ -1974,27 +2014,48 @@ impl Browser {
                     }
                 });
             }
-            _ => self.swap_views(win, old, to),
+            _ => {
+                let _s = crate::perf::Span::new("swap_views");
+                self.swap_views(win, old, to)
+            }
         }
         // Wake after showing: a frozen page resumes as a visible one.
-        self.wake_tab(to);
+        {
+            let _s = crate::perf::Span::new("wake_tab");
+            self.wake_tab(to);
+        }
         // 0.25.0: the tab left stays warm a moment (back with a click or Ctrl+Tab).
         if let Some(f) = from.filter(|f| *f != to) {
-            self.warm_tab(f, lb_core::warm::Slot::Next);
+            {
+                let _s = crate::perf::Span::new("warm_tab");
+                self.warm_tab(f, lb_core::warm::Slot::Next);
+            }
         }
         self.preview_activated(to);
         // A page that does not respond says so when its tab comes to the front (0.11.0).
         self.defer(move |b| b.show_hang_prompt(to));
         // A sign-in the tab waits for shows again with it (0.15.0), after the focus settled.
-        self.http_auth_reshow_soon();
+        {
+            let _s = crate::perf::Span::new("http_auth_reshow_soon");
+            self.http_auth_reshow_soon();
+        }
         let t_layout2 = crate::perf::now();
         self.layout();
         let layout_ms = layout_ms + crate::perf::ms_since(t_layout2);
         if self.cur_id() == Some(win) {
-            self.focus_active();
+            {
+                let _s = crate::perf::Span::new("focus_active");
+                self.focus_active();
+            }
         }
-        self.update_title();
-        self.send_devtools_state(win);
+        {
+            let _s = crate::perf::Span::new("update_title");
+            self.update_title();
+        }
+        {
+            let _s = crate::perf::Span::new("send_devtools_state");
+            self.send_devtools_state(win);
+        }
         if crate::perf::on() {
             if let Some(r) = self.perf_recs.borrow_mut().get_mut(&to) {
                 r.act_ms = crate::perf::ms_since(t_act);

@@ -886,7 +886,11 @@ impl View {
     pub fn set_visible(&self, visible: bool) {
         match (self.hwnd(), self.host()) {
             (Some(h), Some(host)) if self.0.role == Role::Tab && (!visible || self.0.bounds.get().is_some()) => {
-                self.park(h, !visible);
+                {
+                    let _s = crate::perf::Span::new(if visible { "show_park" } else { "hide_park" });
+                    self.park(h, !visible);
+                }
+                let _s = crate::perf::Span::new(if visible { "show_was_hidden" } else { "hide_was_hidden" });
                 host.was_hidden(i32::from(!visible));
             }
             (Some(h), Some(host)) => {
@@ -944,9 +948,13 @@ impl View {
         }
         // SAFETY: the browser's own child window and a sibling of it (or a window that is gone:
         // the call then fails and changes nothing).
-        let ok = unsafe { SetWindowPos(h, Some(above), x, y, w, hh, SWP_NOACTIVATE | SWP_SHOWWINDOW) }.is_ok();
+        let ok = {
+            let _s = crate::perf::Span::new("beneath_setwindowpos");
+            unsafe { SetWindowPos(h, Some(above), x, y, w, hh, SWP_NOACTIVATE | SWP_SHOWWINDOW) }.is_ok()
+        };
         if ok {
             self.0.parked.set(false);
+            let _s = crate::perf::Span::new("beneath_was_hidden");
             host.was_hidden(0);
         }
         ok

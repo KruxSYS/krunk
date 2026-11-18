@@ -114,3 +114,25 @@ impl Drop for Stall {
         }
     }
 }
+
+/// One step of a tab change, logged as `span name=… ms=…` when it took 0.5 ms or more.
+pub struct Span(i64, &'static str);
+
+impl Span {
+    #[inline]
+    pub fn new(name: &'static str) -> Span {
+        Span(now(), name)
+    }
+}
+
+impl Drop for Span {
+    fn drop(&mut self) {
+        if self.0 == 0 {
+            return;
+        }
+        let ms = ms_since(self.0);
+        if ms >= 0.5 {
+            line(&format!("span qpc={} name={} ms={ms:.2}", self.0, self.1));
+        }
+    }
+}

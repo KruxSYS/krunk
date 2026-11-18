@@ -48,8 +48,17 @@ impl Browser {
             return;
         }
         let cooled = self.warm.borrow_mut().set(slot, id, now_ms() + WARM_MS);
+        // The tab that lost its slot goes back to sleep after this switch, not during it: hiding
+        // it from the engine took ~5 ms of the UI thread right on the switch path (VM, 0.25.0).
         if let Some(c) = cooled {
-            self.cool_tab(c);
+            let weak = self.me.clone();
+            crate::ffi::cef::post_ui(move || {
+                if let Some(b) = weak.upgrade() {
+                    if !b.warm.borrow().contains(c) {
+                        b.cool_tab(c);
+                    }
+                }
+            });
         }
         if !view.is_visible() {
             // Beneath the page on screen: the one a waiting switch still shows, else the active.
