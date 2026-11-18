@@ -5,7 +5,7 @@
 //! message (first in it, as the API asks), and they can carry images.
 
 use super::HttpRequest;
-use crate::agent::{ChatRequest, Image, Part, Role};
+use crate::agent::{ChatRequest, Document, Image, Part, Role};
 use serde_json::{json, Map, Value};
 
 /// The `anthropic-version` header value.
@@ -47,7 +47,11 @@ fn image(i: &Image) -> Value {
     json!({"type": "image", "source": {"type": "base64", "media_type": i.mime, "data": i.base64}})
 }
 
-/// Text and image blocks of `parts` (empty text is not allowed by the API).
+fn document(d: &Document) -> Value {
+    json!({"type": "document", "source": {"type": "base64", "media_type": d.mime, "data": d.base64}, "title": d.name})
+}
+
+/// Text, image and document blocks of `parts` (empty text is not allowed by the API).
 fn blocks(parts: &[Part]) -> Vec<Value> {
     parts
         .iter()
@@ -55,6 +59,7 @@ fn blocks(parts: &[Part]) -> Vec<Value> {
             Part::Text(t) if t.is_empty() => None,
             Part::Text(t) => Some(json!({"type": "text", "text": t})),
             Part::Image(i) => Some(image(i)),
+            Part::Document(d) => Some(document(d)),
         })
         .collect()
 }

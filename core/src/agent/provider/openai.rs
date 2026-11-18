@@ -6,7 +6,7 @@
 //! calls right after it.
 
 use super::HttpRequest;
-use crate::agent::{ChatRequest, Image, Message, Part, ProviderKind, Role};
+use crate::agent::{ChatRequest, Document, Image, Message, Part, ProviderKind, Role};
 use serde_json::{json, Map, Value};
 
 pub fn chat_request(kind: ProviderKind, base: &str, req: &ChatRequest) -> HttpRequest {
@@ -58,6 +58,11 @@ fn data_url(i: &Image) -> String {
     format!("data:{};base64,{}", i.mime, i.base64)
 }
 
+/// An attached PDF as a `file` content part (OpenAI's chat completions and OpenRouter).
+fn file_part(d: &Document) -> Value {
+    json!({"type": "file", "file": {"filename": d.name, "file_data": format!("data:{};base64,{}", d.mime, d.base64)}})
+}
+
 fn messages(req: &ChatRequest) -> Vec<Value> {
     let mut out = Vec::new();
     if !req.system.is_empty() {
@@ -90,9 +95,9 @@ fn messages(req: &ChatRequest) -> Vec<Value> {
     out
 }
 
-/// Plain text, or content parts when the message has images.
+/// Plain text, or content parts when the message has images or documents.
 fn user_content(m: &Message) -> Value {
-    if !m.parts.iter().any(|p| matches!(p, Part::Image(_))) {
+    if m.parts.iter().all(|p| matches!(p, Part::Text(_))) {
         return m.text().into();
     }
     let parts: Vec<Value> = m
@@ -101,6 +106,7 @@ fn user_content(m: &Message) -> Value {
         .map(|p| match p {
             Part::Text(t) => json!({"type": "text", "text": t}),
             Part::Image(i) => json!({"type": "image_url", "image_url": {"url": data_url(i)}}),
+            Part::Document(d) => file_part(d),
         })
         .collect();
     Value::Array(parts)

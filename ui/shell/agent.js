@@ -159,6 +159,7 @@
   function sizeText(bytes) {
     if (bytes === 1) return '1 byte';
     if (bytes < 1024) return bytes + ' bytes';
+    if (bytes >= 1024 * 1024) return (bytes / 1048576).toFixed(1) + ' MiB';
     return (bytes / 1024).toFixed(bytes < 10240 ? 1 : 0) + ' KiB';
   }
 
@@ -739,7 +740,8 @@
     $('send').hidden = b;
     $('compose').classList.toggle('busy', b);
     input.disabled = b;
-    $('send').disabled = b || !input.value.trim();
+    $('attach').disabled = b;
+    $('send').disabled = !canSend();
   }
 
   LB.on('agentState', function (m) {
@@ -789,17 +791,236 @@
     input.style.height = Math.min(input.scrollHeight, 6 * 19 + 6) + 'px';
   }
 
+  // ---------- attached files (0.25.2) ----------
+  // Pictures are scaled down here (longest side 1568 px, what vision models look at) and sent
+  // as JPEG (PNG when it is smaller or has transparency); PDFs as they are; text files as text.
+  // The browser checks everything again (kind from the bytes, sizes, whether the model sees
+  // pictures). All of it goes with the one agentSend message, which the bridge caps at 8 M
+  // characters: the limits below keep well under it.
+  const MAX_FILES = 10;
+  const MAX_SIDE = 1568;
+  const MAX_PDF = 5 * 1024 * 1024;
+  const MAX_TEXT_FILE = 2 * 1024 * 1024;
+  const MAX_BINARY_TOTAL = 5632 * 1024;
+  const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|xml|ya?ml|toml|ini|cfg|conf|log|html?|css|js|mjs|cjs|ts|tsx|jsx|py|rs|go|java|kt|c|h|cc|cpp|hpp|cs|rb|php|sh|ps1|bat|sql|lua|swift|srt|vtt|env|gitignore)$/i;
+  let fileSeq = 0;
+  st.files = []; // { id, name, kind: 'image'|'pdf'|'text', bytes, data?, text?, thumb?, ready }
+
+  function fileError(text) {
+    const e = $('files-error');
+    e.textContent = text || '';
+    e.hidden = !text;
+  }
+
+  function canSend() {
+    return !busy() && st.files.every(function (f) { return f.ready; }) && (!!input.value.trim() || st.files.length > 0);
+  }
+
+  function renderFiles() {
+    const box = $('files');
+    box.textContent = '';
+    box.hidden = st.files.length === 0;
+    st.files.forEach(function (f) {
+      const c = el('div', 'chip' + (f.ready ? '' : ' loading'));
+      c.title = f.name;
+      if (f.thumb) {
+        const img = document.createElement('img');
+        img.src = f.thumb;
+        img.alt = '';
+        c.appendChild(img);
+      } else {
+        const i = el('span', 'ficon');
+        i.appendChild(icon('file'));
+        c.appendChild(i);
+      }
+      c.appendChild(el('span', 'fname', f.name));
+      c.appendChild(el('span', 'fsize', f.ready ? sizeText(f.bytes) : '…'));
+      const rm = button('frm', null, function () {
+        st.files = st.files.filter(function (x) { return x.id !== f.id; });
+        fileError('');
+        renderFiles();
+        input.focus();
+      }, 'Remove ' + f.name);
+      rm.appendChild(icon('close'));
+      c.appendChild(rm);
+      box.appendChild(c);
+    });
+    $('send').disabled = !canSend();
+  }
+
+  function readAs(file, how) {
+    return new Promise(function (resolve, reject) {
+      const r = new FileReader();
+      r.onload = function () { resolve(r.result); };
+      r.onerror = function () { reject(r.error || new Error('read failed')); };
+      if (how === 'text') r.readAsText(file); else r.readAsDataURL(file);
+    });
+  }
+
+  function base64Of(dataUrl) { return String(dataUrl).slice(String(dataUrl).indexOf(',') + 1); }
+  function bytesOf(b64) { return Math.floor(b64.length * 3 / 4) - (b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0); }
+
+  // A picture scaled to MAX_SIDE: { data (base64), mime, thumb (data URL) }.
+  // (Read as a data: URL: the page's CSP allows data: pictures, not blob:.)
+  function scalePicture(file) {
+    return readAs(file, 'data').then(function (url) { return scaleUrl(url, file.type); });
+  }
+  function scaleUrl(url, type) {
+    return new Promise(function (resolve, reject) {
+      const img = new Image();
+      img.onload = function () {
+        const k = Math.min(1, MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight, 1));
+        const w = Math.max(1, Math.round(img.naturalWidth * k));
+        const h = Math.max(1, Math.round(img.naturalHeight * k));
+        const cv = document.createElement('canvas');
+        cv.width = w; cv.height = h;
+        const g = cv.getContext('2d');
+        g.drawImage(img, 0, 0, w, h);
+        let alpha = false;
+        if (type === 'image/png' || type === 'image/webp' || type === 'image/gif') {
+          const px = g.getImageData(0, 0, w, h).data;
+          for (let i = 3; i < px.length; i += 4) { if (px[i] < 250) { alpha = true; break; } }
+        }
+        const png = cv.toDataURL('image/png');
+        let out = png;
+        if (!alpha) {
+          // Opaque: JPEG on white, unless the PNG is smaller (screenshots of text often are).
+          const cj = document.createElement('canvas');
+          cj.width = w; cj.height = h;
+          const gj = cj.getContext('2d');
+          gj.fillStyle = '#fff'; gj.fillRect(0, 0, w, h); gj.drawImage(cv, 0, 0);
+          const jpg = cj.toDataURL('image/jpeg', 0.88);
+          if (jpg.length < png.length) out = jpg;
+        }
+        const t = document.createElement('canvas');
+        const tk = 60 / Math.max(w, h);
+        t.width = Math.max(1, Math.round(w * tk)); t.height = Math.max(1, Math.round(h * tk));
+        t.getContext('2d').drawImage(cv, 0, 0, t.width, t.height);
+        resolve({ data: base64Of(out), mime: out.slice(5, out.indexOf(';')), thumb: t.toDataURL('image/png') });
+      };
+      img.onerror = function () { reject(new Error('not a picture Krunk can read')); };
+      img.src = url;
+    });
+  }
+
+  function kindOf(file) {
+    const t = (file.type || '').toLowerCase();
+    if (/^image\/(png|jpeg|webp|gif)$/.test(t)) return 'image';
+    if (t === 'application/pdf' || /\.pdf$/i.test(file.name)) return 'pdf';
+    if (t.indexOf('text/') === 0 || /^application\/(json|xml|javascript|x-yaml|x-sh|sql)/.test(t) || TEXT_EXT.test(file.name)) return 'text';
+    return null;
+  }
+
+  function binaryTotal(extra) {
+    return st.files.reduce(function (a, f) { return a + (f.kind === 'text' ? 0 : f.bytes || 0); }, extra || 0);
+  }
+
+  function addFiles(list) {
+    const files = Array.from(list || []);
+    if (!files.length) return;
+    fileError('');
+    files.forEach(function (file) {
+      const name = (file.name || 'pasted picture').slice(0, 120);
+      if (st.files.length >= MAX_FILES) { fileError('At most ' + MAX_FILES + ' files go with one message.'); return; }
+      const kind = kindOf(file);
+      if (!kind) { fileError(name + ': Krunk can attach pictures (PNG, JPEG, WebP, GIF), PDFs and text files.'); return; }
+      if (kind === 'image' && st.config && st.config.vision === false) {
+        fileError(name + ': the selected model can\'t see pictures. Choose a model with vision, or attach text.');
+        return;
+      }
+      if (kind === 'pdf' && file.size > MAX_PDF) { fileError(name + ' is too big (PDFs: at most 5 MB).'); return; }
+      if (kind === 'text' && file.size > MAX_TEXT_FILE) { fileError(name + ' is too big (text files: at most 2 MB).'); return; }
+      const f = { id: ++fileSeq, name: name, kind: kind, bytes: file.size, ready: false };
+      st.files.push(f);
+      const done = function () {
+        if (!st.files.includes(f)) return; // removed meanwhile
+        if (f.kind !== 'text' && binaryTotal() > MAX_BINARY_TOTAL) {
+          st.files = st.files.filter(function (x) { return x !== f; });
+          fileError(name + ': the files are too big together (at most 5.5 MB of pictures and PDFs).');
+        } else {
+          f.ready = true;
+        }
+        renderFiles();
+      };
+      const fail = function (e) {
+        st.files = st.files.filter(function (x) { return x !== f; });
+        fileError(name + ': ' + ((e && e.message) || 'could not be read'));
+        renderFiles();
+      };
+      if (kind === 'image') {
+        scalePicture(file).then(function (p) {
+          f.data = p.data; f.mime = p.mime; f.thumb = p.thumb; f.bytes = bytesOf(p.data);
+          done();
+        }, fail);
+      } else if (kind === 'pdf') {
+        readAs(file, 'data').then(function (u) {
+          f.data = base64Of(u); f.mime = 'application/pdf'; f.bytes = bytesOf(f.data);
+          done();
+        }, fail);
+      } else {
+        readAs(file, 'text').then(function (t) {
+          if (t.indexOf('\u0000') >= 0) { fail(new Error('is not a text file')); return; }
+          f.text = t; f.mime = file.type || 'text/plain';
+          done();
+        }, fail);
+      }
+    });
+    renderFiles();
+  }
+
+  $('attach').addEventListener('click', function () { if (!busy()) $('file').click(); });
+  $('file').addEventListener('change', function () {
+    addFiles($('file').files);
+    $('file').value = '';
+    input.focus();
+  });
+  // Paste: pictures and files from the clipboard (text pastes as text, as before).
+  input.addEventListener('paste', function (e) {
+    const cd = e.clipboardData;
+    if (!cd || busy()) return;
+    const files = Array.from(cd.files || []);
+    if (!files.length) {
+      Array.from(cd.items || []).forEach(function (it) {
+        if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); }
+      });
+    }
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  });
+  // Drop anywhere on the panel.
+  function hasFiles(e) { return e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') >= 0; }
+  document.addEventListener('dragover', function (e) {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = busy() ? 'none' : 'copy';
+    $('foot').classList.add('drop');
+  });
+  document.addEventListener('dragleave', function (e) {
+    if (!e.relatedTarget) $('foot').classList.remove('drop');
+  });
+  document.addEventListener('drop', function (e) {
+    $('foot').classList.remove('drop');
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    if (!busy()) addFiles(e.dataTransfer.files);
+  });
+
   function send() {
     const text = input.value.trim();
-    if (!text || busy()) return;
-    LB.post('agentSend', { text: text.slice(0, 20000) });
+    if (!canSend()) return;
+    const files = st.files.map(function (f) {
+      return f.kind === 'text' ? { name: f.name, mime: f.mime, text: f.text } : { name: f.name, mime: f.mime, data: f.data };
+    });
+    LB.post('agentSend', { text: text.slice(0, 20000), files: files });
     input.value = '';
+    st.files = [];
+    fileError('');
+    renderFiles();
     grow();
     renderStatus();
   }
 
   $('compose').addEventListener('submit', function (e) { e.preventDefault(); send(); });
-  input.addEventListener('input', function () { grow(); $('send').disabled = busy() || !input.value.trim(); });
+  input.addEventListener('input', function () { grow(); $('send').disabled = !canSend(); });
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
   });

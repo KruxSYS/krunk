@@ -411,5 +411,67 @@ module.exports = (h) => {
     }
   }
 
-  return { testAgentPanel, testAgentShellButton };
+  // 0.25.2: attached files: the button's file picker, chips, limits, paste, and what agentSend carries.
+  async function testAgentAttach(browser) {
+    console.log('ai panel attachments');
+    const { page, errors, external } = await openPage(browser, 'https://shell.krunk.invalid/agent.html', { width: 380, height: 700 }, 1, mockAi);
+    await page.evaluate(() => { window.__host.autoSimulate = false; });
+    await ai(page, 'config');
+    await settle(page);
+    const pngBuf = Buffer.from(png.slice(png.indexOf(',') + 1), 'base64');
+    const chooser = async (files) => {
+      const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#attach')]);
+      await fc.setFiles(files);
+      await page.waitForFunction(() => window.document.querySelectorAll('#files .chip.loading').length === 0);
+      await settle(page);
+    };
+    await chooser([
+      { name: 'shot.png', mimeType: 'image/png', buffer: pngBuf },
+      { name: 'data.csv', mimeType: 'text/csv', buffer: Buffer.from('a,b\n1,2\n') },
+      { name: 'tool.exe', mimeType: 'application/x-msdownload', buffer: Buffer.from('MZ') },
+    ]);
+    check(await page.locator('#files .chip').count() === 2, 'a picture and a text file become chips');
+    check(await page.isVisible('#files .chip img'), 'the picture chip shows a thumbnail');
+    check((await page.textContent('#files-error')).includes('tool.exe') && (await page.textContent('#files-error')).includes('pictures'), 'an .exe is refused with a reason');
+    check(!(await page.isDisabled('#send')), 'files alone can be sent');
+    await shot(page, 'ai-panel-attach.png');
+    await page.click('#files .chip:nth-child(2) .frm');
+    check(await page.locator('#files .chip').count() === 1, 'x removes a file');
+    await chooser([{ name: 'notes.md', mimeType: 'text/markdown', buffer: Buffer.from('# Notes\nhello') }]);
+    await page.fill('#input', 'What is in these?');
+    await page.keyboard.press('Enter');
+    const s = await lastSent(page, 'agentSend');
+    check(s && s.text === 'What is in these?' && Array.isArray(s.files) && s.files.length === 2, 'agentSend carries the text and both files');
+    const pic = s && s.files.find((f) => f.name === 'shot.png');
+    const md = s && s.files.find((f) => f.name === 'notes.md');
+    check(pic && /^image\/(png|jpeg)$/.test(pic.mime) && typeof pic.data === 'string' && pic.data.length > 100 && !pic.text, 'the picture goes as base64');
+    check(md && md.text === '# Notes\nhello' && !md.data, 'the text file goes as text');
+    check(await page.locator('#files .chip').count() === 0 && await page.isHidden('#files'), 'sending empties the attachments');
+    // No vision: pictures are refused in the panel.
+    await ai(page, 'config', { vision: false });
+    await settle(page);
+    await chooser([{ name: 'p.png', mimeType: 'image/png', buffer: pngBuf }]);
+    check(await page.locator('#files .chip').count() === 0 && (await page.textContent('#files-error')).includes("can't see pictures"), 'without vision a picture is refused');
+    // Paste a picture into the box.
+    await ai(page, 'config');
+    await settle(page);
+    await page.evaluate((b64) => {
+      const bin = atob(b64); const u = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+      const dt = new DataTransfer();
+      dt.items.add(new File([u], 'image.png', { type: 'image/png' }));
+      document.getElementById('input').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, pngBuf.toString('base64'));
+    await page.waitForFunction(() => document.querySelectorAll('#files .chip').length === 1 && !document.querySelector('#files .chip.loading'));
+    check(true, 'a pasted picture becomes a chip');
+    // While it works the clip is disabled.
+    await ai(page, 'state', 'running', 0);
+    await settle(page);
+    check(await page.isDisabled('#attach'), 'the attach button is disabled while the agent works');
+    check(external.length === 0, 'attachments: no network requests (' + external.join(' ') + ')');
+    check(errors.length === 0, 'attachments: no console errors (' + errors.join(' | ') + ')');
+    await page.context().close();
+  }
+
+  return { testAgentPanel, testAgentShellButton, testAgentAttach };
 };

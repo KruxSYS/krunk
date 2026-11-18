@@ -5,6 +5,14 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 
 ## Unreleased
 
+- **Attach files to the AI assistant.** Pictures, PDFs and text files (code, Markdown, CSV, JSON,
+  logs and similar) can go with a message: use the paperclip button, paste them into the message
+  box, or drop them on the panel. Pictures need a model that can see images.
+- **Scrolling works while a tooltip is showing.** When the pointer rested on a picture or link
+  with a tooltip (its title or alt text), the page wouldn't scroll with the mouse wheel until
+  the tooltip went away.
+- **The password suggestions close when you click elsewhere.** On some sites the list under a
+  login field stayed open after a click outside it, and covered the page.
 - **The AI assistant can read your userscripts and macros.** It could list them and write new
   ones, but never see an existing script's code, so it couldn't explain, fix or change one. Two
   new tools, get_userscript and get_macro, give it a script's full source (in pages for long

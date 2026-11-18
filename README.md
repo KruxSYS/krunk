@@ -950,6 +950,20 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - **Results are capped** at 8,000 characters (20,000 for HTML and text on request), with an offset
   to read on. Only the last two screenshots stay in the conversation.
 
+**Attached files.** The panel's paperclip button, a paste into the message box, or a drop
+on the panel attaches up to 10 files to a message: pictures (PNG, JPEG, WebP, GIF), PDFs and
+text files (code, Markdown, CSV, JSON, logs and similar). The panel scales pictures down to a
+longest side of 1568 px (JPEG, or PNG when that is smaller or the picture has transparency). Text
+files are read as text. Everything goes in the one `agentSend` message, because the renderer's
+bridge carries at most 8 M characters. The limits: PDFs up to 5 MB, pictures and PDFs up to
+5.5 MB together, text files up to 2 MB, of which 100,000 characters go to the model.
+`core::agent::attach` checks everything again in the browser process: the kind comes from the
+bytes, never from the name, and pictures need a model with vision. A picture becomes an image
+part of the user's message. A PDF becomes a document part (Anthropic `document`, OpenAI-style
+`file`). Text files are quoted in the message's text with their names. The 8 newest attached
+pictures and PDFs stay in the conversation, counted apart from the two screenshots. Nothing is
+stored: attachments live only in memory, with the conversation.
+
 **Output limit (0.15.0).** Each provider has **Max output tokens** in Settings → AI (default
 32,000; 0 = auto: OpenAI-style providers then send no limit, Anthropic gets the model's maximum
 or 32,000). A model's known maximum (from its model list, else a small built-in table) caps it.

@@ -24,6 +24,8 @@
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
   <symbol id="i-question" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.5a2.5 2.5 0 0 1 4.8 1c0 1.7-2.4 2-2.4 3.5M12 16.6v.1"/></symbol>
   <symbol id="i-steps" viewBox="0 0 24 24"><path d="M5 7h14M5 12h14M5 17h9"/></symbol>
+  <symbol id="i-attach" viewBox="0 0 24 24"><path d="M20 11.5l-7.8 7.8a4.6 4.6 0 0 1-6.5-6.5l8.2-8.2a3 3 0 0 1 4.3 4.3l-8.2 8.2a1.5 1.5 0 0 1-2.1-2.1l7.5-7.5"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M7 3.5h7l4 4V20a.5.5 0 0 1-.5.5h-10.5a.5.5 0 0 1-.5-.5V4a.5.5 0 0 1 .5-.5z"/><path d="M14 3.5V8h4"/></symbol>
   <symbol id="i-notes" viewBox="0 0 24 24"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 9h6M9 13h6M9 17h3"/></symbol>
 </svg>
 <header id="head">
@@ -62,7 +64,11 @@
 <div id="announce" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 <footer id="foot">
   <div id="status" role="status" hidden><span class="spinner" aria-hidden="true"></span><span id="status-text"></span></div>
+  <div id="files" aria-label="Attached files" hidden></div>
+  <div id="files-error" role="alert" hidden></div>
   <form id="compose" autocomplete="off">
+    <button id="attach" type="button" title="Attach pictures, PDFs or text files (or paste or drop them here)" aria-label="Attach files"><svg class="icon"><use href="#i-attach"/></svg></button>
+    <input id="file" type="file" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,.pdf,text/*,.txt,.md,.csv,.tsv,.json,.jsonl,.xml,.yaml,.yml,.toml,.ini,.log,.html,.htm,.css,.js,.mjs,.ts,.tsx,.jsx,.py,.rs,.go,.java,.kt,.c,.h,.cpp,.hpp,.cs,.rb,.php,.sh,.ps1,.bat,.sql,.lua,.swift,.srt,.vtt">
     <textarea id="input" rows="1" maxlength="20000" placeholder="Tell the agent what to do" aria-label="Message to the agent"></textarea>
     <button id="send" type="submit" title="Send (Enter)" aria-label="Send"><svg class="icon"><use href="#i-send"/></svg></button>
   </form>

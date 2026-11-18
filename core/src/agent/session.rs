@@ -65,8 +65,12 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// The marker between the context block and the user's own words.
 pub const USER_MARKER: &str = "User message:";
-/// Images kept in the history sent to the provider (the newest).
+/// Screenshots (tool images) kept in the history sent to the provider (the newest).
 pub const KEEP_IMAGES: usize = 2;
+/// 0.25.2: pictures and PDFs the user attached, kept apart from the screenshots (the newest).
+pub const KEEP_ATTACHED: usize = 8;
+/// What replaces an attached picture or PDF dropped from the history.
+pub const ATTACHED_REMOVED: &str = "[a file the user attached earlier was removed]";
 /// Tool results kept whole (the newest); older ones are shortened.
 pub const KEEP_TOOL_RESULTS: usize = 8;
 /// Older tool results are cut to this many characters.
@@ -108,7 +112,7 @@ pub struct Config {
 pub enum Input {
     /// The user sent a message; `context` is the automatic context block the host built
     /// ([`super::context::context_block`]).
-    User { text: String, context: String },
+    User { text: String, context: String, files: Vec<super::attach::Attachment> },
     /// A streamed event of the running provider request.
     Stream(StreamEvent),
     /// The provider response finished normally.
@@ -334,7 +338,7 @@ impl Session {
         let mut out = Vec::new();
         let requesting = matches!(self.phase, Phase::Requesting);
         match input {
-            Input::User { text, context } => self.on_user(&text, &context, now_ms, &mut out),
+            Input::User { text, context, files } => self.on_user(&text, &context, files, now_ms, &mut out),
             Input::Stream(ev) if requesting => self.on_stream(ev, &mut out),
             Input::StreamEnd if requesting => self.on_end(now_ms, &mut out),
             Input::StreamFailed(msg) if requesting => self.fail(msg, now_ms, &mut out),
@@ -390,7 +394,14 @@ impl Session {
 
     // ---- a task ----
 
-    fn on_user(&mut self, text: &str, context: &str, now: u64, out: &mut Vec<Action>) {
+    fn on_user(
+        &mut self,
+        text: &str,
+        context: &str,
+        files: Vec<super::attach::Attachment>,
+        now: u64,
+        out: &mut Vec<Action>,
+    ) {
         if self.is_busy() {
             emit(
                 out,
@@ -402,23 +413,39 @@ impl Session {
             return;
         }
         let text = text.trim();
-        if text.is_empty() {
+        if text.is_empty() && files.is_empty() {
             return;
         }
+        let typed = text;
+        // Only files: the model is told to look at them.
+        let text = if text.is_empty() { "(See the attached files.)" } else { text };
+        let names: Vec<String> = files.iter().map(|f| f.name().to_string()).collect();
         self.offer = Offer { userscripts: self.cfg.userscripts, macros: self.cfg.macros, gated: gate::requested(text) };
         let body = if context.trim().is_empty() {
             format!("{USER_MARKER}\n{text}")
         } else {
             format!("{}\n\n{USER_MARKER}\n{text}", context.trim_end())
         };
-        self.history.push(Message::user(body));
+        let mut msg = Message::user(String::new());
+        msg.parts = super::attach::parts(body, files);
+        self.history.push(msg);
         self.pending.clear();
         self.task_steps = 0;
         self.raise = None;
         self.answered();
         self.step_limit = self.cfg.max_steps.max(1);
         self.task_started = now;
-        emit(out, Event::AgentMessage { role: "user".into(), text: text.to_string() });
+        let shown = if names.is_empty() {
+            text.to_string()
+        } else {
+            let list = names.iter().map(|n| format!("📎 {n}")).collect::<Vec<_>>().join("\n");
+            if typed.is_empty() {
+                list
+            } else {
+                format!("{typed}\n{list}")
+            }
+        };
+        emit(out, Event::AgentMessage { role: "user".into(), text: shown });
         self.set_state(RunState::Running, None, out);
         self.send(out);
     }
@@ -1061,14 +1088,24 @@ pub fn repair(msgs: &mut Vec<Message>) {
 pub fn request_messages(history: &[Message]) -> Vec<Message> {
     let mut msgs = history.to_vec();
     repair(&mut msgs);
-    let mut images = 0;
+    let (mut images, mut attached) = (0, 0);
     for m in msgs.iter_mut().rev() {
+        let user = m.role == Role::User;
         for p in m.parts.iter_mut().rev() {
-            if matches!(p, Part::Image(_)) {
-                images += 1;
-                if images > KEEP_IMAGES {
-                    *p = Part::Text(IMAGE_REMOVED.into());
+            match p {
+                Part::Image(_) | Part::Document(_) if user => {
+                    attached += 1;
+                    if attached > KEEP_ATTACHED {
+                        *p = Part::Text(ATTACHED_REMOVED.into());
+                    }
                 }
+                Part::Image(_) => {
+                    images += 1;
+                    if images > KEEP_IMAGES {
+                        *p = Part::Text(IMAGE_REMOVED.into());
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -1303,7 +1340,7 @@ mod tests {
     }
 
     fn user(t: &str) -> Input {
-        Input::User { text: t.into(), context: "Context: tab 1 \"Shop\"".into() }
+        Input::User { text: t.into(), context: "Context: tab 1 \"Shop\"".into(), files: Vec::new() }
     }
 
     fn done(id: &str, text: &str) -> Input {
@@ -1458,7 +1495,7 @@ mod tests {
     #[test]
     fn text_answer_is_final_and_deltas_stream() {
         let mut s = Session::new(cfg());
-        s.handle(Input::User { text: "Hi".into(), context: String::new() }, 0);
+        s.handle(Input::User { text: "Hi".into(), context: String::new(), files: Vec::new() }, 0);
         let a = feed(&mut s, text("Hello there"), 10);
         let deltas: Vec<_> = events(&a)
             .into_iter()
@@ -2643,6 +2680,41 @@ console.log(a);") })
         let a = s.handle(Input::ToolDone { call_id: "s".into(), outcome: shot(1) }, 1);
         assert!(images(&sends(&a)[0].messages).is_empty());
         assert!(sends(&a)[0].system.contains("does not take images"));
+    }
+
+    #[test]
+    fn attached_files_go_with_the_message_and_outlive_screenshots() {
+        use super::super::attach::Attachment;
+        let mut s = Session::new(cfg());
+        let pic = Attachment::Image {
+            name: "chart.png".into(),
+            image: Image { mime: "image/png".into(), base64: "PIC".into() },
+        };
+        let txt = Attachment::Text { name: "a.csv".into(), text: "x,y\n1,2".into(), cut: false, chars: 7 };
+        let a = s.handle(Input::User { text: "  ".into(), context: "Context: tab 1".into(), files: vec![pic, txt] }, 0);
+        let shown = events(&a)
+            .into_iter()
+            .find_map(|e| match e {
+                Event::AgentMessage { role, text } if role == "user" => Some(text.clone()),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(shown, "📎 chart.png\n📎 a.csv");
+        let first = &sends(&a)[0].messages[0];
+        assert!(
+            first.text().contains("(See the attached files.)")
+                && first.text().contains("<<<FILE \"a.csv\"\nx,y\n1,2\nFILE>>>")
+        );
+        let mut last = Vec::new();
+        for n in 1..=3u8 {
+            let id = format!("s{n}");
+            feed(&mut s, calls(&[(&id, "screenshot", "{}")]), 0);
+            last = s.handle(Input::ToolDone { call_id: id, outcome: shot(n) }, 1);
+        }
+        assert_eq!(images(&sends(&last)[0].messages), vec!["PIC", "IMG2", "IMG3"], "the attached picture stays");
+        // Nothing typed and nothing attached: nothing happens.
+        let mut s = Session::new(cfg());
+        assert!(s.handle(Input::User { text: " ".into(), context: String::new(), files: Vec::new() }, 0).is_empty());
     }
 
     #[test]

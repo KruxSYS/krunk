@@ -1,7 +1,7 @@
 //! Provider mapping tests: request bodies, streamed answers, errors and model lists.
 
 use super::*;
-use crate::agent::{Image, Message, Part, ToolSpec};
+use crate::agent::{Document, Image, Message, Part, ToolSpec};
 use serde_json::json;
 
 fn img() -> Image {
@@ -508,4 +508,22 @@ fn assembled_pads_and_keeps_order() {
     a.apply(&StreamEvent::Done(StopReason::Other("refusal".into())));
     assert_eq!(a.calls, vec![call("a", "x", r#"{"k":1}"#), call("b", "y", "{}")]);
     assert_eq!(a.stop, Some(StopReason::Other("refusal".into())));
+}
+
+#[test]
+fn attached_pdfs() {
+    let doc = Document { mime: "application/pdf".into(), name: "a.pdf".into(), base64: "UERG".into() };
+    let mut req = sample();
+    req.messages = vec![Message { parts: vec![Part::Text("read".into()), Part::Document(doc)], ..Message::user("") }];
+    let b = body_of(&chat_request(ProviderKind::OpenAi, "https://api.openai.com/v1", &req));
+    let c = &b["messages"][1]["content"];
+    assert_eq!(
+        c[1],
+        json!({"type": "file", "file": {"filename": "a.pdf", "file_data": "data:application/pdf;base64,UERG"}})
+    );
+    let b = body_of(&chat_request(ProviderKind::Anthropic, "https://api.anthropic.com/v1", &req));
+    assert_eq!(
+        b["messages"][0]["content"][1],
+        json!({"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "UERG"}, "title": "a.pdf"})
+    );
 }

@@ -22,6 +22,7 @@
 //! and after the user allowed the site; it reads nothing, and a password Krunk generates for it
 //! never passes through this module.
 
+pub mod attach;
 pub mod context;
 pub mod drafts;
 pub mod gate;
@@ -194,11 +195,22 @@ pub struct Image {
     pub base64: String,
 }
 
+/// A document for the model (0.25.2: a PDF the user attached; base64, no `data:` prefix).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Document {
+    /// `application/pdf`.
+    pub mime: String,
+    pub name: String,
+    pub base64: String,
+}
+
 /// A part of a message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Part {
     Text(String),
     Image(Image),
+    /// Only in user messages (an attached PDF).
+    Document(Document),
 }
 
 /// A tool call the model made: `arguments` is its raw JSON text.
@@ -242,7 +254,7 @@ impl Message {
             .iter()
             .filter_map(|p| match p {
                 Part::Text(t) => Some(t.as_str()),
-                Part::Image(_) => None,
+                Part::Image(_) | Part::Document(_) => None,
             })
             .collect::<Vec<_>>()
             .join("\n")

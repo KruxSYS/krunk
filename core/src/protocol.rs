@@ -1792,6 +1792,9 @@ pub enum Request {
     /// The agent panel: a new task (or a follow-up in the same conversation).
     AgentSend {
         text: String,
+        /// 0.25.2: attached files (checked in `agent::attach`).
+        #[serde(default)]
+        files: Vec<AgentFile>,
     },
     AgentStop,
     /// "New conversation".
@@ -2502,10 +2505,44 @@ fn malformed(e: serde_json::Error) -> ProtocolError {
     ProtocolError::Malformed(format!("{:?} error at line {} column {}", e.classify(), e.line(), e.column()))
 }
 
+/// 0.25.2: a file attached in the agent panel: a picture or PDF (`data`, base64) or a text
+/// file (`text`). `mime` is the panel's guess; the bytes decide.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentFile {
+    pub name: String,
+    #[serde(default)]
+    pub mime: String,
+    #[serde(default)]
+    pub data: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+/// Never the content (a log line must not carry a whole file, or what is in it).
+impl std::fmt::Debug for AgentFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentFile")
+            .field("name", &self.name)
+            .field("mime", &self.mime)
+            .field("data_len", &self.data.as_ref().map(String::len))
+            .field("text_len", &self.text.as_ref().map(String::len))
+            .finish()
+    }
+}
+
+/// The agent panel's requests may carry attached files (0.25.2; pictures are scaled down by
+/// the panel, see `agent::attach` for the limits). The renderer's bridge allows 8 M UTF-16
+/// characters; text files may be 3 bytes a character in UTF-8, so this is never the tighter one.
+pub const MAX_AGENT_REQUEST_BYTES: usize = 24 * 1024 * 1024;
+
 /// Parses and authorizes a privileged message.
 pub fn parse_request(sender: Sender, json: &str) -> Result<Envelope, ProtocolError> {
     // Extension pages store and send larger things (a content blocker's settings).
-    let limit = if sender == Sender::Ext { MAX_EXT_REQUEST_BYTES } else { MAX_REQUEST_BYTES };
+    let limit = match sender {
+        Sender::Ext => MAX_EXT_REQUEST_BYTES,
+        Sender::Agent => MAX_AGENT_REQUEST_BYTES,
+        _ => MAX_REQUEST_BYTES,
+    };
     if json.len() > limit {
         return Err(ProtocolError::TooLarge);
     }
@@ -3302,6 +3339,10 @@ mod tests {
             (r#"{"cmd":"toggleAgent"}"#, &[Sender::Shell]),
             (r#"{"cmd":"stopMacros"}"#, &[Sender::Shell]),
             (r#"{"cmd":"agentSend","text":"List the links"}"#, &[Sender::Agent]),
+            (
+                r#"{"cmd":"agentSend","text":"","files":[{"name":"a.txt","mime":"text/plain","text":"hi"}]}"#,
+                &[Sender::Agent],
+            ),
             (r#"{"cmd":"agentStop"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentNew"}"#, &[Sender::Agent]),
             (r#"{"cmd":"agentScratchClear"}"#, &[Sender::Agent]),

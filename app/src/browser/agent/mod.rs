@@ -331,8 +331,8 @@ impl Browser {
             return self.agent_password_show(win, req_id, id);
         }
         let result: Result<(), String> = match request {
-            Request::AgentSend { text } => {
-                self.agent_send(win, text);
+            Request::AgentSend { text, files } => {
+                self.agent_send(win, text, files);
                 Ok(())
             }
             Request::AgentStop => {
@@ -501,11 +501,22 @@ impl Browser {
     }
 
     /// The user's message: the context is read from the target tab, then the task starts.
-    fn agent_send(&self, win: WindowId, text: String) {
+    fn agent_send(&self, win: WindowId, text: String, files: Vec<lb_core::protocol::AgentFile>) {
         let setup = self.agent_setup();
         if let Some(problem) = setup.problem {
             self.post_panel(win, &Event::AgentError { message: problem });
             return;
+        }
+        // 0.25.2: attached files, checked again here (kind from the bytes, sizes, vision).
+        let files = match lb_core::agent::attach::check(&files, setup.cfg.vision) {
+            Ok(f) => f,
+            Err(e) => {
+                self.post_panel(win, &Event::AgentError { message: e });
+                return;
+            }
+        };
+        if !files.is_empty() {
+            info!("agent: {} attached file(s)", files.len());
         }
         self.agent_ensure(win);
         let gen = {
@@ -522,7 +533,7 @@ impl Browser {
         self.agent_context(win, tools, move |b, context| {
             let live = b.agent.wins.borrow().get(&win).is_some_and(|w| w.send_gen == gen);
             if live {
-                b.agent_input(win, Input::User { text, context });
+                b.agent_input(win, Input::User { text, context, files });
             }
         });
     }
