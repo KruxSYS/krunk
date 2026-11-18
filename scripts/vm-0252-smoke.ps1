@@ -51,7 +51,7 @@ MoveTo ($ox + 300) ($oy + 420); Start-Sleep -Milliseconds 300
 MoveTo ($ox + 310) ($oy + 430); Start-Sleep 2
 Shot "$P-1a-tooltip"
 KrunkWindows "$P tooltip"
-Wheel ($ox + 310) ($oy + 430) -3; Start-Sleep 1
+Wheel ($ox + 310) ($oy + 430) 3; Start-Sleep 1
 $t = Title; Log "[$P] RESULT tooltip-scroll: '$t' => $(if ($t -match '^Y=([1-9]\d*)') { 'PASS' } else { 'FAIL' })"
 Shot "$P-1b-scrolled"
 SafeKeys '{HOME}' 800
