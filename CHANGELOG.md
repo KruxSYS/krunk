@@ -3,7 +3,7 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
-## Unreleased
+## 0.25.3 — 2026-11-18
 
 - **No more "Save password?" for a login Krunk already has.** Krunk asked again after every
   start and every automatic lock, because it couldn't compare with the locked vault. It now
