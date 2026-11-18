@@ -881,6 +881,7 @@ pub fn reanchor_commit(plan: &RestorePlan, me: &str, now_ms: u64) -> KResult<(Co
 /// the heads are re-anchored (as "Finish securing" does). The passphrase and recovery key of the
 /// old root stop working; new ones are made for the server's format but never shown.
 /// `ak_blob`/`pak_blob` are the current heads, already verified by this device.
+#[allow(clippy::too_many_arguments)]
 pub fn new_root_commit(
     acc: AccountId,
     ak: &AkPin,
@@ -1053,7 +1054,12 @@ pub struct BoxN {
 #[cfg(test)]
 impl BoxN {
     fn clone_for_test(&self) -> BoxN {
-        BoxN { pk_general: self.pk_general.clone(), pk_vault: self.pk_vault.clone(), name: self.name.clone(), want: self.want.clone() }
+        BoxN {
+            pk_general: self.pk_general.clone(),
+            pk_vault: self.pk_vault.clone(),
+            name: self.name.clone(),
+            want: self.want.clone(),
+        }
     }
 }
 
@@ -1619,8 +1625,9 @@ mod tests {
         assert_eq!(nb.want.as_deref(), Some(WANT_PAK));
         a_check_tag(&ag_a, &n_confirm(&ag_n, &ag_a.sas_text()).unwrap()).unwrap();
         // It can't be admitted as a new device (that would replace its key in ak_dir).
-        assert!(a_admit(&ag_a, &head, &dir_now, pak_pin.hash, pak_pin.esc_pk, "dev-a", "dev-n", 1, &nb, None, 3)
-            .is_err());
+        assert!(
+            a_admit(&ag_a, &head, &dir_now, pak_pin.hash, pak_pin.esc_pk, "dev-a", "dev-n", 1, &nb, None, 3).is_err()
+        );
         // A device that isn't listed, or listed under another key, gets nothing.
         assert!(a_share_pak(&ag_a, &head_dir, "dev-n", &nb, pak_pin, pak_pin.hash, pak_pin.esc_pk).is_err());
         let mut other_key = nb.clone_for_test();
