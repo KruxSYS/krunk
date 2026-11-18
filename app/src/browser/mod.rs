@@ -1935,6 +1935,7 @@ impl Browser {
         }
         // Wake after showing: a frozen page resumes as a visible one.
         self.wake_tab(to);
+        self.preview_activated(to);
         // A page that does not respond says so when its tab comes to the front (0.11.0).
         self.defer(move |b| b.show_hang_prompt(to));
         // A sign-in the tab waits for shows again with it (0.15.0), after the focus settled.

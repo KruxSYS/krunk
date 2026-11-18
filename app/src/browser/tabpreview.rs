@@ -163,11 +163,24 @@ impl Browser {
         }
     }
 
-    /// The active tab `id` is about to be left (a tab switch): its page is still on screen for
-    /// a moment, long enough for a picture.
-    pub(super) fn preview_leaving(&self, id: TabId) {
+    /// The active tab `id` is about to be left (a tab switch). 0.25.0: no picture now. A
+    /// full-page capture at this moment competed with the new tab's first frame (GPU readback
+    /// and encode on every switch); the picture is taken once a tab has been active a moment
+    /// ([`Browser::preview_activated`]) and after loads.
+    pub(super) fn preview_leaving(&self, _id: TabId) {
         self.hide_tab_preview();
-        self.preview_capture(id);
+    }
+
+    /// 0.25.0: tab `id` became active: its picture once it has stayed in front for
+    /// [`CAPTURE_AFTER_LOAD_MS`] (a later switch moves the timer on to its tab).
+    pub(super) fn preview_activated(&self, id: TabId) {
+        if !self.previews_on() || self.is_private_tab(id) {
+            return;
+        }
+        self.preview.after_load.set(Some(id));
+        if let Some(app) = self.app() {
+            app.set_timer(PREVIEW_TIMER, CAPTURE_AFTER_LOAD_MS);
+        }
     }
 
     /// Tab `id` finished loading: if it is the active tab, its picture a little later.
