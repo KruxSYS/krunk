@@ -290,6 +290,33 @@ impl Workspace {
     }
 
     /// Opens a tab in `win` (see [`TabModel::open`]).
+    /// 0.25.0: a tab id for a view made ahead of its tab (the pre-loaded new tab page); the tab
+    /// it becomes is opened with [`Workspace::open_as`].
+    pub fn reserve_tab_id(&mut self) -> TabId {
+        let id = self.next_tab;
+        self.next_tab = self.next_tab.wrapping_add(1).max(1);
+        id
+    }
+
+    /// [`Workspace::open`] with a reserved id ([`Workspace::reserve_tab_id`]).
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_as(
+        &mut self,
+        win: WindowId,
+        id: TabId,
+        url: &str,
+        private: bool,
+        position: Position,
+        activate: bool,
+        now: i64,
+    ) -> Option<(TabId, Vec<Op>)> {
+        let keep = self.next_tab;
+        self.next_tab = id;
+        let r = self.open(win, url, private, position, activate, now);
+        self.next_tab = keep;
+        r
+    }
+
     pub fn open(
         &mut self,
         win: WindowId,
@@ -490,6 +517,21 @@ impl Workspace {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_reserved_id_is_used_once_by_open_as() {
+        let mut ws = Workspace::default();
+        let (win, _, _) = ws.open_window("https://a.example/", false, None, false, 0);
+        let r = ws.reserve_tab_id();
+        let (other, _) = ws.open(win, "https://b.example/", false, Position::End, false, 1).unwrap();
+        assert_ne!(other, r, "a reserved id is not handed out again");
+        let (id, ops) = ws.open_as(win, r, "krunk://newtab", false, Position::End, true, 2).unwrap();
+        assert_eq!(id, r);
+        assert!(ops.iter().any(|o| matches!(o, Op::CreateView { tab, .. } if *tab == r)));
+        let (next, _) = ws.open(win, "https://c.example/", false, Position::End, false, 3).unwrap();
+        assert!(next != r && next != other);
+    }
+
     use super::*;
 
     fn urls(ws: &Workspace, win: WindowId) -> Vec<String> {

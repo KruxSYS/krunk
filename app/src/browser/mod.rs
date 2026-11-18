@@ -89,6 +89,7 @@ mod settings_host;
 mod siteinfo;
 mod source;
 mod spare;
+mod spare_tab;
 mod status;
 mod storage;
 mod suggest;
@@ -422,6 +423,10 @@ pub struct Browser {
     perf_recs: RefCell<HashMap<TabId, lb_core::perftrace::Rec>>,
     /// 0.25.0: tabs woken beneath the page on screen ahead of a likely switch (`warm.rs`).
     warm: RefCell<lb_core::warm::Warm<TabId>>,
+    /// 0.25.0: the pre-loaded new tab page (`spare_tab.rs`), and the frame of the one being
+    /// adopted.
+    spare_tab: RefCell<Option<spare_tab::SpareTab>>,
+    spare_tab_parent: Cell<Option<WindowId>>,
     /// The custom-DNS stub, once the settings asked for it.
     dns: RefCell<Option<crate::dns::Engine>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -574,6 +579,8 @@ impl Browser {
             perf_input: Cell::new(None),
             perf_recs: RefCell::new(HashMap::new()),
             warm: RefCell::new(lb_core::warm::Warm::default()),
+            spare_tab: RefCell::new(None),
+            spare_tab_parent: Cell::new(None),
             dns: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -1091,6 +1098,8 @@ impl Browser {
             i.map(|i| frames.remove(i))
         };
         let Some(frame) = frame else { return };
+        // 0.25.0: the pre-loaded new tab page lives in a frame; it goes before that frame does.
+        self.spare_tab_frame_closing(win);
         // A closed tab's page kept on screen goes with its window (0.15.0).
         let kept = self.pending_reveal.borrow_mut().release_window(win);
         if let Some(v) = kept.and_then(|t| self.kept_views.borrow_mut().remove(&t)) {
@@ -1197,6 +1206,17 @@ impl Browser {
                 _ => return,
             }
         };
+        // 0.25.0: the pre-loaded new tab page made for this id: it only moves into the window.
+        if self.views.borrow().contains_key(&id) {
+            self.spare_tab_adopted(win, id, active);
+            return;
+        }
+        self.build_view(win, window, id, &url, private, active);
+    }
+
+    /// Makes, hooks and starts tab `id`'s view in `window` (its frame `win`).
+    fn build_view(&self, win: WindowId, window: Window, id: TabId, url: &str, private: bool, active: bool) {
+        let url = url.to_string();
         let adopted = self.adopted.borrow_mut().remove(&id);
         let popup = adopted.is_some();
         let (view, net) = adopted.unwrap_or_else(|| self.new_tab_view(private));
@@ -2550,7 +2570,16 @@ impl Browser {
             None => self.settings.borrow().new_tab_target().unwrap_or_default(),
         };
         let position = self.new_tab_position(win);
-        let Some((id, effects)) = self.ws.borrow_mut().open(win, &target, private, position, true, now_ms()) else {
+        // 0.25.0: a plain new tab takes the pre-loaded new tab page when it matches.
+        let spare = if url.is_none() { self.spare_tab_take(&target, private) } else { None };
+        let opened = match spare {
+            Some(sid) => self.ws.borrow_mut().open_as(win, sid, &target, private, position, true, now_ms()),
+            None => self.ws.borrow_mut().open(win, &target, private, position, true, now_ms()),
+        };
+        let Some((id, effects)) = opened else {
+            if let Some(sid) = spare {
+                self.spare_tab_discard(sid);
+            }
             return;
         };
         // A new-tab page: typing goes to the address bar at once, and the
@@ -3072,6 +3101,7 @@ impl Browser {
                     self.shell_loaded(win);
                     self.focus_new_window();
                     self.schedule_spare();
+                    self.spare_tab_schedule();
                 }
                 Sender::Popup => {
                     let slot = self.request_slot();
@@ -4245,6 +4275,7 @@ impl WindowEvents for AppEvents {
             spare::SPARE_TIMER => b.spare_timer(),
             tabpreview::PREVIEW_TIMER => b.preview_timer(),
             warm::WARM_TIMER => b.warm_tick(),
+            spare_tab::SPARE_TAB_TIMER => b.spare_tab_timer(),
             segmented::PARTS_TIMER => b.parts_tick(),
             sessionlog::SAMPLE_TIMER => b.sessionlog_sample(),
             sessionlog::FLUSH_TIMER => b.sessionlog_flush(),

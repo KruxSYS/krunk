@@ -442,6 +442,8 @@ impl Browser {
     /// The theme for the shell, popup, built-in pages and (through the
     /// profiles' preferred colour scheme) web pages.
     pub(super) fn apply_theme(&self) {
+        // 0.25.0: the pre-loaded new tab page is made again in the new look.
+        self.spare_tab_refresh();
         let theme = self.settings.borrow().theme;
         engine::set_color_scheme(self.color_scheme());
         let dark = self.color_scheme();
