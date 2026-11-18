@@ -26,7 +26,8 @@ param(
 # Phases (-Phases, comma list, in order):
 #   switch   25 x Ctrl+Tab, 700 ms apart
 #   rapid    50 x Ctrl+Tab every 150 ms, then 20 clicks across the visible strip ~250 ms apart
-#   far      10 clicks on tabs not visited for >= 60 s (computed strip positions)
+#   far      10 clicks on tabs not visited for >= 60 s (computed strip positions), no rest on the tab
+#   farhover the same, resting 150 ms on the tab before the click
 #   discard  --sleep-test-seconds=$SleepTest with tab discarding on; once background tabs are
 #            discarded: 5 x Ctrl+<digit> onto discarded (non-video) tabs, then Ctrl+9 and
 #            3 x Ctrl+W onto discarded neighbours. Recorded over the page area (flash check too)
@@ -314,16 +315,18 @@ function Phase-Rapid {
   EndCap $cap 'rapid'
   Note "rapid: clicks over $vis visible tabs"
 }
-function Phase-Far {
+function Phase-Far([string]$Kind = 'far', [int]$Dwell = 0) {
   # The load pass visited every tab before -Settle; wait out the rest of the 60 s.
   Start-Sleep ([Math]::Max(0, 60 - $Settle + 5))
   $vis = [Math]::Min((VisibleTabs), $order.Count)
   $picks = @(@(9, 2, 7, 4, 11, 1, 8, 3, 10, 5, 12, 6) | Where-Object { $_ -lt $vis - 1 } | Select-Object -First 10)
   Note "far: $vis visible tabs, clicking positions $($picks -join ' ')"
   if ($picks.Count -eq 0) { Note 'far: no far tabs (N too small)'; return }
-  $cap = StartCap 'far' (BandRect) 4 ([int]($picks.Count * 1.6) + 4)
-  foreach ($pos in $picks) { ClickTab $pos 'far' 120 1400 }
-  EndCap $cap 'far'
+  # 0.25.0 M4: 'far' clicks without resting on the tab (the acceptance run); 'farhover' rests
+  # 150 ms first, as a mouse does (the hover warm-up gets its chance).
+  $cap = StartCap $Kind (BandRect) 4 ([int]($picks.Count * 1.6) + 4)
+  foreach ($pos in $picks) { ClickTab $pos $Kind $Dwell 1400 }
+  EndCap $cap $Kind
 }
 function Phase-Discard {
   # Background tabs discard after 4 x -SleepTest s (power.rs); video tabs may stay awake.
@@ -474,7 +477,8 @@ foreach ($ph in ($Phases -split ',')) {
     switch ($ph) {
       'switch' { Phase-Switch }
       'rapid' { Phase-Rapid }
-      'far' { Phase-Far }
+      'far' { Phase-Far 'far' 0 }
+      'farhover' { Phase-Far 'farhover' 150 }
       'discard' { Phase-Discard }
       'open' { Phase-Open }
       'close' { Phase-Close }
