@@ -205,7 +205,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   draws the shell with those colours and measures the contrast from the pixels.
 - **Tab previews (0.15.0):** resting the mouse on a tab for half a second shows a card with its
   title, its site and a small picture of the page (the active tab: no picture). Pictures are
-  taken only from the tab you are looking at (when you leave it, and shortly after it loads),
+  taken only from the tab you are looking at (once it has been in front for 1.5 s, and shortly
+  after it loads; 0.25.0: no longer at the moment you switch away, which slowed every switch),
   kept in memory only (at most 48) and never for background tabs. Settings → General → New tabs
   → Preview tabs on hover turns cards and pictures off.
 - **New tab page tiles (0.15.0):** pin, edit and remove sit in one column in the tile's corner;
@@ -807,12 +808,21 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
 - **Tabs:** one browser per *live* tab, laid out below the shell. Restored tabs stay unloaded
   until they are activated. Pages that open windows (`window.open`, `target=_blank`) get a new
   tab next to them; `window.open` keeps its opener.
-- **Switching tabs:** the views of the other tabs are never hidden: they are parked outside the
-  window's client area, shown and sized (0.7.4). A hidden window could lose what the GPU had
-  drawn for it, and shown again its first frame was empty — an occasional one-frame white flash
-  on tab switches on GPU machines. A switch moves the new tab's view into place on top, and the
-  old one is parked 100 ms later (0.7.3), so the old page shows through until the new one is
-  drawn. A tab that has never loaded keeps the old page on screen until it has.
+- **Switching tabs:** background tabs are parked outside the window's client area and hidden
+  from the engine (throttled like Chrome's background tabs, 0.10.0). A switch brings the new
+  tab's view on top and parks the old one 100 ms later, so the old page shows until the new one
+  has drawn: a tab that has never loaded waits for its first paint (at most 500 ms); a tab that
+  painted before waits for its page to report `shown` (two animation frames after it became
+  visible again, from `painted.js` over the page bridge; Krunk's own pages answer through
+  DevTools), at most 150 ms (0.25.0, `core::reveal`). **Warm tabs (0.25.0, `warm.rs`):** the
+  tab the pointer rests on for 80 ms (the shell's `tabWarm`), the tab just left and, after
+  Ctrl+Tab, the next one are shown to the engine beneath the page on screen for 2.5 s (at most
+  two), so a switch to them swaps at once; resting CPU is unchanged. **New tab page made ahead
+  (0.25.0, `spare_tab.rs`):** one hidden new tab page under a reserved tab id; Ctrl+T opens the
+  tab with that id. Made again after a theme change; never for private tabs or another new-tab
+  setting. `KRUNK_PERF_TRACE=1` writes `perf.log` (per switch: path, wait, UI time, stalls;
+  `scripts/perf/trace-summary.py`); the VM measurement is `scripts/vm-0250-tabs.ps1` with
+  `scripts/perf/vm-0250-run.sh`.
 - **Moving a tab between windows** re-parents its browser's child window (`SetParent`, then
   CEF's move/resize notifications). The browser, its renderer, its request context (so a
   private tab stays private) and its history are untouched, so nothing reloads.
