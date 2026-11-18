@@ -3,7 +3,7 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
-## Unreleased
+## 0.25.1 — 2026-11-18
 
 - **New tabs no longer keep spinning.** A new tab could show the loading circle (and the stop
   button) for ever although its page was there: the new tab page made ahead had finished loading
