@@ -3395,7 +3395,7 @@ async function testSettings(browser) {
   const tab = async (name) => { await page.click('#tabs a[data-tab="' + name + '"]'); await page.waitForTimeout(20); };
   check(await page.locator('.panel.active[data-tab=general]').count() === 1 && await page.locator('#tabs a.active[data-tab=general]').count() === 1, 'the General tab is shown first');
   check(await page.locator('.panel').count() === 9 && await page.locator('.panel.active').count() === 1, 'nine tabs (Account since 0.8.0, AI and scripts since 0.12.0), one shown');
-  check(await page.inputValue('#searchEngine') === 'duckDuckGo', 'defaults: DuckDuckGo');
+  check(await page.inputValue('#searchEngine') === 'google', 'defaults: Google (0.21+)');
   // 0.12.1: not the default browser: a banner and a General card with "Make default".
   await page.waitForFunction(() => !document.getElementById('default-banner').hidden);
   check((await page.textContent('#default-status')).startsWith('Krunk is not your default browser') && await page.locator('#default-make').isVisible() && await page.locator('#default-hint').isHidden(), 'not the default: the banner, the status and Make default are shown');
@@ -5672,8 +5672,6 @@ async function testAccountCard(browser) {
 function syncMock() {
   const h = window.__host.handlers;
   h.vaultStatus = () => ({ exists: true, locked: false, busy: false, waitMs: 0 });
-  h.syncSetupCopy = () => ({});
-  h.syncSetupSave = () => ({ saved: true });
 }
 
 async function testSyncPage(browser) {
@@ -5707,45 +5705,37 @@ async function testSyncPage(browser) {
     // Working.
     await view({ state: 'working', message: 'Checking your Krunk account…' });
     check((await page.textContent('#working-text')) === 'Checking your Krunk account…', t('working message'));
-    // Setup: the secrets, copy, save, confirm.
-    await view({ state: 'setup', passphrase: 'apple-banana-cherry-dog-egg-fig-grape', recoveryKey: 'KRNK-AAAA-BBBB-CCCC-DDDD-EEEE-FFFF-GGGG-HHHH-Z', passwords: true, message: null });
-    check((await page.textContent('#setup-passphrase')) === 'apple-banana-cherry-dog-egg-fig-grape' && (await page.textContent('#setup-recovery')).startsWith('KRNK-'), t('setup shows the passphrase and the recovery key'));
+    // Setup (0.21.1): the vault password is the one secret.
+    await view({ state: 'setup', passwords: true, message: null });
+    check(await vis('v-setup') && await vis('setup-form') && !(await vis('setup-novault')), t('setup asks for the vault password'));
     await shot(page, 'sync-setup-' + theme + '.png');
-    await page.click('#setup-copy');
-    await page.waitForTimeout(60);
-    check((await page.textContent('#setup-saved')).includes('Copied'), t('Copy both'));
-    await page.click('#setup-save');
-    await page.waitForTimeout(60);
-    check((await page.textContent('#setup-saved')) === 'Saved.', t('Save to a file'));
-    await page.fill('#setup-group', 'hhhh');
-    await page.check('#setup-understood');
+    const nBefore = (await sent(page)).filter((m) => m.cmd === 'syncSetupVault').length;
     await page.click('#setup-confirm');
-    const conf = await lastSent(page, 'syncSetupConfirm');
-    check(conf && conf.group === 'hhhh' && conf.understood === true, t('confirm posts the typed group and the tick'));
-    await view({ state: 'setup', passphrase: 'a', recoveryKey: 'KRNK-X', passwords: true, message: 'Type the last group of 4 characters.' });
-    check(await vis('setup-error') && (await page.textContent('#setup-error')).includes('last group'), t('a wrong group is explained'));
+    check((await sent(page)).filter((m) => m.cmd === 'syncSetupVault').length === nBefore, t('an empty password sends nothing'));
+    await page.fill('#setup-vault-pw', 'correct horse battery');
+    await page.click('#setup-confirm');
+    const sv = await lastSent(page, 'syncSetupVault');
+    check(sv && sv.password === 'correct horse battery' && (await page.inputValue('#setup-vault-pw')) === '', t('Turn on sync posts syncSetupVault {password} and clears the field'));
+    await view({ state: 'setup', passwords: true, message: 'Wrong vault password.' });
+    check(await vis('setup-error') && (await page.textContent('#setup-error')).includes('Wrong vault password'), t('a wrong password is said'));
     await page.click('#setup-cancel');
     check((await lastSent(page, 'syncCancel')) !== undefined, t('cancel'));
-    // Join: restore by recovery key; ask another device.
+    // Join: the same vault password.
     await view({ state: 'join', message: null, passwords: true });
     check(await vis('v-join'), t('join view'));
     check(await page.evaluate(() => document.activeElement.id) === 'restore-secret', t('the restore field has the focus'));
     await shot(page, 'sync-join-' + theme + '.png');
-    await page.check('input[name=kind][value=recovery]');
-    await page.fill('#restore-secret', 'KRNK-1234-5678');
+    await page.fill('#restore-secret', 'correct horse battery');
     await page.click('#restore-go');
     const rs = await lastSent(page, 'syncRestore');
-    check(rs && rs.secret === 'KRNK-1234-5678' && rs.recovery === true && (await page.inputValue('#restore-secret')) === '', t('restore posts the secret once and clears the field'));
-    await page.check('input[name=kind][value=passphrase]');
-    await page.fill('#restore-secret', ' krnk-abcd-efgh');
+    check(rs && rs.secret === 'correct horse battery' && rs.vault === true && (await page.inputValue('#restore-secret')) === '', t('restore posts the vault password once and clears the field'));
+    await page.fill('#restore-secret', 'other password');
     await page.keyboard.press('Enter');
     const rs2 = await lastSent(page, 'syncRestore');
-    check(rs2 && rs2.recovery === true, t('a recovery key is recognised by its prefix'));
-    await page.click('#join-ask');
-    check((await lastSent(page, 'syncJoin')) !== undefined, t('ask my other devices'));
-    check((await page.textContent('#restore-vault-hint')).includes('unlocked password vault'), t('restore: passwords go into the unlocked vault'));
-    await view({ state: 'join', message: "That passphrase or recovery key doesn't open your sync data.", passwords: false });
-    check((await page.textContent('#join-error')).includes("doesn't open"), t('a wrong secret is said'));
+    check(rs2 && rs2.secret === 'other password', t('Enter submits too'));
+    check((await page.textContent('#restore-vault-hint')).includes("computer's vault"), t('restore: passwords go into the vault'));
+    await view({ state: 'join', message: "That password doesn't open your sync data.", passwords: false });
+    check((await page.textContent('#join-error')).includes("doesn't open"), t('a wrong password is said'));
     // Restore confirm.
     await view({ state: 'restoreConfirm', devices: ['Krunk on DESKTOP', 'Laptop'], revoked: 1 });
     check((await page.$$eval('#restore-devices li', (l) => l.length)) === 2 && (await page.textContent('#restore-revoked')).includes('1 removed'), t('restore lists the devices that keep access'));
@@ -5816,13 +5806,7 @@ async function testSyncPage(browser) {
     await view(Object.assign({}, onView, { secureNeeded: true }));
     check(await vis('secure'), t('Finish securing is offered after a rotation'));
     await shot(page, 'sync-secure-' + theme + '.png');
-    await page.click('#secure-go');
-    check((await lastSent(page, 'syncFinishSecuring')) === undefined, t('an empty secret is not sent'));
-    await page.check('input[name=secure-kind][value=recovery]');
-    await page.fill('#secure-secret', ' KRNK-AAAA-BBBB ');
-    await page.click('#secure-go');
-    const fs1 = await lastSent(page, 'syncFinishSecuring');
-    check(fs1 && fs1.secret === 'KRNK-AAAA-BBBB' && fs1.recovery === true && (await page.inputValue('#secure-secret')) === '', t('Finish securing posts the secret once and clears the field'));
+    check((await page.textContent('#secure')).includes('Unlock your passwords') && await page.locator('#secure input, #secure button').count() === 0, t('securing needs only the unlocked vault: no secret to type (0.21.1)'));
     await page.click('#device-list li:nth-child(2) button:text("Remove")');
     await acceptInPage(page);
     const rm = await lastSent(page, 'syncRemoveDevice');

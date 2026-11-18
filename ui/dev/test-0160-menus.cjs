@@ -191,7 +191,7 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
   async function testHomeSettings(browser) {
     console.log('0.16.0: Settings → Appearance: the Home button and its address');
     const defaults = JSON.parse(fs.readFileSync(path.join(__dirname, 'default-settings.json'), 'utf8'));
-    check(defaults.appearance.showHomeButton === false && defaults.homepage === 'https://duckduckgo.com/' && !('showHomeButton' in defaults),
+    check(defaults.appearance.showHomeButton === false && defaults.homepage === 'https://www.google.com/' && !('showHomeButton' in defaults),
       'defaults: appearance.showHomeButton false, the homepage unchanged, no top-level key');
     const { page, errors, external } = await openPage(browser, 'https://krunk.invalid/settings.html#appearance', { width: 1000, height: 1500 }, 1, homeSettingsMock, defaults);
     await page.waitForSelector('#style-card');
@@ -205,14 +205,14 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
       const near = (r) => !!r && !!r.querySelector('[data-key="appearance.showDownloadsButton"], [data-key="appearance.showZoomChip"], [data-key="appearance.showExtensionsButton"]');
       return i > 0 && near(rows[i - 1]) && !!rows[i + 1].querySelector('#home-address[data-key="homepage"]') && near(rows[i + 2]);
     }), 'it sits with the other toolbar items, its home page field right under it');
-    check(await page.inputValue('#home-address') === 'https://duckduckgo.com/', 'the field shows the homepage setting (' + (await page.inputValue('#home-address')) + ')');
+    check(await page.inputValue('#home-address') === 'https://www.google.com/', 'the field shows the homepage setting (' + (await page.inputValue('#home-address')) + ')');
     await shot(page.locator('.panel[data-tab=appearance] .card.group', { has: toggle }), '0160-settings-home.png');
 
     // The switch saves appearance.showHomeButton and nothing else changes.
     await toggle.check();
     await page.waitForFunction(() => window.__st.saves === 1);
     let s = await saved();
-    check(s.on === true && s.homepage === 'https://duckduckgo.com/', 'turning it on saves appearance.showHomeButton = true; the homepage is untouched');
+    check(s.on === true && s.homepage === 'https://www.google.com/', 'turning it on saves appearance.showHomeButton = true; the homepage is untouched');
     const diff = await page.evaluate((d) => { const a = JSON.parse(JSON.stringify(window.__st.settings)); a.appearance.showHomeButton = false; return JSON.stringify(a) === JSON.stringify(d); }, defaults);
     check(diff, 'nothing else in the settings changed');
 
@@ -253,7 +253,7 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
     check(s.saves === 4 && s.homepage === '', 'a javascript: address is not saved');
     check(errs.texts.length === 2 && errs.texts.every((t) => /http/.test(t)) && errs.invalid.every(Boolean), 'the error shows at both fields (' + errs.texts.join(' | ') + ')');
     check(errs.values.every((v) => v === 'javascript:alert(1)'), 'what was typed stays to be fixed');
-    await page.fill('#home-address', 'https://duckduckgo.com/');
+    await page.fill('#home-address', 'https://www.google.com/');
     await page.press('#home-address', 'Tab');
     await page.waitForFunction(() => window.__st.saves === 5);
     // (The page clears them when the reply arrives, a moment after the host stored it.)
@@ -273,7 +273,7 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
     await toggle.uncheck();
     await page.waitForFunction(() => window.__st.saves === 6);
     s = await saved();
-    check(s.on === false && s.homepage === 'https://duckduckgo.com/', 'turning it off saves false and keeps the home page');
+    check(s.on === false && s.homepage === 'https://www.google.com/', 'turning it off saves false and keeps the home page');
     check(external.length === 0, 'no external requests (' + external.join(', ') + ')');
     check(errors.filter((e) => !/Some settings are not valid/.test(e)).length === 0, 'no errors (' + errors.join('; ') + ')');
     await page.context().close();

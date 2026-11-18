@@ -341,48 +341,49 @@ module.exports = (h) => {
         await emit(page, { event: 'theme', theme: theme });
         await page.waitForSelector('.tile:not(.add)');
         await settle(page, 150);
-        check(await page.locator('.pinned-mark').count() === 0, tag + ': no separate pinned badge');
-        // Not hovered: a pinned tile shows only its filled pin, in the corner; an unpinned tile nothing.
+        // 0.22.0: not hovered: a pinned tile shows only its small pin mark (top left); no ⋮ anywhere.
         const idle = await page.evaluate(() => {
           const vis = (n) => getComputedStyle(n).visibility === 'visible';
-          const t0 = document.querySelectorAll('.tile')[0], t1 = document.querySelectorAll('.tile')[1];
-          const pin = t0.querySelector('.pin');
-          const tr = t0.getBoundingClientRect(), pr = pin.getBoundingClientRect();
-          return { pinVis: vis(pin), pinFill: getComputedStyle(pin.querySelector('.icon')).fill, pressed: pin.getAttribute('aria-pressed'),
-            othersHidden: Array.from(t0.querySelectorAll('.tools .icon-btn:not(.pin)')).every((b) => !vis(b)),
-            unpinnedHidden: Array.from(t1.querySelectorAll('.tools .icon-btn')).every((b) => !vis(b)),
-            corner: [Math.round(tr.right - pr.right), Math.round(pr.top - tr.top)] };
+          const w0 = document.querySelectorAll('.tile-wrap')[0], w1 = document.querySelectorAll('.tile-wrap')[1];
+          const mark = w0.querySelector('.pin-mark');
+          const tr = w0.querySelector('.tile').getBoundingClientRect(), mr = mark ? mark.getBoundingClientRect() : null;
+          return { mark: !!mark && vis(mark), unpinnedMark: !!w1.querySelector('.pin-mark'),
+            moreHidden: Array.from(document.querySelectorAll('.tile-more')).every((b) => !vis(b)),
+            corner: mr ? [Math.round(mr.left - tr.left), Math.round(mr.top - tr.top)] : null };
         });
-        check(idle.pinVis && idle.pinFill !== 'none' && idle.pressed === 'true' && idle.othersHidden && idle.unpinnedHidden,
-          tag + ': not hovered: the pinned tile keeps a filled pin, everything else hidden (' + JSON.stringify(idle) + ')');
-        check(idle.corner[0] <= 8 && idle.corner[1] <= 8, tag + ': the pin sits in the top-right corner (' + idle.corner + ')');
-        // Hovered: the cluster; nothing overlaps the avatar, the label or each other.
+        check(idle.mark && !idle.unpinnedMark && idle.moreHidden, tag + ': not hovered: the pinned tile shows its pin mark, no ⋮ shown (' + JSON.stringify(idle) + ')');
+        check(idle.corner && idle.corner[0] <= 10 && idle.corner[1] <= 10, tag + ': the pin mark sits in the top-left corner (' + idle.corner + ')');
+        // Hovered: one ⋮ button, inside the tile, covering neither the icon, the title nor the pin mark.
         for (const i of [0, 1]) {
-          const tile = page.locator('.tile').nth(i);
-          await tile.hover();
+          const wrap = page.locator('.tile-wrap').nth(i);
+          await wrap.hover();
           await settle(page, 60);
           const geo = await page.evaluate((k) => {
-            const t = document.querySelectorAll('.tile')[k];
+            const w = document.querySelectorAll('.tile-wrap')[k], t = w.querySelector('.tile');
             const rect = (n) => { const b = n.getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom]; };
-            const btns = Array.from(t.querySelectorAll('.tools .icon-btn')).map((b) => ({ r: rect(b), vis: getComputedStyle(b).visibility }));
-            return { tile: rect(t), avatar: rect(t.querySelector('.avatar')), label: rect(t.querySelector('.label')), btns: btns };
+            const more = w.querySelectorAll('.tile-more');
+            const mark = t.querySelector('.pin-mark');
+            return { tile: rect(t), avatar: rect(t.querySelector('.avatar')), label: rect(t.querySelector('.label')), mark: mark ? rect(mark) : null,
+              n: more.length, more: rect(more[0]), vis: getComputedStyle(more[0]).visibility };
           }, i);
           const overlap = (a, b) => a[0] < b[2] - 0.5 && b[0] < a[2] - 0.5 && a[1] < b[3] - 0.5 && b[1] < a[3] - 0.5;
-          const bs = geo.btns.map((b) => b.r);
-          let clash = false;
-          for (let x = 0; x < bs.length; x++) for (let y = x + 1; y < bs.length; y++) if (overlap(bs[x], bs[y])) clash = true;
-          const inside = bs.every((b) => b[0] >= geo.tile[0] && b[2] <= geo.tile[2] + 0.5 && b[1] >= geo.tile[1] && b[3] <= geo.tile[3]);
-          check(geo.btns.length === 3 && geo.btns.every((b) => b.vis === 'visible') && !clash && inside,
-            tag + ': tile ' + i + ' hovered: three actions, none overlapping, inside the tile');
-          check(!bs.some((b) => overlap(b, geo.avatar) || overlap(b, geo.label)), tag + ': tile ' + i + ': the actions cover neither the icon nor the title');
+          const m = geo.more;
+          const inside = m[0] >= geo.tile[0] && m[2] <= geo.tile[2] + 0.5 && m[1] >= geo.tile[1] && m[3] <= geo.tile[3];
+          check(geo.n === 1 && geo.vis === 'visible' && inside, tag + ': tile ' + i + ' hovered: one ⋮ button, inside the tile');
+          check(!overlap(m, geo.avatar) && !overlap(m, geo.label) && !(geo.mark && overlap(m, geo.mark)), tag + ': tile ' + i + ': the ⋮ covers neither the icon, the title nor the pin mark');
           if (i === 0) {
-            const box = await tile.boundingBox();
+            const box = await wrap.locator('.tile').boundingBox();
             await shot(page.locator('#tiles'), 'theme-ntp-' + theme + '-' + r.scale + 'x' + (r.narrow ? '-narrow' : '') + '-hover.png');
             check(box.width > 100, tag + ': tile width ' + Math.round(box.width));
           }
         }
-        await page.locator('.tile').nth(0).locator('.pin').click();
-        check((await lastSent(page, 'unpinSite')).url === 'https://www.rust-lang.org/', tag + ': the filled pin unpins');
+        await page.locator('.tile-wrap').nth(0).hover();
+        await page.locator('.tile-wrap').nth(0).locator('.tile-more').click();
+        const items = await page.$$eval('.tile-menu .tile-menu-item', (ns) => ns.map((n) => n.textContent));
+        check(JSON.stringify(items) === JSON.stringify(['Unpin', 'Edit…', 'Remove']), tag + ': the ⋮ menu: ' + items.join(', '));
+        await page.locator('.tile-menu .tile-menu-item', { hasText: 'Unpin' }).click();
+        await settle(page, 40);
+        check(((await lastSent(page, 'unpinSite')) || {}).url === 'https://www.rust-lang.org/', tag + ': Unpin unpins');
         await page.mouse.move(5, 5);
         await settle(page, 60);
         if (!r.narrow && r.scale === 1) await shot(page.locator('#tiles'), 'theme-ntp-' + theme + '-idle.png');
