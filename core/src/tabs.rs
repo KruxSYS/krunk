@@ -506,6 +506,17 @@ impl TabModel {
         self.activate_index(next, now)
     }
 
+    /// 0.25.0: the tab Ctrl+Tab (`forward`) or Ctrl+Shift+Tab would go to next.
+    pub fn cycle_target(&self, forward: bool) -> Option<TabId> {
+        let n = self.tabs.len();
+        if n < 2 {
+            return None;
+        }
+        let cur = self.active.and_then(|a| self.index_of(a)).unwrap_or(0);
+        let next = if forward { (cur + 1) % n } else { (cur + n - 1) % n };
+        self.tabs.get(next).map(|t| t.id)
+    }
+
     /// Unloads a background tab's browser view, keeping its URL (tab discard).
     pub fn unload(&mut self, id: TabId) -> Vec<Effect> {
         if self.active == Some(id) {
@@ -971,6 +982,7 @@ mod tests {
         assert!(m.activate_index(7, 1).is_empty(), "Ctrl+8 with 3 tabs does nothing");
         m.activate_last(1);
         assert_eq!(m.active_id(), Some(3));
+        assert_eq!((m.cycle_target(true), m.cycle_target(false)), (Some(1), Some(2)));
         m.cycle(true, 1);
         assert_eq!(m.active_id(), Some(1), "wraps forward");
         m.cycle(false, 1);
@@ -980,6 +992,7 @@ mod tests {
         let mut one = TabModel::new();
         one.open("", false, Position::End, true, true, 0);
         assert!(one.cycle(true, 1).is_empty());
+        assert_eq!(one.cycle_target(true), None);
     }
 
     #[test]

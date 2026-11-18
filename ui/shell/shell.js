@@ -43,8 +43,8 @@
       onauxclick: function (e) {
         if (e.button === 1) { e.preventDefault(); closeWithMouse(id); }
       },
-      onmouseenter: function () { hoverEnter(id); },
-      onmouseleave: function () { hoverLeave(id); },
+      onmouseenter: function () { hoverEnter(id); warmEnter(id); },
+      onmouseleave: function () { hoverLeave(id); warmLeave(id); },
       oncontextmenu: function (e) {
         e.preventDefault();
         hoverHide();
@@ -109,6 +109,24 @@
     if (have.length !== want.length || want.some(function (n, i) { return have[i] !== n; })) {
       node.replaceChildren.apply(node, want);
     }
+  }
+
+  // ---------- warm-up (0.25.0) ----------
+  // The pointer rests on a tab for WARM_MS: the host wakes its page beneath the one on screen,
+  // so a click shows it at once (hover cards or not).
+  const WARM_MS = 80;
+  let warmTimer = 0, warmId = null;
+  function warmEnter(id) {
+    clearTimeout(warmTimer);
+    warmId = id;
+    if (id === state.active || document.querySelector('#tabs .tab.dragging')) return;
+    warmTimer = setTimeout(function () { warmTimer = 0; if (warmId === id && id !== state.active) LB.post('tabWarm', { id: id }); }, WARM_MS);
+  }
+  function warmLeave(id) {
+    if (warmId !== id) return;
+    clearTimeout(warmTimer);
+    warmTimer = 0;
+    warmId = null;
   }
 
   // ---------- hover cards (0.15.0) ----------

@@ -16,15 +16,32 @@ use crate::tabs::TabId;
 use crate::windows::{Op, WindowId};
 use std::collections::HashMap;
 
-/// How long a switch keeps the old page while the new tab has not painted yet (0.15.0: was
-/// 1000 ms; a slow page never holds the swap longer).
+/// How long a switch keeps the old page while the new tab has never painted (0.15.0: was
+/// 1000 ms; a slow page never holds the swap longer). The last resort for new, discarded and
+/// never-loaded views only.
 pub const REVEAL_TIMEOUT_MS: i64 = 500;
 
-/// Per window: (the tab still on screen, the tab waiting to be shown, since when in ms), and the
-/// closed tab whose view is kept on screen. Generic over the ids.
+/// 0.25.0: the cap for a tab that has painted before and only waits for its renderer to draw
+/// again after being hidden from the engine. Its page is there; a busy or long-hidden renderer
+/// (long tasks, timers catching up) answered its animation frames 150–530 ms late on the VM
+/// (40 busy tabs) and held the old page that long. Shown beneath the old page meanwhile, its
+/// compositor has drawn by then.
+pub const REVEAL_PAINTED_CAP_MS: i64 = 150;
+
+/// The cap of a wait: `painted_before` (out of sight) or never painted.
+pub fn cap_for(painted_before: bool) -> i64 {
+    if painted_before {
+        REVEAL_PAINTED_CAP_MS
+    } else {
+        REVEAL_TIMEOUT_MS
+    }
+}
+
+/// Per window: (the tab still on screen, the tab waiting to be shown, since when in ms, its cap
+/// in ms), and the closed tab whose view is kept on screen. Generic over the ids.
 #[derive(Debug)]
 pub struct Reveals<W, T> {
-    waiting: HashMap<W, (T, T, i64)>,
+    waiting: HashMap<W, (T, T, i64, i64)>,
     kept: HashMap<W, T>,
 }
 
@@ -49,7 +66,7 @@ impl<W: Copy + Eq + std::hash::Hash, T: Copy + Eq> Reveals<W, T> {
     /// A switch in `win` from `from` to `to` begins.
     pub fn begin(&mut self, win: W, from: Option<T>, to: T) -> Begin<T> {
         match self.waiting.remove(&win) {
-            Some((shown, waited, _)) => Begin {
+            Some((shown, waited, _, _)) => Begin {
                 shown: if shown != to { Some(shown) } else { from },
                 abandoned: Some(waited).filter(|w| *w != to),
             },
@@ -59,39 +76,40 @@ impl<W: Copy + Eq + std::hash::Hash, T: Copy + Eq> Reveals<W, T> {
         }
     }
 
-    /// `to` waits in `win` (from `now`, ms) while `shown` stays on screen.
-    pub fn wait(&mut self, win: W, shown: T, to: T, now: i64) {
-        self.waiting.insert(win, (shown, to, now));
+    /// `to` waits in `win` (from `now`, ms) while `shown` stays on screen, at most `cap` ms
+    /// ([`cap_for`]).
+    pub fn wait(&mut self, win: W, shown: T, to: T, now: i64, cap: i64) {
+        self.waiting.insert(win, (shown, to, now, cap.min(REVEAL_TIMEOUT_MS)));
     }
 
     /// Is `to` waiting to be shown (in any window)?
     pub fn is_waiting(&self, to: T) -> bool {
-        self.waiting.values().any(|(_, t, _)| *t == to)
+        self.waiting.values().any(|(_, t, _, _)| *t == to)
     }
 
     /// Since when (ms) `to` waits to be shown: tells a late answer for an earlier wait of the
     /// same tab from one for this wait.
     pub fn waiting_since(&self, to: T) -> Option<i64> {
-        self.waiting.values().find(|(_, t, _)| *t == to).map(|(_, _, since)| *since)
+        self.waiting.values().find(|(_, t, _, _)| *t == to).map(|(_, _, since, _)| *since)
     }
 
     /// The tab on screen in `win` while a switch waits there.
     pub fn shown_in(&self, win: W) -> Option<T> {
-        self.waiting.get(&win).map(|(s, _, _)| *s)
+        self.waiting.get(&win).map(|(s, _, _, _)| *s)
     }
 
     /// `to` is ready (its first frame is painted): its window and the tab to hide; it no
     /// longer waits.
     pub fn take(&mut self, to: T) -> Option<(W, T)> {
-        let win = *self.waiting.iter().find(|(_, (_, t, _))| *t == to)?.0;
-        self.waiting.remove(&win).map(|(shown, _, _)| (win, shown))
+        let win = *self.waiting.iter().find(|(_, (_, t, _, _))| *t == to)?.0;
+        self.waiting.remove(&win).map(|(shown, _, _, _)| (win, shown))
     }
 
-    /// The timeout of `to`'s wait: once [`REVEAL_TIMEOUT_MS`] have passed since it began, it is
-    /// shown painted or not ([`Reveals::take`]); before that (a later wait of the same tab) and
-    /// after it was revealed, nothing.
+    /// The timeout of `to`'s wait: once its cap has passed since it began, it is shown painted
+    /// or not ([`Reveals::take`]); before that (a later wait of the same tab) and after it was
+    /// revealed, nothing.
     pub fn take_if_due(&mut self, to: T, now: i64) -> Option<(W, T)> {
-        let due = self.waiting.values().any(|(_, t, since)| *t == to && now - since >= REVEAL_TIMEOUT_MS);
+        let due = self.waiting.values().any(|(_, t, since, cap)| *t == to && now - since >= *cap);
         if due {
             self.take(to)
         } else {
@@ -160,7 +178,7 @@ mod tests {
         let mut r: Reveals<u32, u32> = Reveals::default();
         // Window 1: tab 10 → tab 11 (not painted yet): 10 stays on screen.
         assert_eq!(r.begin(1, Some(10), 11), Begin { shown: Some(10), abandoned: None });
-        r.wait(1, 10, 11, 0);
+        r.wait(1, 10, 11, 0, REVEAL_TIMEOUT_MS);
         // Window 2: a switch there (20 → 21, ready at once).
         assert_eq!(r.begin(2, Some(20), 21).shown, Some(20));
         // Window 1's tab 11 paints: it is revealed, 10 is hidden.
@@ -173,13 +191,13 @@ mod tests {
     fn a_second_switch_while_waiting_replaces_the_page_on_screen() {
         let mut r: Reveals<u32, u32> = Reveals::default();
         assert_eq!(r.begin(1, Some(10), 11).shown, Some(10));
-        r.wait(1, 10, 11, 0);
+        r.wait(1, 10, 11, 0, REVEAL_TIMEOUT_MS);
         // 11 has not painted; the user switches on to 12: 10 is still the page on screen, and 11
         // (painting beneath it) goes out of sight again.
         assert_eq!(r.begin(1, Some(11), 12), Begin { shown: Some(10), abandoned: Some(11) });
         assert!(!r.is_waiting(11), "11 no longer waits");
         // Back to the tab on screen: nothing to hide but the previous active one.
-        r.wait(1, 10, 12, 0);
+        r.wait(1, 10, 12, 0, REVEAL_TIMEOUT_MS);
         assert_eq!(r.begin(1, Some(12), 10), Begin { shown: Some(12), abandoned: Some(12) });
     }
 
@@ -188,7 +206,7 @@ mod tests {
         let mut r: Reveals<u32, u32> = Reveals::default();
         // 10 → 11 at t=1000; 11 paints at t=1200: revealed then, the timeout finds nothing.
         r.begin(1, Some(10), 11);
-        r.wait(1, 10, 11, 1000);
+        r.wait(1, 10, 11, 1000, REVEAL_TIMEOUT_MS);
         assert_eq!(r.waiting_since(11), Some(1000));
         assert_eq!(r.take_if_due(11, 1200), None, "not due yet");
         assert_eq!(r.take(11), Some((1, 10)));
@@ -196,20 +214,55 @@ mod tests {
         assert_eq!(r.take_if_due(11, 1000 + REVEAL_TIMEOUT_MS), None);
         // 11 → 12 at t=2000; 12 never paints: shown at the timeout, 11 hidden.
         r.begin(1, Some(11), 12);
-        r.wait(1, 11, 12, 2000);
+        r.wait(1, 11, 12, 2000, REVEAL_TIMEOUT_MS);
         assert_eq!(r.take_if_due(12, 2000 + REVEAL_TIMEOUT_MS - 1), None);
         assert_eq!(r.take_if_due(12, 2000 + REVEAL_TIMEOUT_MS), Some((1, 11)));
         assert!(!r.is_waiting(12));
         // An old timer of a tab that waits again later does not cut the new wait short.
         r.begin(1, Some(12), 13);
-        r.wait(1, 12, 13, 3000);
+        r.wait(1, 12, 13, 3000, REVEAL_TIMEOUT_MS);
         // (back to 12, on screen: no wait; then to 13 again at t=3400)
         r.begin(1, Some(13), 12);
         r.begin(1, Some(12), 13);
-        r.wait(1, 12, 13, 3400);
+        r.wait(1, 12, 13, 3400, REVEAL_TIMEOUT_MS);
         assert_eq!(r.take_if_due(13, 3000 + REVEAL_TIMEOUT_MS), None);
         assert_eq!(r.take_if_due(13, 3400 + REVEAL_TIMEOUT_MS), Some((1, 12)));
         const { assert!(REVEAL_TIMEOUT_MS <= 500) };
+    }
+
+    #[test]
+    fn a_painted_tab_waits_at_most_its_short_cap_a_never_painted_one_the_long_one() {
+        assert_eq!(cap_for(true), REVEAL_PAINTED_CAP_MS);
+        assert_eq!(cap_for(false), REVEAL_TIMEOUT_MS);
+        const { assert!(REVEAL_PAINTED_CAP_MS < REVEAL_TIMEOUT_MS) };
+        let mut r: Reveals<u32, u32> = Reveals::default();
+        // Out of sight (painted before): due after 150 ms.
+        r.begin(1, Some(10), 11);
+        r.wait(1, 10, 11, 0, cap_for(true));
+        assert_eq!(r.take_if_due(11, REVEAL_PAINTED_CAP_MS - 1), None);
+        assert_eq!(r.take_if_due(11, REVEAL_PAINTED_CAP_MS), Some((1, 10)));
+        // Never painted (new or discarded): the 500 ms fallback, not the short cap.
+        r.begin(1, Some(11), 12);
+        r.wait(1, 11, 12, 1000, cap_for(false));
+        assert_eq!(r.take_if_due(12, 1000 + REVEAL_PAINTED_CAP_MS), None);
+        assert_eq!(r.take_if_due(12, 1000 + REVEAL_TIMEOUT_MS), Some((1, 11)));
+        // No cap ever exceeds the fallback.
+        r.begin(1, Some(12), 13);
+        r.wait(1, 12, 13, 2000, 10_000);
+        assert_eq!(r.take_if_due(13, 2000 + REVEAL_TIMEOUT_MS), Some((1, 12)));
+    }
+
+    #[test]
+    fn the_shown_signal_reveals_before_the_cap_and_a_late_timer_finds_nothing() {
+        let mut r: Reveals<u32, u32> = Reveals::default();
+        r.begin(1, Some(10), 11);
+        r.wait(1, 10, 11, 0, cap_for(true));
+        // The page's "shown" (two frames drawn after it was un-hidden) at 40 ms.
+        assert!(r.is_waiting(11));
+        assert_eq!(r.take(11), Some((1, 10)));
+        assert_eq!(r.take_if_due(11, REVEAL_PAINTED_CAP_MS), None);
+        // A second signal for the same tab does nothing either.
+        assert_eq!(r.take(11), None);
     }
 
     #[test]
@@ -220,7 +273,7 @@ mod tests {
         assert_eq!(r.kept_in(10), Some(1));
         let b = r.begin(1, None, 11);
         assert_eq!(b.shown, Some(10), "the closed page is what is on screen");
-        r.wait(1, 10, 11, 0);
+        r.wait(1, 10, 11, 0, REVEAL_TIMEOUT_MS);
         // 11 paints (or the timeout passes): revealed over 10, which then goes.
         assert_eq!(r.take(11), Some((1, 10)));
         assert!(r.release(10));
@@ -235,12 +288,12 @@ mod tests {
         let mut r: Reveals<u32, u32> = Reveals::default();
         r.keep(1, 10);
         let shown = r.begin(1, None, 11).shown.unwrap();
-        r.wait(1, shown, 11, 0);
+        r.wait(1, shown, 11, 0, REVEAL_TIMEOUT_MS);
         // 11 (still waiting, beneath 10) is closed too; the model activates 12. 11 is no page on
         // screen, so it is not kept; 10 still is.
         assert_eq!(r.shown_in(1), Some(10));
         assert_eq!(r.begin(1, None, 12), Begin { shown: Some(10), abandoned: Some(11) });
-        r.wait(1, 10, 12, 0);
+        r.wait(1, 10, 12, 0, REVEAL_TIMEOUT_MS);
         assert_eq!(r.take(12), Some((1, 10)));
         assert!(r.release(10));
         // Two quick closes without a wait: the earlier kept page goes when the next is kept.

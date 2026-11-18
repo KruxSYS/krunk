@@ -1018,6 +1018,12 @@ pub enum Request {
         #[serde(default)]
         rect: Option<PopupRect>,
     },
+    /// 0.25.0: the pointer has rested on tab `id` for a moment (80 ms): its page may be woken
+    /// beneath the one on screen, so a click shows it at once. `id` none: the pointer left.
+    TabWarm {
+        #[serde(default)]
+        id: Option<u32>,
+    },
     /// A choice in a tab's context menu (popup).
     TabMenuAction {
         id: u32,
@@ -2115,6 +2121,7 @@ impl Sender {
                     | R::TabDragOut { .. }
                     | R::ShowTabMenu { .. }
                     | R::TabHover { .. }
+                    | R::TabWarm { .. }
                     | R::ShowNavMenu { .. }
                     | R::DevToolsDock { .. }
                     | R::DevToolsClose
@@ -2594,6 +2601,9 @@ pub enum ContentMessage {
     /// The document painted its first content (main frame only; 0.7.0, R7): a tab switch that
     /// kept the old page on screen while this view was blank can show it now.
     Painted {},
+    /// 0.25.0: the document became visible again (un-hidden from the engine) and has drawn two
+    /// animation frames since (main frame only): a switch waiting for it can show it now.
+    Shown {},
     /// "Add to Krunk" on a Chrome Web Store detail page (0.7.0, R20; top frame of the store
     /// only). The host takes the extension id from the tab's address, never from the page.
     ExtStoreClick {},
@@ -3871,6 +3881,9 @@ mod tests {
             serde_json::from_str(r#"{"cmd":"tabHover","id":4,"rect":{"x":10,"y":4,"width":200,"height":34}}"#).unwrap();
         assert!(matches!(r, Request::TabHover { id: Some(4), rect: Some(_) }));
         assert!(Sender::Shell.permits(&r) && !Sender::Popup.permits(&r));
+        let r: Request = serde_json::from_str(r#"{"cmd":"tabWarm","id":4}"#).unwrap();
+        assert!(matches!(r, Request::TabWarm { id: Some(4) }));
+        assert!(Sender::Shell.permits(&r) && !Sender::Popup.permits(&r) && !Sender::Page(Page::NewTab).permits(&r));
         let r: Request = serde_json::from_str(r#"{"cmd":"tabHover"}"#).unwrap();
         assert_eq!(r, Request::TabHover { id: None, rect: None });
         let t: TabInfo = serde_json::from_str(
@@ -4626,6 +4639,8 @@ mod tests {
         assert!(parse_content_frame(r#"{"lb":"pipBackToTab"}"#).is_err());
         // 0.7.0: first paint (top frame only; nothing to say but that).
         assert_eq!(parse_content(r#"{"lb":"painted"}"#), Ok(ContentMessage::Painted {}));
+        assert_eq!(parse_content(r#"{"lb":"shown"}"#), Ok(ContentMessage::Shown {}));
+        assert!(parse_content(r#"{"lb":"shown","x":1}"#).is_err());
         assert!(parse_content_frame(r#"{"lb":"painted"}"#).is_err());
         assert!(parse_content(r#"{"lb":"painted","tab":3}"#).is_err());
         let chooser = PopupContent::Pip {

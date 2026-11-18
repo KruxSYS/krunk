@@ -99,6 +99,7 @@ mod tasks;
 mod updater;
 mod userscripts;
 mod vpn;
+mod warm;
 mod wasm;
 
 pub use power::PowerOptions;
@@ -126,7 +127,8 @@ const TAB_BACKGROUND_DARK: u32 = 0xFF1F_2023;
 /// How long a tab switch keeps the old page while the new view has not loaded once, and the
 /// pause after its load before the swap (R7). 0.15.0: 500 ms (was 1000), in core.
 const REVEAL_TIMEOUT_MS: i64 = lb_core::reveal::REVEAL_TIMEOUT_MS;
-const REVEAL_SETTLE_MS: i64 = 50;
+/// A frame for the compositor to present what the page drew (0.25.0: was 50).
+const REVEAL_SETTLE_MS: i64 = 16;
 /// How long the old page stays beneath the new one after a tab switch (0.7.3).
 const HIDE_OLD_VIEW_MS: i64 = 100;
 /// The light theme's page colour (0.7.2, R6: no white while a window is resized; was white).
@@ -188,6 +190,9 @@ struct TabView {
     /// The view has finished loading once (0.7.0, R7): before that it may show a blank frame,
     /// so a tab switch keeps the old page on screen until then.
     loaded_once: Cell<bool>,
+    /// 0.25.0: shown to the engine and drawn since (a switch can bring it on top at once); false
+    /// from the moment it is shown again after being hidden until its page says `shown`.
+    frame_ready: Cell<bool>,
     /// Until the tab reports an address other than `about:blank`: the engine's empty first
     /// document is not shown in the bar (0.7.2, R1).
     blank_start: Cell<bool>,
@@ -415,6 +420,8 @@ pub struct Browser {
     /// under way (written out once the new tab is on top).
     perf_input: Cell<Option<(&'static str, i64)>>,
     perf_recs: RefCell<HashMap<TabId, lb_core::perftrace::Rec>>,
+    /// 0.25.0: tabs woken beneath the page on screen ahead of a likely switch (`warm.rs`).
+    warm: RefCell<lb_core::warm::Warm<TabId>>,
     /// The custom-DNS stub, once the settings asked for it.
     dns: RefCell<Option<crate::dns::Engine>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -566,6 +573,7 @@ impl Browser {
             kept_views: RefCell::new(HashMap::new()),
             perf_input: Cell::new(None),
             perf_recs: RefCell::new(HashMap::new()),
+            warm: RefCell::new(lb_core::warm::Warm::default()),
             dns: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -1255,6 +1263,7 @@ impl Browser {
                 downloads: Rc::new(Cell::new(0)),
                 devtools: Cell::new(false),
                 loaded_once: Cell::new(false),
+                frame_ready: Cell::new(false),
                 blank_start: Cell::new(!popup && !lb_core::pages::is_blank(&url)),
                 unresponsive: Cell::new(false),
                 started_blank: Cell::new(self.first_url.borrow().contains_key(&id)),
@@ -1586,6 +1595,7 @@ impl Browser {
         self.input_tab_gone(id);
         self.wasm_tab_gone(id);
         self.cdp_forget(id);
+        self.warm.borrow_mut().forget(id);
         self.hints_attached.borrow_mut().remove(&id);
         self.pointer.hints.borrow_mut().forget(id);
         if self.status.tab.get() == Some(id) {
@@ -1674,6 +1684,10 @@ impl Browser {
         if let Some(t) = self.tab_view(to) {
             t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
         }
+        self.warm.borrow_mut().forget(to);
+        if let Some(v) = self.views.borrow().get(&to) {
+            v.frame_ready.set(v.loaded_once.get());
+        }
         if crate::perf::on() {
             self.perf_swapped(to);
         }
@@ -1693,7 +1707,8 @@ impl Browser {
             let active_again = b
                 .window_of(from)
                 .is_some_and(|w| b.ws.borrow().model(w).and_then(|m| m.active().map(|t| t.id)) == Some(from));
-            if active_again {
+            // 0.25.0: kept warm (just left, or under the pointer): it stays shown beneath.
+            if active_again || b.warm.borrow().contains(from) {
                 return;
             }
             if let Some(f) = b.tab_view(from) {
@@ -1810,6 +1825,22 @@ impl Browser {
         }
     }
 
+    /// 0.25.0: tab `id`'s page drew two frames since it was shown again (`painted.js`).
+    fn tab_shown_signal(&self, id: TabId) {
+        if let Some(v) = self.views.borrow().get(&id) {
+            v.frame_ready.set(v.loaded_once.get());
+        }
+        if self.pending_reveal.borrow().is_waiting(id) {
+            self.perf_wait_end_kind(id, "shown");
+            let weak = self.me.clone();
+            crate::ffi::cef::post_ui_delayed(REVEAL_SETTLE_MS, move || {
+                if let Some(b) = weak.upgrade() {
+                    b.reveal(id);
+                }
+            });
+        }
+    }
+
     /// 0.15.2: tab `id`, painted before but out of sight, now renders beneath the page on screen:
     /// no `painted` or `ready` comes again, so two animation frames in the page (the first one
     /// after it was shown has been drawn) and the settle frame tell when it may come on top. A
@@ -1821,6 +1852,9 @@ impl Browser {
         view.eval_json(frames, move |_| {
             let Some(b) = weak.upgrade() else { return };
             // An answer for an earlier wait of this tab (one timed out) does nothing.
+            if let Some(v) = b.views.borrow().get(&id) {
+                v.frame_ready.set(v.loaded_once.get());
+            }
             if b.pending_reveal.borrow().waiting_since(id) != Some(since) {
                 return;
             }
@@ -1886,7 +1920,9 @@ impl Browser {
         // 0.15.2: a painted tab out of sight (parked, hidden from the engine) has lost its frame
         // too: brought on top at once, its window showed black until the page rendered again
         // (seen between two new tab pages).
-        let out_of_sight = ready && self.tab_view(to).is_some_and(|v| !v.is_visible());
+        // 0.25.0: also a tab shown again beneath (warm) that has not drawn yet.
+        let out_of_sight =
+            ready && self.views.borrow().get(&to).is_some_and(|v| !v.view.is_visible() || !v.frame_ready.get());
         // A reveal this window was still waiting for: the page on screen is its old one. After
         // a close (`from` none) it is the closed tab's kept page (0.15.0).
         let begin = self.pending_reveal.borrow_mut().begin(win, old, to);
@@ -1911,13 +1947,20 @@ impl Browser {
         }
         match old.and_then(|f| self.screen_view(f).map(|v| (f, v))) {
             Some((f, above)) if (!ready || out_of_sight) && !minimized => {
-                self.pending_reveal.borrow_mut().wait(win, f, to, now_ms());
+                // 0.25.0: a tab that painted before waits at most 150 ms, a new one 500.
+                let cap = lb_core::reveal::cap_for(ready);
+                self.pending_reveal.borrow_mut().wait(win, f, to, now_ms(), cap);
                 if let Some(r) = self.perf_recs.borrow_mut().get_mut(&to) {
                     r.wait_qpc = Some(crate::perf::now());
                 }
                 // 0.15.0: the new page renders beneath the old one (shown to the engine, so it
                 // paints and is not throttled) and comes on top once it has painted.
                 if let Some(t) = self.tab_view(to) {
+                    if !t.is_visible() {
+                        if let Some(v) = self.views.borrow().get(&to) {
+                            v.frame_ready.set(false);
+                        }
+                    }
                     t.show_beneath(&above);
                     if out_of_sight {
                         self.reveal_after_frames(to, &t);
@@ -1925,7 +1968,7 @@ impl Browser {
                 }
                 let weak = self.me.clone();
                 // (A little later than due: a timer never comes too early for its wait.)
-                crate::ffi::cef::post_ui_delayed(REVEAL_TIMEOUT_MS + 10, move || {
+                crate::ffi::cef::post_ui_delayed(cap + 10, move || {
                     if let Some(b) = weak.upgrade() {
                         b.reveal_due(to);
                     }
@@ -1935,6 +1978,10 @@ impl Browser {
         }
         // Wake after showing: a frozen page resumes as a visible one.
         self.wake_tab(to);
+        // 0.25.0: the tab left stays warm a moment (back with a click or Ctrl+Tab).
+        if let Some(f) = from.filter(|f| *f != to) {
+            self.warm_tab(f, lb_core::warm::Slot::Next);
+        }
         self.preview_activated(to);
         // A page that does not respond says so when its tab comes to the front (0.11.0).
         self.defer(move |b| b.show_hang_prompt(to));
@@ -2731,7 +2778,10 @@ impl Browser {
                     self.apply(ops);
                 }
             }
-            Command::NextTab | Command::PrevTab => self.update_current(|m| m.cycle(cmd == Command::NextTab, now)),
+            Command::NextTab | Command::PrevTab => {
+                self.update_current(|m| m.cycle(cmd == Command::NextTab, now));
+                self.warm_cycle_target(cmd == Command::NextTab);
+            }
             Command::SelectTab(i) => self.update_current(|m| m.activate_index(usize::from(i), now)),
             Command::LastTab => self.update_current(|m| m.activate_last(now)),
             Command::FocusAddressBar => self.focus_address_bar(),
@@ -2864,6 +2914,7 @@ impl Browser {
                 Ok(ContentMessage::Media { videos }) => self.media_changed(id, &origin, videos),
                 Ok(ContentMessage::PipBackToTab {}) => self.pip_back_to_tab(id),
                 Ok(ContentMessage::Painted {}) => self.first_load_done(id),
+                Ok(ContentMessage::Shown {}) => self.tab_shown_signal(id),
                 // Only the store's own pages (and their tab's address decides what is installed).
                 Ok(ContentMessage::ExtStoreClick {}) => {
                     if lb_core::ext::is_store_origin(&origin) {
@@ -3152,6 +3203,7 @@ impl Browser {
                 self.move_bookmark_from_bar(id, parent, index)
             }
             Request::TabHover { id, rect } => self.tab_hover(id, rect),
+            Request::TabWarm { id } => self.tab_warm_request(id),
             Request::ShowTabMenu { id, rect } => {
                 let state = self.window_of(id).and_then(|w| {
                     let ws = self.ws.borrow();
@@ -4131,6 +4183,7 @@ impl WindowEvents for AppEvents {
             drag::BAR_DRAG_TIMER => b.bar_drag_timer(),
             spare::SPARE_TIMER => b.spare_timer(),
             tabpreview::PREVIEW_TIMER => b.preview_timer(),
+            warm::WARM_TIMER => b.warm_tick(),
             segmented::PARTS_TIMER => b.parts_tick(),
             sessionlog::SAMPLE_TIMER => b.sessionlog_sample(),
             sessionlog::FLUSH_TIMER => b.sessionlog_flush(),

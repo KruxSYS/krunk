@@ -20,3 +20,10 @@ try {
   }).observe({ type: 'paint', buffered: true });
 } catch (e) { /* no paint timing: the load below */ }
 addEventListener('load', done, { once: true });
+// 0.25.0: shown again after being hidden from the engine (a tab switch to it): two animation
+// frames later its page is drawn, and a switch waiting for it can bring it on top. Cheaper and
+// earlier than the browser asking through DevTools.
+document.addEventListener('visibilitychange', function () {
+  if (document.visibilityState !== 'visible') return;
+  requestAnimationFrame(function () { requestAnimationFrame(function () { host.postMessage({ lb: 'shown' }); }); });
+});
