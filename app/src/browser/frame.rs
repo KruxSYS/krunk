@@ -163,7 +163,17 @@ impl Browser {
     /// address bar holds the focus and the request comes from loading the
     /// page (CEF focuses a browser when it navigates); a click into the page
     /// (system focus) is allowed and ends the hold.
+    ///
+    /// 0.25.1: a view that is not a tab yet (the new tab page made ahead, built ~0.5 s after a
+    /// new tab took the last one) never takes the focus: it took the keyboard from the new
+    /// tab's address bar about a second after Ctrl+T. Nor does a background tab's navigation.
     pub(super) fn tab_wants_focus(&self, id: TabId, from_navigation: bool) -> bool {
+        if let Ok(ws) = self.ws.try_borrow() {
+            let Some(win) = ws.window_of(id) else { return false };
+            if from_navigation && ws.model(win).is_some_and(|m| m.active_id() != Some(id)) {
+                return false;
+            }
+        }
         if self.address_focus.get() != Some(id) {
             return true;
         }

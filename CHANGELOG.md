@@ -3,6 +3,16 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## Unreleased
+
+- **New tabs no longer keep spinning.** A new tab could show the loading circle (and the stop
+  button) for ever although its page was there: the new tab page made ahead had finished loading
+  before it became a tab, and the tab never heard about it.
+- **Stop always stops.** The stop button (and the Stop command) now ends the tab's loading at
+  once, also when the engine had nothing left to load.
+- **The address bar keeps the focus in a new tab.** About a second after Ctrl+T the caret left
+  the address bar: the next new tab page being made in the background took the keyboard.
+
 ## 0.25.0 — 2026-11-18
 
 - **Faster tab switching with many busy tabs.** With 40 busy tabs (heavy scripts, timers,

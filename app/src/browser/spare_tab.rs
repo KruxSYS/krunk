@@ -102,8 +102,15 @@ impl Browser {
         if from != Some(win) && !view.reparent(frame.window.hwnd()) {
             crate::log::warning!("tab {id}: the new tab page made ahead could not move to window {win}");
         }
-        if let Some(v) = self.views.borrow().get(&id) {
+        // The page loaded before the tab existed: its "load ended" went nowhere, and a new tab
+        // starts out loading (0.25.1: the spinner never stopped). The tab takes the view's state.
+        let loading = self.views.borrow().get(&id).map(|v| {
             v.net.set_tab(id, false);
+            v.loading
+        });
+        if let Some(loading) = loading {
+            self.with_tab(id, |m, t| m.set_loading(t, loading));
+            self.tab_changed(id);
         }
         if active {
             self.layout();

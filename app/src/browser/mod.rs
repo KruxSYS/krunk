@@ -170,6 +170,10 @@ struct TabView {
     host_navigation: Rc<Cell<bool>>,
     can_go_back: bool,
     can_go_forward: bool,
+    /// The engine's last loading state. The tab's own flag follows it, but a view made before
+    /// its tab (the new tab page made ahead) reports its load end before the tab exists: the
+    /// tab takes this when it adopts the view (0.25.1).
+    loading: bool,
     /// The current find-in-page term.
     find_query: String,
     /// Shield counter, cosmetic data and HTTPS-only state of the page.
@@ -1306,6 +1310,7 @@ impl Browser {
                 host_navigation,
                 can_go_back: false,
                 can_go_forward: false,
+                loading: true,
                 find_query: String::new(),
                 net,
                 stage: Cell::new(lb_core::memory::Stage::Awake),
@@ -1405,6 +1410,7 @@ impl Browser {
                 if let Some(v) = b.views.try_borrow_mut().ok().as_mut().and_then(|v| v.get_mut(&id)) {
                     v.can_go_back = state.can_go_back;
                     v.can_go_forward = state.can_go_forward;
+                    v.loading = state.loading;
                 }
                 b.with_tab(id, |m, t| m.set_loading(t, state.loading));
                 b.tab_changed(id);
@@ -2914,7 +2920,7 @@ impl Browser {
                 }
                 self.active_do(|c| if cmd == Command::Reload { c.reload() } else { c.hard_reload() });
             }
-            Command::Stop => self.active_do(|c| c.stop()),
+            Command::Stop => self.stop_active(),
             Command::Back => self.active_do(|c| c.go_back()),
             Command::Forward => self.active_do(|c| c.go_forward()),
             Command::Home => self.go_home(false, false),
@@ -2951,6 +2957,22 @@ impl Browser {
             Command::FindNext => self.find_step(false),
             Command::FindPrev => self.find_step(true),
         }
+    }
+
+    /// Stop: the engine stops every load of the page (navigation, subresources, sockets
+    /// waiting for an answer), and the tab stops showing the spinner at once, even when the
+    /// engine had nothing left to stop and so sends no "load ended" (0.25.1: a tab stuck
+    /// spinning could not be stopped).
+    fn stop_active(&self) {
+        let Some(id) = self.active_id() else { return };
+        if let Some(view) = self.tab_view(id) {
+            view.stop();
+        }
+        if let Some(v) = self.views.try_borrow_mut().ok().as_mut().and_then(|v| v.get_mut(&id)) {
+            v.loading = false;
+        }
+        self.with_tab(id, |m, t| m.set_loading(t, false));
+        self.tab_changed(id);
     }
 
     fn active_do(&self, f: impl FnOnce(&View)) {
