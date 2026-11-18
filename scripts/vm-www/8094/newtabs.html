@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>New tab links</title>
+<style>
+html, body { margin: 0; height: 100%; background: #e2e8f0; font: 22px system-ui; }
+#go { position: fixed; left: 0; right: 0; top: 24px; bottom: 0; display: flex; align-items: center; justify-content: center;
+      background: #dbeafe; color: #1e3a8a; text-decoration: none; }
+</style></head>
+<body>
+<!-- Krunk 0.25.0 harness (open phase): the whole page below the marker band is one target=_blank
+     link. Click k (from 0) opens heavy.html?m=<base + k> in a new tab; ?m= is this page's own
+     marker, ?tag= names the opened pages' reports. -->
+<a id="go" target="_blank" href="#">Open the next heavy page in a new tab</a>
+<script>
+'use strict';
+const q = new URLSearchParams(location.search);
+const base = Number(q.get('base') || 100), tag = q.get('tag') || 'nt';
+let k = 0;
+const a = document.getElementById('go');
+const next = () => `heavy.html?m=${base + k}&tag=${encodeURIComponent(tag)}-m${base + k}`;
+a.href = next();
+// The click's navigation uses the href as it is now; the next click gets the next page.
+a.addEventListener('click', () => { a.href = next(); k++; setTimeout(() => { a.href = next(); }, 0); });
+</script>
+<script src="marker.js"></script>
+</body>
+</html>

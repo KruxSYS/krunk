@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Heavy tab</title>
+<style>
+body { font: 15px system-ui; margin: 0; padding: 36px 24px 24px; background: #eef2f7; color: #0f172a; }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.spin { width: 40px; height: 40px; border: 6px solid #cbd5e1; border-top-color: #7c3aed; border-radius: 50%; animation: s .8s linear infinite; }
+.pulse { width: 120px; height: 24px; background: linear-gradient(90deg, #0ea5e9, #f97316); animation: p 1.4s ease-in-out infinite alternate; }
+@keyframes s { to { transform: rotate(360deg); } }
+@keyframes p { from { transform: translateX(0) scaleX(.4); } to { transform: translateX(180px) scaleX(1); } }
+canvas, video { display: block; margin: 8px 0; border: 1px solid #cbd5e1; }
+#dom div { padding: 1px 4px; border-bottom: 1px solid #e2e8f0; font-size: 11px; }
+</style></head>
+<body>
+<h1 id="h">Heavy tab</h1>
+<p>Krunk 0.25.0 harness: a page that keeps the browser busier than busy.html — a 20–40 ms long task
+every 100 ms, ten timers, CSS and canvas animation and a title that changes every second.
+<code>?m=N</code> paints the tab marker (marker.js), <code>?video=1</code> adds a muted looping video,
+<code>?dom=1</code> builds a DOM of about 3 MB, <code>?tag=T</code> names its reports to <code>/m</code>
+(every 5 s: animation frames, timer ticks, long tasks per second and visibility).</p>
+<div class="row"><div class="spin"></div><div class="pulse"></div><span id="n">0</span></div>
+<canvas id="c" width="480" height="140"></canvas>
+<div id="dom"></div>
+<script>
+'use strict';
+const q = new URLSearchParams(location.search);
+const m = q.get('m');
+const tag = q.get('tag') || ('heavy' + (m === null ? '' : '-m' + m));
+const spin = (ms) => { const end = performance.now() + ms; let s = 0; while (performance.now() < end) s += Math.random(); return s; };
+if (q.get('video') === '1') {
+  const v = Object.assign(document.createElement('video'), { src: 'test-h264-aac.mp4', muted: true, autoplay: true, loop: true, playsInline: true, width: 320 });
+  document.getElementById('c').after(v);
+}
+if (q.get('dom') === '1') {
+  // About 3 MB of markup: 16 000 rows of ~190 bytes each.
+  const parts = [];
+  for (let i = 0; i < 16000; i++) {
+    parts.push(`<div data-row="${i}" class="r${i % 7}"><b>Row ${i}</b> <span>lorem ipsum dolor sit amet ${(i * 2654435761 % 1000003).toString(36)}</span> <i>consectetur adipiscing elit</i> <a href="#r${i}">link ${i}</a></div>`);
+  }
+  document.getElementById('dom').innerHTML = parts.join('');
+}
+const ctx = document.getElementById('c').getContext('2d');
+let frames = 0, ticks = 0, longs = 0, x = 0;
+(function draw() {
+  frames++;
+  spin(0.5);
+  x = (x + 4) % 480;
+  ctx.fillStyle = '#f8fafc'; ctx.fillRect(0, 0, 480, 140);
+  for (let i = 0; i < 80; i++) { ctx.fillStyle = `hsl(${(i * 7 + x) % 360} 75% 50%)`; ctx.fillRect((x + i * 6) % 480, (i * 7) % 130, 5, 10); }
+  requestAnimationFrame(draw);
+})();
+// A long task every 100 ms: 20-40 ms (a fixed cycle, the same on every run).
+let k = 0;
+setInterval(() => { longs++; spin(20 + ((k++ * 7) % 21)); }, 100);
+// Ten timers of a little work each (analytics, carousels, polling, ad slots).
+[16, 16, 33, 50, 50, 100, 200, 250, 500, 1000].forEach((ms) => setInterval(() => { ticks++; spin(0.1); }, ms));
+// The title ticker.
+let n = 0;
+setInterval(() => {
+  n++;
+  document.title = `(${n}) Heavy ${m === null ? '' : m}`;
+  document.getElementById('n').textContent = String(n);
+}, 1000);
+let last = performance.now();
+setInterval(() => {
+  const now = performance.now(), secs = (now - last) / 1000; last = now;
+  const line = `${tag} st=${document.visibilityState} raf=${(frames / secs).toFixed(1)} tim=${(ticks / secs).toFixed(1)} long=${(longs / secs).toFixed(1)}`;
+  frames = 0; ticks = 0; longs = 0;
+  fetch('/m?' + encodeURIComponent(line)).catch(() => {});
+}, 5000);
+addEventListener('focus', () => fetch('/m?' + encodeURIComponent(`${tag} focus at=${Date.now()}`)).catch(() => {}));
+document.addEventListener('visibilitychange', () => fetch('/m?' + encodeURIComponent(`${tag} visibility=${document.visibilityState} at=${Date.now()}`)).catch(() => {}));
+</script>
+<script src="marker.js"></script>
+</body>
+</html>
