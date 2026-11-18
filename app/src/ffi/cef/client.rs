@@ -1114,7 +1114,7 @@ wrap_download_handler! {
             // SAFETY: a plain key-state query.
             let alt = (unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) } as u16 & 0x8000) != 0;
             let url = text(url);
-            let get = request_method.map_or(true, |m| m.to_string().eq_ignore_ascii_case("GET"));
+            let get = request_method.is_none_or(|m| m.to_string().eq_ignore_ascii_case("GET"));
             if alt && get && (url.starts_with("http://") || url.starts_with("https://")) {
                 if let Some(view) = lookup(self.key) {
                     view.ev.open_selection.with(|f| f(super::view::OpenIn::PrivateTab, url));
