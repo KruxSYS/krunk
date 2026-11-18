@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<!-- Krunk 0.25.2 smoke (scripts/vm-0252-smoke.ps1): a picture with a tooltip (title) to scroll
+     over, and a sign-up form on a page that cancels mousedown (so the field never blurs on a click
+     outside). The title reports the scroll position and every press (client coordinates). -->
+<html><head><meta charset="utf-8"><title>s0252</title>
+<style>body{margin:0;height:4000px;font:16px sans-serif}
+#pw{position:absolute;left:40px;top:40px;width:300px;height:36px}
+#pw2{position:absolute;left:40px;top:100px;width:300px;height:36px}
+#pic{position:absolute;left:40px;top:300px;width:600px;height:300px}</style></head>
+<body>
+<form onsubmit="return false"><input id="pw" type="password" autocomplete="new-password"><input id="pw2" type="password" autocomplete="new-password"></form>
+<img id="pic" src="probe.png" title="Tooltip: alt label of the picture" alt="probe">
+<script>
+document.addEventListener('mousedown', function (e) {
+  document.title = 'press ' + e.clientX + ',' + e.clientY + ' active=' + (document.activeElement && document.activeElement.id);
+  if (e.target.tagName !== 'INPUT') e.preventDefault();
+}, true);
+window.addEventListener('scroll', function () { document.title = 'Y=' + Math.round(scrollY); });
+</script></body></html>
