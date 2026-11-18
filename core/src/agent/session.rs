@@ -1211,6 +1211,7 @@ pub fn describe(name: &str, args: &Value) -> String {
             host("url").map_or("Set the new tab background".into(), |h| format!("Set the new tab background from {h}"))
         }
         "list_userscripts" => "List the userscripts".into(),
+        "get_userscript" => "Read a userscript".into(),
         "save_userscript" => {
             if s("id").is_some() {
                 "Update a userscript".into()
@@ -1223,6 +1224,7 @@ pub fn describe(name: &str, args: &Value) -> String {
             _ => "Turn off a userscript".into(),
         },
         "list_macros" => "List the macros".into(),
+        "get_macro" => "Read a macro".into(),
         "save_macro" => s("name").map_or("Save a macro".into(), |x| format!("Save the macro {x}")),
         "run_macro" => "Run a macro".into(),
         "ask_user" => "Ask you a question".into(),

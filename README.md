@@ -1019,8 +1019,9 @@ macro runner; `Menu::Page` for tabs; `Menu::Panel` for the panel), and `TabMenu`
 - **Settings:** get_settings, set_setting, set_new_tab_background_url (0.15.0: an https picture,
   at most 15 MB, PNG/JPEG/WebP/GIF/AVIF by its first bytes, stored like one you pick; no extra
   confirmation, like the other settings tools).
-- **Userscripts:** list_userscripts, save_userscript, toggle_userscript.
-- **Macros:** list_macros, save_macro, run_macro.
+- **Userscripts:** list_userscripts, get_userscript (0.25.2: the source, paged), save_userscript,
+  toggle_userscript.
+- **Macros:** list_macros, get_macro (0.25.2: the source, paged), save_macro, run_macro.
 - **Talking to you:** ask_user, finish.
 - **Scratchpad (0.16.0):** note_write, note_read, note_delete, note_list, plan_set, plan_update.
 - **Asked for in words only:** get_history, get_bookmarks, get_downloads, get_cookies_for_site,

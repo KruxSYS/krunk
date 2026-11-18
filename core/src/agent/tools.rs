@@ -280,6 +280,15 @@ pub static TOOLS: &[Tool] = &[
         group: Group::Userscripts,
     },
     Tool {
+        name: "get_userscript",
+        description: "The full source of one of the user's userscripts (metadata block and code) with its id, name and enabled state, paged like get_text: offset and max_chars for a long script. Read a script before changing it, then save the whole new source with save_userscript and the same id.",
+        schema: r#"{"type":"object","properties":{
+            "id":{"type":"string","minLength":1,"maxLength":64},
+            "offset":{"type":"integer","minimum":0,"description":"Character offset to continue a truncated result"},
+            "max_chars":{"type":"integer","minimum":1,"maximum":20000}},"required":["id"],"additionalProperties":false}"#,
+        group: Group::Userscripts,
+    },
+    Tool {
         name: "save_userscript",
         description: "Create (no id) or update a Tampermonkey-style userscript. The source must start with a ==UserScript== metadata block with @name and @match (or @include). A new script is enabled and runs on the target tab at once when it matches. Supported grants: none, GM_addStyle, GM_getValue/GM_setValue/GM_deleteValue/GM_listValues, GM_setClipboard, GM_notification, GM_openInTab, and GM.wasm (the WASM memory inspector, every function returns a promise: GM.wasm.memories(), read({mem, addr, type}), write({mem, addr, type, value}), scan({mem, type, kind, value}), next({scan, kind, value}), results({scan, offset, limit}), freeze({mem, addr, type, value}) giving a number for unfreeze(number), watch([{mem, addr, type}]), bytes({mem, addr, length}), instances(), globals({inst}), setGlobal({inst, export, value}); a pointer path is where: {base, offsets} instead of addr; every object may carry ctx for a frame or worker). GM_xmlhttpRequest, @require and @resource are not supported. A long script (more than about 20,000 characters) goes in parts: the first with more=true, the next ones with the returned draft id and more=true, the last with the draft id and without more; it is checked and saved when the last part arrives.",
         schema: r#"{"type":"object","properties":{
@@ -299,6 +308,15 @@ pub static TOOLS: &[Tool] = &[
         name: "list_macros",
         description: "The user's macros: id, name, hotkey, created by AI.",
         schema: EMPTY,
+        group: Group::Macros,
+    },
+    Tool {
+        name: "get_macro",
+        description: "The full source of one of the user's macros with its id, name and hotkey, paged like get_text: offset and max_chars for a long macro. Read a macro before changing it, then save the whole new source with save_macro and the same id.",
+        schema: r#"{"type":"object","properties":{
+            "id":{"type":"string","minLength":1,"maxLength":64},
+            "offset":{"type":"integer","minimum":0,"description":"Character offset to continue a truncated result"},
+            "max_chars":{"type":"integer","minimum":1,"maximum":20000}},"required":["id"],"additionalProperties":false}"#,
         group: Group::Macros,
     },
     Tool {
@@ -868,6 +886,14 @@ pub mod args {
     pub struct Id {
         pub id: String,
     }
+    /// `get_userscript` / `get_macro`: a script's source, paged.
+    #[derive(Debug, Clone, Deserialize)]
+    pub struct GetScript {
+        pub id: String,
+        #[serde(default)]
+        pub offset: usize,
+        pub max_chars: Option<usize>,
+    }
     #[derive(Debug, Clone, Deserialize)]
     pub struct AskUser {
         pub question: String,
@@ -1019,9 +1045,11 @@ mod tests {
             "set_setting",
             "set_new_tab_background_url",
             "list_userscripts",
+            "get_userscript",
             "save_userscript",
             "toggle_userscript",
             "list_macros",
+            "get_macro",
             "save_macro",
             "run_macro",
             "ask_user",
@@ -1052,7 +1080,7 @@ mod tests {
         ] {
             assert!(find(n).is_some(), "{n} is missing");
         }
-        assert_eq!(TOOLS.len(), 58);
+        assert_eq!(TOOLS.len(), 60);
     }
 
     /// No tool reaches the vault, cards, sync, the account or API keys (brief C.10). 0.16.0:
@@ -1133,6 +1161,9 @@ mod tests {
         assert!(ok("note_write", json!({"name":"n"})).unwrap_err().contains("content is missing"));
         assert!(ok("note_read", json!({"name":"n","offset":10,"max_chars":20000})).is_ok());
         assert!(ok("note_read", json!({"name":"n","max_chars":20001})).is_err());
+        assert!(ok("get_userscript", json!({"id":"a","offset":100,"max_chars":20000})).is_ok());
+        assert!(ok("get_userscript", json!({})).is_err());
+        assert!(ok("get_macro", json!({"id":"a","max_chars":0})).is_err());
         assert!(ok("note_delete", json!({})).is_err());
         assert!(ok("note_list", json!({})).is_ok());
         assert!(ok("plan_set", json!({"items":[{"text":"a"},{"text":"b","state":"doing","id":"x"}]})).is_ok());

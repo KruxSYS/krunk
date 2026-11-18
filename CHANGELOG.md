@@ -3,6 +3,13 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.25.2 — unreleased
+
+- **The AI assistant can read your userscripts and macros.** It could list them and write new
+  ones, but never see an existing script's code, so it couldn't explain, fix or change one. Two
+  new tools, get_userscript and get_macro, give it a script's full source (in pages for long
+  scripts); it then saves the changed script under the same id.
+
 ## 0.25.1 — 2026-11-18
 
 - **New tabs no longer keep spinning.** A new tab could show the loading circle (and the stop

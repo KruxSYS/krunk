@@ -14,7 +14,7 @@ use super::super::Browser;
 use crate::ffi::cef::fetch::{self, FetchError};
 use crate::ffi::cef::{list_cookies, post_ui_delayed, Profile, View};
 use crate::log::warning;
-use lb_core::agent::tools::{self as agent_tools, args, Group, RESULT_CAP, TOOL_TIMEOUT_MS};
+use lb_core::agent::tools::{self as agent_tools, args, Group, RESULT_CAP, RESULT_CAP_MAX, TOOL_TIMEOUT_MS};
 use lb_core::agent::{ntp_image, pages as agent_pages, redact, settings_allow, Category, ToolOutcome};
 use lb_core::pages::{self, Page};
 use lb_core::storage::now_ms;
@@ -471,6 +471,20 @@ impl Browser {
                 let n = list.as_array().map_or(0, Vec::len);
                 ok_json(json!({ "userscripts": list }), format!("{n} userscripts"))
             }
+            "get_userscript" => {
+                let a = match args::parse::<args::GetScript>(a) {
+                    Ok(a) => a,
+                    Err(e) => return ToolOutcome::error(e),
+                };
+                match self.store.borrow().userscript(&a.id) {
+                    Ok(Some(r)) => {
+                        let head = json!({ "id": r.id, "name": r.name, "enabled": r.enabled });
+                        script_source(head, &r.source, &a, format!("Read userscript {}", shorten(&r.name, 60)))
+                    }
+                    Ok(None) => ToolOutcome::error(format!("no userscript has the id {}", shorten(&a.id, 64))),
+                    Err(e) => ToolOutcome::error(format!("the userscript could not be read: {e}")),
+                }
+            }
             "save_userscript" => match args::parse::<args::SaveUserscript>(a) {
                 Ok(a) => self.agent_save_userscript(win, a),
                 Err(e) => ToolOutcome::error(e),
@@ -542,6 +556,21 @@ impl Browser {
                 let list = self.macros_list_json();
                 let n = list.as_array().map_or(0, Vec::len);
                 done(ok_json(json!({ "macros": list }), format!("{n} macros")));
+            }
+            "get_macro" => {
+                let a = match args::parse::<args::GetScript>(a) {
+                    Ok(a) => a,
+                    Err(e) => return done(ToolOutcome::error(e)),
+                };
+                let row = self.store.borrow().macro_by_id(&a.id);
+                done(match row {
+                    Ok(Some(m)) => {
+                        let head = json!({ "id": m.id, "name": m.name, "hotkey": m.hotkey, "enabled": m.enabled });
+                        script_source(head, &m.source, &a, format!("Read macro {}", shorten(&m.name, 60)))
+                    }
+                    Ok(None) => ToolOutcome::error(format!("no macro has the id {}", shorten(&a.id, 64))),
+                    Err(e) => ToolOutcome::error(format!("the macro could not be read: {e}")),
+                });
             }
             "save_macro" => match args::parse::<args::SaveMacro>(a) {
                 Ok(a) => self.agent_save_macro(win, a, done),
@@ -841,4 +870,16 @@ mod tests {
         assert_eq!(agent_url("krunk://settings#privacy").unwrap(), Page::Settings.url_with_section(Some("privacy")));
         assert_eq!(agent_url("https://example.com").unwrap(), "https://example.com/");
     }
+}
+
+/// `get_userscript` / `get_macro`: a JSON line (id, name, … and the source's length in characters),
+/// then the source, paged like `get_text` (the paging line follows when it is cut).
+fn script_source(mut head: Value, source: &str, a: &args::GetScript, summary: String) -> ToolOutcome {
+    let max = a.max_chars.unwrap_or(RESULT_CAP).clamp(1, RESULT_CAP_MAX);
+    let page = redact::cap(source, a.offset, max);
+    head["chars"] = json!(page.total);
+    if a.offset > 0 {
+        head["offset"] = json!(a.offset);
+    }
+    ToolOutcome::ok(format!("{head}\n{}", page.into_result()), summary)
 }
