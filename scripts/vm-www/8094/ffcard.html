@@ -1,0 +1,28 @@
+<!doctype html>
+<!-- Payment-method test (Krunk 0.6.0, scripts/vm-060-cards.ps1): a checkout form with cc-*
+     fields. The page prints what the fields hold (number masked to its last four digits) so
+     the screenshots show what the browser filled, and that the security code stays empty. -->
+<html lang="en"><head><meta charset="utf-8"><title>Checkout test</title>
+<style>
+  body { font: 16px system-ui, sans-serif; margin: 24px; }
+  input { font: inherit; padding: 6px 8px; width: 260px; display: block; margin: 6px 0 14px; }
+  #state { font-family: ui-monospace, monospace; color: #555; }
+</style></head><body>
+<h1>Pay 12.00 (localhost:8094)</h1>
+<form id="f" action="/log" method="post">
+  <label>Name on card <input id="name" name="ccname" autocomplete="cc-name" autofocus></label>
+  <label>Card number <input id="num" name="cardnumber" autocomplete="cc-number" inputmode="numeric"></label>
+  <label>Expiry (MM/YY) <input id="exp" name="cc-exp" autocomplete="cc-exp" placeholder="MM/YY"></label>
+  <label>Security code <input id="cvc" name="cvc" autocomplete="cc-csc" inputmode="numeric" maxlength="4"></label>
+  <button type="submit">Pay now</button>
+</form>
+<p id="state"></p>
+<script>
+  function show() {
+    var n = document.getElementById('num').value.replace(/\D/g, '');
+    document.getElementById('state').textContent = 'name="' + document.getElementById('name').value + '" number=' + (n ? '(' + n.length + ' digits, ends ' + n.slice(-4) + ')' : '(empty)') + ' exp="' + document.getElementById('exp').value + '" cvc-length=' + document.getElementById('cvc').value.length;
+  }
+  ['input', 'change', 'focus', 'blur'].forEach(function (ev) { document.addEventListener(ev, show, true); });
+  document.getElementById('f').addEventListener('submit', function (e) { e.preventDefault(); document.title = 'Paid'; show(); });
+  show();
+</script></body></html>
