@@ -7,12 +7,13 @@
 
 use super::pipwin;
 use lb_core::scroll_lock::{self, Rect, TopWindow};
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, EnumThreadWindows, GetAncestor, GetClassNameW, GetWindowLongPtrW, GetWindowRect, IsWindowVisible,
-    SetWindowsHookExW, GA_ROOTOWNER, GWL_STYLE, HC_ACTION, HHOOK, MSG, WH_GETMESSAGE, WM_NULL,
+    SetWindowsHookExW, GA_ROOTOWNER, GWL_EXSTYLE, GWL_STYLE, HC_ACTION, HHOOK, MSG, WH_GETMESSAGE, WM_NULL,
 };
 
 thread_local! {
@@ -20,6 +21,54 @@ thread_local! {
     /// Krunk's open menus (the main popup slot and the item menu over a folder dropdown): the
     /// page stays still under them too (0.8.0, A item 6; the history menus let it scroll).
     static MENUS: Cell<[Option<isize>; 2]> = const { Cell::new([None, None]) };
+}
+
+/// A press watch (0.25.2): the window and rectangles where presses don't count, and what runs
+/// once on the first press outside them (it should only queue work: it runs inside the hook).
+struct PressWatch {
+    window: Option<isize>,
+    keep: Vec<Rect>,
+    outside: Rc<dyn Fn()>,
+}
+
+thread_local! {
+    static PRESS_WATCH: RefCell<Option<PressWatch>> = const { RefCell::new(None) };
+}
+
+/// Calls `outside` once on the first mouse, pen or touch press on this thread outside `window`
+/// (its live rectangle) and `keep` (screen rectangles). Replaces an earlier watch.
+pub fn watch_presses(window: Option<HWND>, keep: Vec<Rect>, outside: Rc<dyn Fn()>) {
+    PRESS_WATCH.with(|w| *w.borrow_mut() = Some(PressWatch { window: window.map(|h| h.0 as isize), keep, outside }));
+}
+
+/// Ends the press watch.
+pub fn unwatch_presses() {
+    PRESS_WATCH.with(|w| {
+        if let Ok(mut w) = w.try_borrow_mut() {
+            w.take();
+        }
+    });
+}
+
+/// A press at (`x`, `y`): the watch's callback when it lands outside (the watch then ends).
+fn press_outside(x: i32, y: i32) -> Option<Rc<dyn Fn()>> {
+    PRESS_WATCH.with(|w| {
+        let mut w = w.try_borrow_mut().ok()?;
+        let watch = w.as_ref()?;
+        let mut keep = watch.keep.clone();
+        if let Some(h) = watch.window {
+            let h = HWND(h as *mut std::ffi::c_void);
+            let mut r = windows::Win32::Foundation::RECT::default();
+            // SAFETY: plain queries; a stale handle just fails.
+            if unsafe { IsWindowVisible(h) }.as_bool() && unsafe { GetWindowRect(h, &mut r) }.is_ok() {
+                keep.push(Rect { left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+            }
+        }
+        if !scroll_lock::press_is_outside(x, y, &keep) {
+            return None;
+        }
+        w.take().map(|watch| watch.outside)
+    })
 }
 
 /// Krunk's menu window in `slot` (0: the main popup, 1: the item menu) opened (`Some`) or closed.
@@ -78,6 +127,7 @@ fn describe(h: HWND) -> TopWindow {
         TopWindow {
             class: class_of(h),
             style: GetWindowLongPtrW(h, GWL_STYLE) as u32,
+            ex_style: GetWindowLongPtrW(h, GWL_EXSTYLE) as u32,
             visible: IsWindowVisible(h).as_bool(),
             root_owner_class: if root.0.is_null() || root == h { String::new() } else { class_of(root) },
             is_pip: pipwin::is_watched(h),
@@ -114,7 +164,12 @@ extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESU
         // SAFETY: for WH_GETMESSAGE, lParam points to the MSG being retrieved; the hook may
         // change it.
         let msg = unsafe { &mut *(lparam.0 as *mut MSG) };
-        if scroll_lock::is_scroll_message(msg.message) {
+        if scroll_lock::is_press_message(msg.message) {
+            let POINT { x, y } = msg.pt;
+            if let Some(outside) = press_outside(x, y) {
+                outside();
+            }
+        } else if scroll_lock::is_scroll_message(msg.message) {
             let POINT { x, y } = msg.pt;
             let (x, y) = if msg.message == scroll_lock::DM_POINTERHITTEST {
                 (x, y)

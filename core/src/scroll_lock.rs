@@ -17,10 +17,26 @@ pub const WM_MOUSEHWHEEL: u32 = 0x020E;
 pub const DM_POINTERHITTEST: u32 = 0x0250;
 
 const WS_POPUP: u32 = 0x8000_0000;
+/// A click-through window: the engine's hover tooltip (`TooltipAura`, `accept_events = false`)
+/// has it; a dropdown, which takes clicks, never does.
+const WS_EX_TRANSPARENT: u32 = 0x0000_0020;
 
 /// The messages the lock looks at; everything else passes untouched.
 pub fn is_scroll_message(id: u32) -> bool {
     matches!(id, WM_MOUSEWHEEL | WM_MOUSEHWHEEL | DM_POINTERHITTEST)
+}
+
+/// Mouse, pen and touch presses (`WM_LBUTTONDOWN`, `WM_RBUTTONDOWN`, `WM_MBUTTONDOWN`,
+/// `WM_XBUTTONDOWN`, their non-client forms and `WM_POINTERDOWN`). While the login suggestions
+/// are open the host watches them: a press outside the dropdown and its field closes it (0.25.2;
+/// before, only the page's blur did, and a page that cancels `mousedown` never blurs the field).
+pub fn is_press_message(id: u32) -> bool {
+    matches!(id, 0x0201 | 0x0204 | 0x0207 | 0x020B | 0x00A1 | 0x00A4 | 0x00A7 | 0x00AB | 0x0246)
+}
+
+/// A press at (`x`, `y`) closes the watched dropdown when it is outside every kept rectangle.
+pub fn press_is_outside(x: i32, y: i32, keep: &[Rect]) -> bool {
+    !keep.iter().any(|r| r.contains(x, y))
 }
 
 /// A screen rectangle (right and bottom exclusive).
@@ -43,6 +59,8 @@ impl Rect {
 pub struct TopWindow {
     pub class: String,
     pub style: u32,
+    /// The extended style (`GWL_EXSTYLE`).
+    pub ex_style: u32,
     pub visible: bool,
     /// Class of the end of its owner chain (`GA_ROOTOWNER`).
     pub root_owner_class: String,
@@ -56,6 +74,7 @@ pub fn is_page_popup(w: &TopWindow) -> bool {
     w.visible
         && w.class.starts_with("Chrome_WidgetWin_")
         && w.style & WS_POPUP != 0
+        && w.ex_style & WS_EX_TRANSPARENT == 0
         && w.root_owner_class == "KrunkWindow"
         && !w.is_pip
         && w.rect.right > w.rect.left
@@ -83,6 +102,7 @@ mod tests {
         TopWindow {
             class: "Chrome_WidgetWin_1".into(),
             style: 0x9600_0000,
+            ex_style: 0x0000_0088,
             visible: true,
             root_owner_class: "KrunkWindow".into(),
             is_pip: false,
@@ -98,12 +118,13 @@ mod tests {
 
     #[test]
     fn other_windows_do_not() {
-        let cases: [fn(&mut TopWindow); 6] = [
+        let cases: [fn(&mut TopWindow); 7] = [
             |w| w.visible = false,
             |w| w.class = "KrunkPopup".into(), // Krunk's own menus and prompts
             |w| w.style = 0x16CF_0000,         // an overlapped window (DevTools)
             |w| w.root_owner_class = "Chrome_WidgetWin_1".into(), // not inside a Krunk frame
             |w| w.is_pip = true,               // the floating video
+            |w| w.ex_style |= 0x20,            // the hover tooltip (title / alt text): click-through
             |w| w.rect = Rect { left: 10, top: 10, right: 10, bottom: 50 },
         ];
         for change in cases {
@@ -122,6 +143,22 @@ mod tests {
         assert!(!should_drop(48, 284, &[r]) && should_drop(448, 284, &[r]), "edges");
         let other = Rect { left: 900, top: 100, right: 1100, bottom: 300 };
         assert!(!should_drop(1000, 200, &[r, other]));
+    }
+
+    #[test]
+    fn presses() {
+        for down in [0x0201, 0x0204, 0x0207, 0x020B, 0x00A1, 0x00A4, 0x0246] {
+            assert!(is_press_message(down), "{down:#x}");
+        }
+        for other in [0x0200, 0x0202, 0x0205, 0x020A, 0x0100, 0x00A0] {
+            assert!(!is_press_message(other), "{other:#x}");
+        }
+        let popup = Rect { left: 100, top: 220, right: 400, bottom: 500 };
+        let field = Rect { left: 100, top: 180, right: 380, bottom: 216 };
+        assert!(!press_is_outside(150, 300, &[popup, field]), "on the dropdown");
+        assert!(!press_is_outside(150, 200, &[popup, field]), "in the field");
+        assert!(press_is_outside(150, 218, &[popup, field]), "between them");
+        assert!(press_is_outside(900, 600, &[popup, field]), "elsewhere on the page");
     }
 
     #[test]
