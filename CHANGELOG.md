@@ -3,7 +3,7 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
-## Unreleased
+## 0.25.2 — 2026-11-18
 
 - **Attach files to the AI assistant.** Pictures, PDFs and text files (code, Markdown, CSV, JSON,
   logs and similar) can go with a message: use the paperclip button, paste them into the message
