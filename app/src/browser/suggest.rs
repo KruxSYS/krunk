@@ -597,7 +597,7 @@ impl Browser {
     }
 
     /// Does the (locked) vault have logins for `url`, by the index?
-    fn site_has_logins(&self, url: &str) -> bool {
+    pub(super) fn site_has_logins(&self, url: &str) -> bool {
         let Some(index) = self.hint_index() else { return false };
         if self.suggest.tags.borrow().is_none() {
             let tags: Vec<String> = self
@@ -619,6 +619,13 @@ impl Browser {
         let tags = {
             let vault = self.vaults.vault.borrow();
             let Some(v) = vault.as_ref() else { return };
+            // 0.25.3: the memory-only verifiers follow the vault while it is open.
+            if let Ok(mut ver) = self.vaults.verifiers.try_borrow_mut() {
+                ver.clear();
+                for e in v.entries() {
+                    ver.learn(&e.origin, &e.username, &e.password);
+                }
+            }
             index.tags_for(v.summaries().iter().map(|s| s.origin.as_str()))
         };
         if self.suggest.tags.borrow().as_ref() == Some(&tags) {

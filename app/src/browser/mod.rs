@@ -2437,6 +2437,7 @@ impl Browser {
             },
             private: tab.private,
             login_form: view.is_some_and(|v| v.net.login_form.get()),
+            login_offer: self.has_login_offer(&tab.url),
             bookmarks_bar: self.bar_shown(win),
             camera: view.is_some_and(|v| v.media_use.get().0),
             microphone: view.is_some_and(|v| v.media_use.get().1),

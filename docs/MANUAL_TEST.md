@@ -256,6 +256,12 @@ The 2026-11-04 figures are in the README under "Memory".
    - Save → the login appears on the passwords page.
    - Log in again with a different password: the prompt says "Update". With the same password
      there is no prompt.
+   - 0.25.3, vault locked: restart Krunk (the vault starts locked) and log in again with the same
+     password: no prompt. Unlock the vault: still nothing (the held login was unchanged). Log in
+     with a changed password while locked, unlock on that site: "Update password?" appears; unlock
+     elsewhere: the key icon on that site shows a dot and offers it. After an auto-lock the same
+     password gives no prompt either. The "already saved" verifiers are memory-only by design (a
+     random key per process, nothing on disk), so they never outlive the process.
 3. **Never:** on another site choose "Never for this site". No more prompts there; the origin
    is listed under "Never saved" and can be removed.
 4. **Prompt dismissal:** trigger the save prompt, then press Ctrl+Tab, or click into the page, or

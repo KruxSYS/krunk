@@ -36,6 +36,7 @@ pub mod integrity;
 pub mod js_dialog;
 pub mod keys;
 pub mod layout;
+pub mod login_memory;
 pub mod macros;
 pub mod mailto;
 pub mod memory;

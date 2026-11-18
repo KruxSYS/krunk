@@ -769,7 +769,12 @@
     state.navUrl = n.url;
     const zoomed = Math.abs((n.zoom || 1) - 1) > 0.001;
     $('zoom').hidden = !zoomed;
-    $('key').hidden = !n.loginForm;
+    // 0.25.3: a changed login sent while the vault was locked waits here: the key shows a dot
+    // and offers "Update password?".
+    $('key').hidden = !(n.loginForm || n.loginOffer);
+    $('key').classList.toggle('offer', !!n.loginOffer);
+    $('key').title = n.loginOffer ? 'Update the saved password' : 'Fill saved login';
+    $('key').setAttribute('aria-label', $('key').title);
     // 0.6.0: the page has videos; one of them is in the floating window.
     $('pip').hidden = !(n.videos > 0);
     $('pip').classList.toggle('active', !!n.pip);

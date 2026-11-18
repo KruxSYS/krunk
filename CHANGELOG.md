@@ -3,6 +3,15 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## Unreleased
+
+- **No more "Save password?" for a login Krunk already has.** Krunk asked again after every
+  start and every automatic lock, because it couldn't compare with the locked vault. It now
+  remembers this session's saved logins in memory (never on disk). Right after a start it holds
+  a sign-in on a site that already has saved logins and decides when you unlock: nothing if
+  the login is unchanged, "Update password?" if it changed. The comparison also ignores case
+  and spaces in the username and covers logins saved on another address of the same site.
+
 ## 0.25.2 — 2026-11-18
 
 - **Attach files to the AI assistant.** Pictures, PDFs and text files (code, Markdown, CSV, JSON,

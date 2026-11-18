@@ -2753,6 +2753,10 @@ pub struct NavState {
     /// The page has a login form (shows the key icon).
     #[serde(default)]
     pub login_form: bool,
+    /// 0.25.3: a changed login (sent while the vault was locked) waits on this site: the key
+    /// icon shows it and offers "Update password?".
+    #[serde(default)]
+    pub login_offer: bool,
     /// The bookmarks bar shows in this window now (setting, and in "new tab only" mode
     /// whether the active tab is the new-tab page).
     #[serde(default)]
@@ -5482,6 +5486,7 @@ mod tests {
                     zoom: 1.25,
                     private: false,
                     login_form: true,
+                    login_offer: false,
                     bookmarks_bar: true,
                     camera: false,
                     microphone: false,

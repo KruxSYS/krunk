@@ -9,6 +9,7 @@ use super::Browser;
 use crate::ffi::secure::{self, Dpapi};
 use crate::log::{info, warning};
 use lb_core::layout;
+use lb_core::login_memory;
 use lb_core::pages::Page;
 use lb_core::passgen;
 use lb_core::protocol::{
@@ -78,6 +79,11 @@ pub(super) struct VaultHost {
     /// (`None`: the entry was new and is deleted).
     auto_saved: RefCell<Option<(String, Option<Zeroizing<String>>)>>,
     pub(super) clipboard_seq: Cell<Option<u32>>,
+    /// 0.25.3: memory-only "already saved" verifiers, the logins held while the vault was
+    /// locked, and the changed ones offered on their site (see `lb_core::login_memory`).
+    pub(super) verifiers: RefCell<login_memory::Verifiers>,
+    held: RefCell<login_memory::PendingLogins>,
+    pub(super) offers: RefCell<login_memory::Offers>,
     /// Unlocked with "Remain unlocked this session" (0.11.0): no inactivity lock until quit.
     remain_this_session: Cell<bool>,
     /// The username sent on the first step of a login in steps (0.11.2): tab, origin, name,
@@ -207,6 +213,7 @@ impl Browser {
         }
         self.push_vault_state();
         self.sync_vault_unlocked();
+        self.decide_held_logins();
     }
 
     /// Locks the vault: key material and decrypted entries are dropped
@@ -216,6 +223,13 @@ impl Browser {
         self.vaults.remain_this_session.set(false);
         self.vaults.pending_save.borrow_mut().take();
         self.vaults.unlock_for.borrow_mut().take();
+        // 0.25.3: the user locked on purpose (or Krunk exits): the memory-only verifiers and
+        // held logins go too. An automatic lock (inactivity, Windows lock, sleep) keeps them.
+        if reason == "user" || reason == "exit" {
+            self.vaults.verifiers.borrow_mut().clear();
+            self.vaults.held.borrow_mut().clear();
+            self.vaults.offers.borrow_mut().clear();
+        }
         if let Some(w) = self.app() {
             w.kill_timer(VAULT_TIMER);
         }
@@ -757,17 +771,35 @@ impl Browser {
             self.auto_save(tab_id, origin, username, password.into_zeroizing());
             return;
         }
-        // Already saved with this password: nothing to ask.
-        let (update, unchanged) = match self.vaults.vault.borrow().as_ref() {
-            Some(v) => {
-                let existing = v.for_origin(origin).into_iter().find(|e| e.username == username);
-                (existing.is_some(), existing.is_some_and(|e| *e.password == *password))
+        // Already saved with this password: nothing to ask (0.25.3: any login of the same
+        // site, the username trimmed and in any case, or no username on a password step).
+        let known = self.vaults.vault.borrow().as_ref().map(|v| {
+            let m = v.matches_for(origin);
+            let saved = m.iter().map(|(e, _)| (e.username.as_str(), e.password.as_str()));
+            let unchanged = login_memory::unchanged(saved, &username, &password);
+            let u = login_memory::norm_user(&username);
+            (m.iter().any(|(e, _)| login_memory::norm_user(&e.username) == u), unchanged)
+        });
+        let update = match known {
+            Some((_, true)) => return,
+            Some((update, false)) => update,
+            // Locked: the memory-only verifiers of this session know it unchanged.
+            None if self.vaults.verifiers.borrow().knows(origin, &username, &password) => {
+                info!("login unchanged (known this session): no save prompt");
+                return;
             }
-            None => (false, false),
+            // Locked and not unlocked yet this session, on a site with saved logins: decided
+            // at the next unlock, without a prompt now.
+            None if self.vaults.verifiers.borrow().is_empty()
+                && self.vault_exists()
+                && self.site_has_logins(origin) =>
+            {
+                info!("login on a site with saved logins while locked: decided at the next unlock");
+                self.vaults.held.borrow_mut().hold(origin, tab_id, &username, password.into_zeroizing(), now_ms());
+                return;
+            }
+            None => false,
         };
-        if unchanged {
-            return;
-        }
         *self.vaults.pending_save.borrow_mut() = Some(PendingSave {
             tab_id,
             origin: origin.to_string(),
@@ -932,6 +964,15 @@ impl Browser {
         if active != Some(tab_id) {
             return;
         }
+        // 0.25.3: the key icon first offers a changed login decided at the last unlock.
+        if claimed_origin.is_none() {
+            let offer = self.vaults.offers.borrow_mut().take(&url, now_ms());
+            if let Some(p) = offer {
+                self.offer_update(tab_id, p);
+                self.send_nav_if_active(tab_id);
+                return;
+            }
+        }
         let Some(origin) = urlclean::origin_of(&url) else { return };
         if claimed_origin.is_some_and(|c| c != origin)
             || !(origin.starts_with("https://") || origin.starts_with("http://"))
@@ -1086,6 +1127,77 @@ impl Browser {
             UnlockPurpose::Import => self.after_unlock_import(),
             UnlockPurpose::HttpAuth => self.after_unlock_http_auth(tab_id),
         }
+    }
+
+    // ------------------------------------------------------------ logins held while locked (0.25.3)
+
+    /// The vault was just unlocked: the logins held while it was locked are compared silently.
+    /// Unchanged ones go; a changed one is offered at once when the unlock happened on its site
+    /// (the active tab), else on its site's key icon.
+    fn decide_held_logins(&self) {
+        let now = now_ms();
+        let held = self.vaults.held.borrow_mut().take_all(now);
+        if held.is_empty() {
+            return;
+        }
+        let active = self.active_id();
+        let active_url = active.and_then(|t| self.tab(t)).map(|t| t.url.clone()).unwrap_or_default();
+        let active_site = login_memory::site_key(&active_url);
+        let mut shown = false;
+        let (mut same, mut changed) = (0, 0);
+        for p in held {
+            let unchanged = self.vaults.vault.borrow().as_ref().is_some_and(|v| {
+                let m = v.matches_for(&p.origin);
+                login_memory::unchanged(
+                    m.iter().map(|(e, _)| (e.username.as_str(), e.password.as_str())),
+                    &p.username,
+                    &p.password,
+                )
+            });
+            if unchanged {
+                same += 1;
+                continue;
+            }
+            changed += 1;
+            if !shown && active.is_some() && active_site.as_deref() == Some(p.site.as_str()) {
+                shown = true;
+                let tab = active.unwrap_or(p.tab);
+                self.offer_update(tab, p);
+            } else {
+                self.vaults.offers.borrow_mut().add(p, now);
+            }
+        }
+        info!("held logins at unlock: {same} unchanged (dropped), {changed} changed");
+        if let Some(t) = active {
+            self.send_nav_if_active(t);
+        }
+    }
+
+    /// Asks about a held login (on its site's tab `tab`): "Save password?" / "Update password?".
+    fn offer_update(&self, tab_id: TabId, p: login_memory::Pending) {
+        let url = self.tab(tab_id).map(|t| t.url.clone()).unwrap_or_default();
+        let Some(origin) = urlclean::origin_of(&url) else { return };
+        if login_memory::site_key(&origin).as_deref() != Some(p.site.as_str()) {
+            return;
+        }
+        let update = self.vaults.vault.borrow().as_ref().is_some_and(|v| {
+            let u = login_memory::norm_user(&p.username);
+            v.matches_for(&p.origin).iter().any(|(e, _)| login_memory::norm_user(&e.username) == u)
+        });
+        *self.vaults.pending_save.borrow_mut() = Some(PendingSave {
+            tab_id,
+            origin: p.origin.clone(),
+            username: p.username.clone(),
+            password: p.password,
+            created: now_ms(),
+        });
+        let content = PopupContent::SavePassword { tab_id, origin: p.origin, username: p.username, update };
+        self.show_prompt(content, 0);
+    }
+
+    /// Is there a changed login waiting on the page at `url` (the key icon shows it)?
+    pub(super) fn has_login_offer(&self, url: &str) -> bool {
+        self.vaults.offers.try_borrow().is_ok_and(|o| o.has(url, now_ms()))
     }
 }
 
