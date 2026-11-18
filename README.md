@@ -469,6 +469,16 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     Since 0.7.4 each field is tried with the key it names and then with the others (a profile's
     3DES and AES keys can share an id), AES-128/192-CBC and AES-GCM fields are read, and fields
     that still cannot be decrypted are listed with their cipher and key sizes.
+  - **Payment cards import** (same place, the "payment cards" box): card number, expiry, name
+    on the card and (Chrome/Edge) nickname go into the vault; security codes are never read.
+    Firefox keeps cards in `autofill-profiles.json` with the number encrypted (AES-GCM) under a
+    key it stores in Windows Credential Manager ("Firefox Encrypted Storage"); Krunk reads that
+    key as the same Windows user, so no Firefox primary password is needed. Chrome, Edge and
+    Brave keep them in `Web Data`, encrypted like passwords: cards encrypted app-bound (`v20`)
+    are counted and have to be added by hand (Chrome has no card export). A card whose number
+    is already in the vault with the same expiry is skipped; a later expiry updates it. Cards
+    without a valid number (Luhn, 12–19 digits) or expiry are counted with the reason. Firefox's
+    newer card store (`autofill.db`, not yet used by default) is not read; the result says so.
   - Manage logins on `krunk://passwords`. Showing a password asks for the master password again.
   - **Remain unlocked this session (0.11.0):** the unlock dialog (and the passwords page) has
     this checkbox, checked by default. Checked, the vault stays open until Krunk quits; the

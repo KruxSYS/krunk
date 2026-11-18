@@ -268,6 +268,40 @@ pub fn unprotect_plain(data: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
     Ok(take_blob(&out))
 }
 
+/// The secret of a generic Windows Credential Manager entry of this user (Firefox keeps its
+/// OS key store key, which encrypts saved card numbers, under "Firefox Encrypted Storage":
+/// `security/manager/ssl/CredentialManagerSecret.cpp`). `Ok(None)` when there is no entry.
+pub fn read_generic_credential(target: &str) -> Result<Option<Zeroizing<Vec<u8>>>, String> {
+    use windows::Win32::Foundation::ERROR_NOT_FOUND;
+    use windows::Win32::Security::Credentials::{CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC};
+    let wide: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut cred: *mut CREDENTIALW = std::ptr::null_mut();
+    // SAFETY: `wide` is a NUL-terminated UTF-16 string alive for the call; on success
+    // CredReadW allocates `cred`, which is read once and freed with CredFree below.
+    unsafe {
+        if let Err(e) = CredReadW(PCWSTR(wide.as_ptr()), CRED_TYPE_GENERIC, None, &mut cred) {
+            if e.code() == ERROR_NOT_FOUND.to_hresult() {
+                return Ok(None);
+            }
+            return Err(format!("CredReadW: {e}"));
+        }
+        if cred.is_null() {
+            return Ok(None);
+        }
+        let c = &*cred;
+        let secret = if c.CredentialBlob.is_null() || c.CredentialBlobSize == 0 {
+            Zeroizing::new(Vec::new())
+        } else {
+            let slice = std::slice::from_raw_parts_mut(c.CredentialBlob, c.CredentialBlobSize as usize);
+            let copy = Zeroizing::new(slice.to_vec());
+            slice.fill(0);
+            copy
+        };
+        CredFree(cred as *const std::ffi::c_void);
+        Ok(Some(secret))
+    }
+}
+
 const CF_UNICODETEXT: u32 = 13;
 
 /// Copies `text` to the clipboard, marked so clipboard managers and the

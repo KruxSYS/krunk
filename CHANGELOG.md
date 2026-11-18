@@ -3,6 +3,15 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## Unreleased
+
+- **Import payment cards from Firefox, Chrome and Edge.** Settings → Passwords & import has a
+  new "payment cards" box next to passwords: card numbers, expiry dates and names go into your
+  Krunk vault (security codes are never imported). Cards already in the vault are skipped, and
+  the result says how many were imported, already there or could not be read, and why. Chrome
+  and Edge cards that Chrome protects for itself can't be read by other programs; those are
+  counted so you can add them by hand.
+
 ## 0.25.2 — 2026-11-18
 
 - **Attach files to the AI assistant.** Pictures, PDFs and text files (code, Markdown, CSV, JSON,

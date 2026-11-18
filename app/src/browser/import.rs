@@ -1,12 +1,13 @@
 //! Import from other browsers (the host side of `lb_core::import`): the profiles on this
 //! Windows user, copies of their files in a temporary folder (the browsers keep the
 //! originals locked), parsing and decryption on a worker thread, merging on the UI thread.
-//! Passwords need the Krunk vault set up and unlocked: a locked vault opens the unlock
-//! prompt and the import continues afterwards. Nothing secret is logged.
+//! Passwords and payment cards need the Krunk vault set up and unlocked: a locked vault opens
+//! the unlock prompt and the import continues afterwards. Nothing secret is logged.
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 
+use lb_core::import::cards::{self, ImportedCard};
 use lb_core::import::profiles::{self, Family, Profile};
 use lb_core::import::{chromium, csv, firefox, ImportError, Login, Unprotect, Visit};
 use lb_core::netscape::ImportNode;
@@ -52,6 +53,72 @@ struct Parsed {
     history: Option<Vec<Visit>>,
     bookmarks: Option<Vec<ImportNode>>,
     logins: Option<ParsedLogins>,
+    cards: Option<ParsedCards>,
+}
+
+/// Payment cards read, numbers protected by Chrome (app-bound), the records that could not be
+/// used by reason, and what the source holds (for the log; no numbers).
+struct ParsedCards {
+    cards: Vec<ImportedCard>,
+    app_bound: usize,
+    skipped: Vec<(String, usize)>,
+    source: String,
+    empty_because: Option<&'static str>,
+}
+
+impl ParsedCards {
+    fn from_read(read: cards::ReadCards, source: String, empty_because: Option<&'static str>) -> ParsedCards {
+        ParsedCards {
+            skipped: read.unreadable.iter().map(|(r, n)| (r.to_string(), *n)).collect(),
+            app_bound: read.app_bound,
+            cards: read.cards,
+            source,
+            empty_because,
+        }
+    }
+}
+
+/// Firefox's cards (`autofill-profiles.json`, read in place: Firefox replaces it whole on
+/// each write) with the OS key store key from Credential Manager.
+fn parse_firefox_cards(profile: &Profile) -> Result<ParsedCards, String> {
+    let json_path = profile.path.join(cards::FIREFOX_FILE);
+    let rust_store = profile.path.join(cards::FIREFOX_RUST_STORE).is_file();
+    let newer_store =
+        "Firefox keeps this profile's cards in its newer store (autofill.db), which Krunk cannot read yet";
+    if !json_path.is_file() {
+        let why = if rust_store { newer_store } else { "Firefox has no saved payment cards in this profile" };
+        return Ok(ParsedCards::from_read(
+            cards::ReadCards::default(),
+            format!("Firefox profile {}: no {}", profile.path.display(), cards::FIREFOX_FILE),
+            Some(why),
+        ));
+    }
+    let json = Zeroizing::new(
+        std::fs::read_to_string(&json_path).map_err(|e| format!("cannot read {}: {e}", cards::FIREFOX_FILE))?,
+    );
+    let (key, key_state) = match secure::read_generic_credential(cards::FIREFOX_KEY_LABEL) {
+        Ok(Some(k)) => {
+            let len = k.len();
+            (Some(k), format!("key found ({len} bytes)"))
+        }
+        Ok(None) => (None, "no key in Credential Manager".to_string()),
+        Err(e) => (None, format!("key not readable: {e}")),
+    };
+    let read = cards::read_firefox(&json, key.as_deref().map(Vec::as_slice)).map_err(|e| e.to_string())?;
+    let source = format!(
+        "Firefox profile {}: {} card(s) in {}, {}{}",
+        profile.path.display(),
+        read.entries,
+        cards::FIREFOX_FILE,
+        key_state,
+        if rust_store { ", autofill.db present" } else { "" }
+    );
+    let empty_because = (read.entries == 0).then_some(if rust_store {
+        newer_store
+    } else {
+        "Firefox has no saved payment cards in this profile"
+    });
+    Ok(ParsedCards::from_read(read, source, empty_because))
 }
 
 /// Logins read, rows protected by Chrome (app-bound), and the rows that could not be used by
@@ -94,7 +161,7 @@ fn copy_file(from: &Path, to: &Path, name: &str) -> Result<PathBuf, String> {
 fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, temp: &Path) -> Result<Parsed, String> {
     let wants = |t: &str| types.iter().any(|x| x == t);
     std::fs::create_dir_all(temp).map_err(|e| format!("cannot create a temporary folder: {e}"))?;
-    let mut parsed = Parsed { history: None, bookmarks: None, logins: None };
+    let mut parsed = Parsed { history: None, bookmarks: None, logins: None, cards: None };
     match profile.family {
         Family::Firefox => {
             if wants("history") || wants("bookmarks") {
@@ -142,6 +209,9 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                     detail,
                 });
             }
+            if wants("cards") {
+                parsed.cards = Some(parse_firefox_cards(profile)?);
+            }
         }
         _ => {
             if wants("history") {
@@ -153,11 +223,32 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
                     .map_err(|e| format!("cannot read Bookmarks: {e}"))?;
                 parsed.bookmarks = Some(chromium::read_bookmarks(&json).map_err(|e| e.to_string())?);
             }
-            if wants("passwords") {
+            let local_state_keys = || -> Result<chromium::LocalStateKeys, String> {
                 let user_data = profile.user_data.clone().ok_or("no User Data folder")?;
                 let state = std::fs::read_to_string(user_data.join("Local State"))
                     .map_err(|e| format!("cannot read Local State: {e}"))?;
-                let keys = chromium::local_state_keys(&state).map_err(|e| e.to_string())?;
+                chromium::local_state_keys(&state).map_err(|e| e.to_string())
+            };
+            if wants("cards") {
+                let keys = local_state_keys()?;
+                let read = if profile.path.join("Web Data").is_file() {
+                    let web_data = copy_file(&profile.path, temp, "Web Data")?;
+                    cards::read_chromium(&web_data, &keys, &PlainDpapi).map_err(|e| e.to_string())?
+                } else {
+                    cards::ReadCards::default()
+                };
+                let source = format!(
+                    "{} profile {}: {} card(s) in Web Data, {} app-bound",
+                    profile.family.name(),
+                    profile.path.display(),
+                    read.entries,
+                    read.app_bound
+                );
+                let empty_because = (read.entries == 0).then_some("no saved payment cards in this profile");
+                parsed.cards = Some(ParsedCards::from_read(read, source, empty_because));
+            }
+            if wants("passwords") {
+                let keys = local_state_keys()?;
                 let login_data = copy_file(&profile.path, temp, "Login Data")?;
                 let got = chromium::read_logins(&login_data, &keys, &PlainDpapi).map_err(|e| e.to_string())?;
                 let skipped =
@@ -176,8 +267,8 @@ fn parse_profile(profile: &Profile, types: &[String], primary_password: &str, te
     Ok(parsed)
 }
 
-/// Copies of other browsers' files (`key4.db`, `logins.json`, `Login Data`) left in the temp
-/// folder by an import that never finished (the browser ended during it) are removed at start
+/// Copies of other browsers' files (`key4.db`, `logins.json`, `Login Data`, `Web Data`) left in
+/// the temp folder by an import that never finished (the browser ended during it) are removed at start
 /// once they are an hour old (0.11.7, audit C14). A running import's folder is younger.
 pub(super) fn remove_stale_import_copies() {
     std::thread::spawn(|| {
@@ -218,6 +309,7 @@ impl Browser {
                     "hasHistory": p.has_history,
                     "hasBookmarks": p.has_bookmarks,
                     "hasPasswords": p.has_passwords,
+                    "hasCards": p.has_cards,
                 })
             })
             .collect();
@@ -276,13 +368,15 @@ impl Browser {
         types: Vec<String>,
         primary_password: Option<Secret>,
     ) {
-        let types: Vec<String> =
-            types.into_iter().filter(|t| matches!(t.as_str(), "history" | "bookmarks" | "passwords")).collect();
+        let types: Vec<String> = types
+            .into_iter()
+            .filter(|t| matches!(t.as_str(), "history" | "bookmarks" | "passwords" | "cards"))
+            .collect();
         if types.is_empty() {
             self.reply(tab, Event::err(req_id, "Choose what to import."));
             return;
         }
-        if types.iter().any(|t| t == "passwords") {
+        if types.iter().any(|t| t == "passwords" || t == "cards") {
             let request = Request::ImportRun {
                 profile: profile_id.clone(),
                 types: types.clone(),
@@ -367,6 +461,7 @@ impl Browser {
                     Vec::new()
                 },
             }),
+            cards: None,
         });
         self.reply(tab, Event::ok(req_id, result));
     }
@@ -447,6 +542,48 @@ impl Browser {
                         "passwords".into(),
                         serde_json::json!({ "imported": 0, "error": e, "appBound": app_bound }),
                     );
+                }
+            }
+        }
+        if let Some(ParsedCards { cards, app_bound, mut skipped, source, empty_because }) = parsed.cards {
+            let merged = match self.vaults.vault.borrow_mut().as_mut() {
+                Some(v) => v.import_cards(cards, now_ms(), &Dpapi).map_err(|e| e.to_string()),
+                None => Err("Krunk passwords are locked".to_string()),
+            };
+            match merged {
+                Ok(c) => {
+                    if c.invalid > 0 {
+                        skipped.push((cards::BAD_NUMBER.to_string(), c.invalid));
+                    }
+                    let total: usize = skipped.iter().map(|(_, n)| n).sum();
+                    let reasons: Vec<String> = skipped.iter().map(|(r, n)| format!("{r}: {n}")).collect();
+                    // Counts only: never a number, not even the last digits.
+                    info!(
+                        "import: cards {} added, {} updated, {} already there, {} skipped ({}), {} app-bound; {}",
+                        c.added,
+                        c.updated,
+                        c.duplicates,
+                        total,
+                        reasons.join(", "),
+                        app_bound,
+                        source
+                    );
+                    let why = (c.added + c.updated + c.duplicates == 0 && total == 0 && app_bound == 0)
+                        .then(|| empty_because.unwrap_or("no saved payment cards were found"));
+                    out.insert(
+                        "cards".into(),
+                        serde_json::json!({
+                            "imported": c.added, "updated": c.updated, "merged": c.duplicates, "skipped": total,
+                            "skippedReasons": skipped.iter().map(|(r, n)| serde_json::json!({ "reason": r, "count": n })).collect::<Vec<_>>(),
+                            "appBound": app_bound,
+                            "why": why,
+                        }),
+                    );
+                    self.touch_vault();
+                }
+                Err(e) => {
+                    warning!("import: cards failed: {e}");
+                    out.insert("cards".into(), serde_json::json!({ "imported": 0, "error": e, "appBound": app_bound }));
                 }
             }
         }
