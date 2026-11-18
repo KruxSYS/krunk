@@ -9,10 +9,10 @@
 //! does the work; nothing here is `unsafe`.
 
 use crate::log::{info, warning};
-use hickory_proto::op::Message;
-use hickory_proto::runtime::{TokioRuntimeProvider, TokioTime};
+use hickory_net::runtime::TokioRuntimeProvider;
+use hickory_net::xfer::{DnsExchange as Exchange, DnsHandle, DnsMultiplexer, DnsRequestSender, FirstAnswer};
+use hickory_proto::op::{DnsRequest, DnsRequestOptions, Message};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-use hickory_proto::xfer::{DnsExchange, DnsHandle, DnsMultiplexer, DnsRequest, DnsRequestOptions, FirstAnswer};
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::{Request, Response, StatusCode};
@@ -84,6 +84,9 @@ struct Stat {
     last_ms: AtomicU64,
     last_error: Mutex<String>,
 }
+
+/// A connection to one resolver (0.26: the exchange is generic over the runtime).
+type DnsExchange = Exchange<TokioRuntimeProvider>;
 
 struct Shared {
     config: watch::Receiver<Arc<Vec<Resolver>>>,
@@ -282,19 +285,19 @@ async fn query_one(shared: &Arc<Shared>, index: usize, r: &Resolver, query: &[u8
             }
         };
         let msg = Message::from_bytes(query).map_err(|e| format!("bad query: {e}"))?;
-        let id = msg.id();
+        let id = msg.metadata.id;
         let request = DnsRequest::new(msg, DnsRequestOptions::default());
         // A page start fires dozens of queries at once; a connection takes 32 in flight and
         // says "busy" for the rest, which just wait a moment (the 2 s budget still applies).
         let response = loop {
             match exchange.send(request.clone()).first_answer().await {
                 Ok(r) => break r,
-                Err(e) if e.is_busy() => tokio::time::sleep(Duration::from_millis(20)).await,
+                Err(hickory_net::NetError::Busy) => tokio::time::sleep(Duration::from_millis(20)).await,
                 Err(e) => return Err(e.to_string()),
             }
         };
         let mut answer = response.into_message();
-        answer.set_id(id);
+        answer.metadata.id = id;
         answer.to_bytes().map_err(|e| e.to_string())
     })
     .await
@@ -341,78 +344,59 @@ async fn connect(shared: &Arc<Shared>, r: &Resolver) -> Result<DnsExchange, Stri
     let name = r.server_name().unwrap_or_else(|| addr.ip().to_string());
     let provider = TokioRuntimeProvider::new();
     let timeout = Duration::from_millis(RESOLVER_TIMEOUT_MS);
-    let (exchange, background): (DnsExchange, tokio::task::JoinHandle<()>) = match r.kind {
+    let err = |e: hickory_net::NetError| e.to_string();
+    match r.kind {
         Kind::Udp => {
-            let conn = hickory_proto::udp::UdpClientStream::builder(addr, provider).with_timeout(Some(timeout)).build();
-            let (e, bg) = DnsExchange::connect::<_, _, TokioTime>(conn).await.map_err(|e| e.to_string())?;
-            (
-                e,
-                tokio::spawn(async move {
-                    let _ = bg.await;
-                }),
-            )
+            let conn = hickory_net::udp::UdpClientStream::builder(addr, provider).with_timeout(Some(timeout)).build();
+            Ok(spawn_exchange(conn))
         }
         Kind::Tcp => {
-            let (stream, handle) = hickory_proto::tcp::TcpClientStream::new(addr, None, Some(timeout), provider);
-            let mp = DnsMultiplexer::with_timeout(stream, handle, timeout, None);
-            let (e, bg) = DnsExchange::connect::<_, _, TokioTime>(mp).await.map_err(|e| e.to_string())?;
-            (
-                e,
-                tokio::spawn(async move {
-                    let _ = bg.await;
-                }),
-            )
+            let (stream, handle) = hickory_net::tcp::TcpClientStream::new(addr, None, Some(timeout), provider);
+            let mp = DnsMultiplexer::new(stream.await.map_err(err)?, handle).with_timeout(timeout);
+            Ok(spawn_exchange(mp))
         }
         Kind::Tls => {
-            let (stream, handle) = hickory_proto::rustls::tls_client_connect(addr, name, shared.tls.clone(), provider);
-            let mp = DnsMultiplexer::with_timeout(stream, handle, timeout, None);
-            let (e, bg) = DnsExchange::connect::<_, _, TokioTime>(mp).await.map_err(|e| e.to_string())?;
-            (
-                e,
-                tokio::spawn(async move {
-                    let _ = bg.await;
-                }),
-            )
+            let server_name = rustls::pki_types::ServerName::try_from(name).map_err(|e| e.to_string())?;
+            let (stream, handle) =
+                hickory_net::tls::tls_client_connect(addr, server_name, shared.tls.clone(), provider);
+            let mp = DnsMultiplexer::new(stream.await.map_err(err)?, handle).with_timeout(timeout);
+            Ok(spawn_exchange(mp))
         }
         Kind::Https => {
-            let conn = hickory_proto::h2::HttpsClientStreamBuilder::with_client_config(shared.tls.clone(), provider)
-                .build(addr, name, r.path.clone());
-            let (e, bg) = DnsExchange::connect::<_, _, TokioTime>(conn).await.map_err(|e| e.to_string())?;
-            (
-                e,
-                tokio::spawn(async move {
-                    let _ = bg.await;
-                }),
-            )
+            let conn = hickory_net::h2::HttpsClientStream::builder(shared.tls.clone(), provider)
+                .build(addr, name.into(), r.path.as_str().into())
+                .await
+                .map_err(err)?;
+            Ok(spawn_exchange(conn))
         }
         Kind::Quic => {
-            let mut b = hickory_proto::quic::QuicClientStream::builder();
-            b.crypto_config((*shared.tls).clone());
-            let conn = b.build(addr, name);
-            let (e, bg) = DnsExchange::connect::<_, _, TokioTime>(conn).await.map_err(|e| e.to_string())?;
-            (
-                e,
-                tokio::spawn(async move {
-                    let _ = bg.await;
-                }),
-            )
+            let conn = hickory_net::quic::QuicClientStream::builder()
+                .crypto_config((*shared.tls).clone())
+                .build(addr, name.into())
+                .await
+                .map_err(err)?;
+            Ok(spawn_exchange(conn))
         }
         Kind::H3 => {
-            let mut b = hickory_proto::h3::H3ClientStream::builder();
-            b.crypto_config((*shared.tls).clone());
-            let conn = b.build(addr, name, r.path.clone());
-            let (e, bg) = DnsExchange::connect::<_, _, TokioTime>(conn).await.map_err(|e| e.to_string())?;
-            (
-                e,
-                tokio::spawn(async move {
-                    let _ = bg.await;
-                }),
-            )
+            let conn = hickory_net::h3::H3ClientStream::builder()
+                .crypto_config((*shared.tls).clone())
+                .build(addr, name.into(), r.path.as_str().into())
+                .await
+                .map_err(err)?;
+            Ok(spawn_exchange(conn))
         }
-        Kind::DnsCrypt => return Err("DNSCrypt is not supported".into()),
-    };
-    drop(background);
-    Ok(exchange)
+        Kind::DnsCrypt => Err("DNSCrypt is not supported".into()),
+    }
+}
+
+/// Wraps a connected stream in an exchange; its I/O task runs detached on the runtime and
+/// ends when the last handle is dropped.
+fn spawn_exchange<S: DnsRequestSender>(stream: S) -> DnsExchange {
+    let (exchange, background) = DnsExchange::from_stream(stream);
+    tokio::spawn(async move {
+        let _ = background.await;
+    });
+    exchange
 }
 
 /// Runs a resolver test off the UI thread.
@@ -432,15 +416,12 @@ impl Tester {
             }
             let list = shared.config.borrow().clone();
             let r = list.get(index).ok_or("No such resolver")?.clone();
-            let mut q = Message::new();
-            q.set_id(0x4b52)
-                .set_message_type(hickory_proto::op::MessageType::Query)
-                .set_op_code(hickory_proto::op::OpCode::Query)
-                .set_recursion_desired(true)
-                .add_query(hickory_proto::op::Query::query(
-                    hickory_proto::rr::Name::from_ascii("example.com.").map_err(|e| e.to_string())?,
-                    hickory_proto::rr::RecordType::A,
-                ));
+            let mut q = Message::new(0x4b52, hickory_proto::op::MessageType::Query, hickory_proto::op::OpCode::Query);
+            q.metadata.recursion_desired = true;
+            q.add_query(hickory_proto::op::Query::query(
+                hickory_proto::rr::Name::from_ascii("example.com.").map_err(|e| e.to_string())?,
+                hickory_proto::rr::RecordType::A,
+            ));
             let bytes = q.to_bytes().map_err(|e| e.to_string())?;
             shared.conns.lock().await.remove(&index);
             let t = Instant::now();
