@@ -625,7 +625,10 @@ mod tests {
             (mono.shape, mono.highlight, mono.toolbar_fill),
             (ThemeShape::Square, ThemeHighlight::Underline, ToolbarFill::Solid)
         );
-        assert_eq!((t("neon", false).shape, t("neon", false).highlight), (ThemeShape::Rounded, ThemeHighlight::Outline));
+        assert_eq!(
+            (t("neon", false).shape, t("neon", false).highlight),
+            (ThemeShape::Rounded, ThemeHighlight::Outline)
+        );
     }
 
     #[test]

@@ -129,7 +129,10 @@ fn resolve_host(host: &str) -> Result<Vec<IpAddr>, String> {
 fn resolve_name(host: &str) -> Result<Vec<IpAddr>, String> {
     use std::net::ToSocketAddrs;
     let mut addresses: Vec<IpAddr> = Vec::new();
-    for address in (host, 0u16).to_socket_addrs().map_err(|error| error.to_string())? {
+    for address in (host, 0u16)
+        .to_socket_addrs()
+        .map_err(|error| error.to_string())?
+    {
         if !addresses.contains(&address.ip()) {
             addresses.push(address.ip());
         }

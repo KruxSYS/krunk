@@ -174,7 +174,11 @@ static KEYS: &[Key] = &[
         note: "suggestions from the search engine while typing (0.15.0)",
     },
     Key { path: "tabSleepMinutes", kind: Kind::Int(0, 1440), note: "0 = never" },
-    Key { path: "keepMediaTabsAwake", kind: Kind::Bool, note: "tabs with playing media (also muted) are not put to sleep" },
+    Key {
+        path: "keepMediaTabsAwake",
+        kind: Kind::Bool,
+        note: "tabs with playing media (also muted) are not put to sleep",
+    },
     Key { path: "tabDiscardEnabled", kind: Kind::Bool, note: "unload background tabs" },
     Key { path: "tabDiscardMinutes", kind: Kind::Int(1, 1440), note: "must be longer than tabSleepMinutes" },
     Key { path: "tabHoverPreview", kind: Kind::Bool, note: "a preview card when the pointer rests on a tab (0.15.0)" },

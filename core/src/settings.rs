@@ -1974,8 +1974,12 @@ mod tests {
         assert_eq!((old.search_engine, old.homepage.as_str()), (SearchEngine::Google, "https://www.google.com/"));
         assert_eq!(old.defaults_version, DEFAULTS_VERSION);
         // Other choices stay.
-        let other = Settings::from_json_lenient(r#"{"searchEngine":"brave","homepage":"https://duckduckgo.com/?ia=web"}"#);
-        assert_eq!((other.search_engine, other.homepage.as_str()), (SearchEngine::Brave, "https://duckduckgo.com/?ia=web"));
+        let other =
+            Settings::from_json_lenient(r#"{"searchEngine":"brave","homepage":"https://duckduckgo.com/?ia=web"}"#);
+        assert_eq!(
+            (other.search_engine, other.homepage.as_str()),
+            (SearchEngine::Brave, "https://duckduckgo.com/?ia=web")
+        );
         // An empty old file had the old defaults.
         assert_eq!(Settings::from_json_lenient("{}").search_engine, SearchEngine::Google);
         // DuckDuckGo chosen after the migration is kept.

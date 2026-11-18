@@ -1309,7 +1309,11 @@ impl Engine {
                 // Fetched before the other device added its copy: fetch again next time.
                 self.escrow = None;
             }
-            if vault { vault_err(&e) } else { sync_err(&e) }
+            if vault {
+                vault_err(&e)
+            } else {
+                sync_err(&e)
+            }
         })?;
         self.escrow = None;
         self.sync = Some(st);

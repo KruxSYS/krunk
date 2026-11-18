@@ -433,16 +433,8 @@ pub fn set_vault_root(api: &Api, st: &mut SyncState, pak: &mut keys::PakState, v
     if dir::hash(&ak_blob.bytes) != ak.hash || dir::hash(&pak_blob.bytes) != pak.pak.hash {
         return Err(SyncFail::BadAnswer("the keys changed: refresh first"));
     }
-    let (c, (ak_seq, ak_hash), (pak_seq, pak_hash), esc_pk, rr_gen) = keys::new_root_commit(
-        acc,
-        &ak,
-        &pak.pak,
-        &ak_blob,
-        &pak_blob,
-        vault_pw,
-        &st.device_id,
-        api.now_ms as u64,
-    )?;
+    let (c, (ak_seq, ak_hash), (pak_seq, pak_hash), esc_pk, rr_gen) =
+        keys::new_root_commit(acc, &ak, &pak.pak, &ak_blob, &pak_blob, vault_pw, &st.device_id, api.now_ms as u64)?;
     commit(api, &c)?;
     if let Some(a) = st.ak.as_mut() {
         a.seq = ak_seq;
@@ -602,8 +594,7 @@ impl NApproval {
         struct Created {
             approval_id: String,
         }
-        let c: Created =
-            api.post("approvals", &json!({"commit_n": b64(&side.commit), "kind": keys::WANT_PAK}))?;
+        let c: Created = api.post("approvals", &json!({"commit_n": b64(&side.commit), "kind": keys::WANT_PAK}))?;
         Ok(NApproval { id: c.approval_id, side, agreed: None, box_a: None })
     }
 
