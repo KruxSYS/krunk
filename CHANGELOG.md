@@ -3,6 +3,30 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.25.0 — 2026-11-18
+
+- **Faster tab switching with many busy tabs.** With 40 busy tabs (heavy scripts, timers,
+  animations, video), Ctrl+Tab now shows the next tab in 18 ms typically and 60 ms in the slowest
+  5 % (was 130 / 162 ms), and no switch took half a second in any test run (the slowest switch
+  went from 577 ms to 344 ms). The tab you point at, the tab you just left and the next tab for
+  Ctrl+Tab are woken a moment ahead; a tab you haven't looked at for a while comes up as soon as
+  its page has drawn, instead of after a fixed wait.
+- **New tabs open at once.** Ctrl+T shows the new tab page in about 85 ms (was 280–350 ms, even
+  with one tab): Krunk keeps one new tab page ready in the background (it uses no CPU while it
+  waits, and follows your theme).
+- **Closing a tab is quicker:** closing a new tab or a tab opened from a link returns to the
+  previous tab in 20–50 ms (was 100–150 ms).
+- **Less work while you switch:** the tab preview picture is no longer taken at the moment you
+  switch away (it was competing with the new tab's first frame), plain switches send the tab strip
+  only the change, and background tabs use a little less CPU (40 busy tabs: 5.8 → 4.9 %).
+- **Known limits:** a click on a tab that has been in the background for a long time still waits
+  for that page to draw again (about 100–200 ms; much longer for very large pages on a PC without
+  graphics acceleration). A link that opens a new tab still shows the old page until the new page
+  has drawn its first content, so it never flashes white or black; that wait is the page's own
+  loading time.
+- **Security:** the DNS library behind custom DNS was updated (hickory 0.26.3) for published
+  security advisories.
+
 ## 0.24.2 — 2026-11-17
 
 - **Automatic Picture-in-Picture with two videos.** With Automatic Picture-in-Picture on and
