@@ -1,12 +1,14 @@
 //! Merging imported data into Krunk's own stores without duplicates: history by (url, visit
 //! time), bookmarks with the Netscape-import rules (same folder and URL), logins by origin
-//! and username (a different password updates the entry, the same one is already there).
+//! and username (a different password updates the entry, the same one is already there),
+//! payment cards by number (the same expiry is a duplicate, a later one updates it).
 
 use zeroize::Zeroizing;
 
+use super::cards::ImportedCard;
 use super::{Login, Visit};
 use crate::storage::{DbResult, Store};
-use crate::vault::{Entry, KeyWrapper, VResult, Vault, VaultError};
+use crate::vault::{Card, Entry, KeyWrapper, VResult, Vault, VaultError};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct VisitCounts {
@@ -22,6 +24,17 @@ pub struct LoginCounts {
     pub merged: usize,
     /// Not a login Krunk can keep (no web origin, no password, too long) — 0.7.0: counted
     /// apart from `merged`, which 0.6.0 reported as "already there" too.
+    pub invalid: usize,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct CardCounts {
+    pub added: usize,
+    /// A card with the same number got the later expiry date.
+    pub updated: usize,
+    /// The same number (with the same or an earlier expiry) is already in the vault.
+    pub duplicates: usize,
+    /// Not a card the vault keeps (number, expiry or text out of bounds).
     pub invalid: usize,
 }
 
@@ -84,6 +97,60 @@ impl Vault {
                         username: login.username,
                         password: login.password,
                         note: Zeroizing::new(login.note.chars().take(2048).collect()),
+                        created,
+                        updated: now,
+                    });
+                    counts.added += 1;
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.save(wrapper)?;
+        }
+        Ok(counts)
+    }
+
+    /// Merges payment cards: a new number is added; the same number with the same
+    /// expiry is a duplicate; the same number with a later expiry updates the stored card's
+    /// expiry (a renewed card), an earlier one is a duplicate too. Saves once at the end.
+    pub fn import_cards(
+        &mut self,
+        cards: Vec<ImportedCard>,
+        now: i64,
+        wrapper: &dyn KeyWrapper,
+    ) -> VResult<CardCounts> {
+        let mut counts = CardCounts::default();
+        let mut changed = false;
+        for card in cards {
+            if crate::vault::validate_card(&card.number, card.exp_month, card.exp_year, &card.name, &card.nickname, "")
+                .is_err()
+            {
+                counts.invalid += 1;
+                continue;
+            }
+            match self.cards.iter_mut().find(|c| *c.number == *card.number) {
+                Some(c) if (card.exp_year, card.exp_month) > (c.exp_year, c.exp_month) => {
+                    c.exp_year = card.exp_year;
+                    c.exp_month = card.exp_month;
+                    if c.name.is_empty() {
+                        c.name = card.name;
+                    }
+                    c.updated = now;
+                    counts.updated += 1;
+                    changed = true;
+                }
+                Some(_) => counts.duplicates += 1,
+                None => {
+                    let created = card.created_ms.filter(|t| *t > 0 && *t <= now).unwrap_or(now);
+                    self.cards.push(Card {
+                        id: crate::vault::random_id().map_err(|_| VaultError::InvalidEntry("id"))?,
+                        number: card.number,
+                        exp_month: card.exp_month,
+                        exp_year: card.exp_year,
+                        name: card.name,
+                        nickname: card.nickname,
+                        address: Zeroizing::new(String::new()),
                         created,
                         updated: now,
                     });
@@ -190,5 +257,42 @@ mod tests {
         let c2 =
             again.import_logins(vec![login("https://b.example/", "bob", "b")], 1_700_000_000_001, &NoWrap).unwrap();
         assert_eq!(c2, LoginCounts { added: 0, updated: 0, merged: 1, invalid: 0 });
+    }
+
+    #[test]
+    fn cards_merge_add_update_skip() {
+        use crate::import::cards::tests::card;
+        let dir = TestDir(std::env::temp_dir().join(format!("lb-import-cards-merge-{}", std::process::id())));
+        let _ = std::fs::remove_dir_all(&dir.0);
+        std::fs::create_dir_all(&dir.0).unwrap();
+        let path = dir.0.join("vault.json");
+        let mut v = Vault::create(&path, "correct horse battery", KdfParams::insecure_for_tests(), &NoWrap).unwrap();
+        v.save_card(None, Some(Zeroizing::new("4111111111111111".into())), 4, 2030, "", "Mine", None, 5, &NoWrap)
+            .unwrap();
+        let mut renewed = card("4111111111111111", 4, 2033);
+        renewed.created_ms = Some(9_999_999_999_999);
+        let mut fresh = card("5500000000000004", 1, 2031);
+        fresh.created_ms = Some(1_600_000_000_000);
+        let batch = vec![
+            card("4111111111111111", 4, 2030), // same number and expiry: duplicate
+            card("4111111111111111", 1, 2029), // an older expiry: duplicate
+            renewed,                           // a later expiry: update
+            fresh.clone(),                     // add
+            fresh,                             // twice in the batch: duplicate
+            card("4111111111111112", 1, 2031), // Luhn: invalid
+            card("378282246310005", 13, 2031), // month: invalid
+        ];
+        let c = v.import_cards(batch, 1_700_000_000_000, &NoWrap).unwrap();
+        assert_eq!(c, CardCounts { added: 1, updated: 1, duplicates: 3, invalid: 2 });
+        let s = v.card_summaries();
+        assert_eq!(s.len(), 2);
+        assert_eq!((s[0].exp_month, s[0].exp_year, s[0].name.as_str(), s[0].nickname.as_str()), (4, 2033, "A", "Mine"));
+        assert_eq!((s[1].last4.as_str(), s[1].brand.as_str()), ("0004", "Mastercard"));
+        assert_eq!(v.cards()[1].created, 1_600_000_000_000, "the source's time is kept");
+        // Reopened: persisted; a second import changes nothing (and does not save).
+        let mut again = Vault::open(&path, "correct horse battery", &NoWrap).unwrap();
+        assert_eq!(again.cards().len(), 2);
+        let c2 = again.import_cards(vec![card("5500000000000004", 1, 2031)], 1_700_000_000_001, &NoWrap).unwrap();
+        assert_eq!(c2, CardCounts { added: 0, updated: 0, duplicates: 1, invalid: 0 });
     }
 }

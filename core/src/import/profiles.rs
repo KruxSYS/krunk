@@ -59,6 +59,9 @@ pub struct Profile {
     pub has_passwords: bool,
     pub has_history: bool,
     pub has_bookmarks: bool,
+    /// Payment cards: Firefox `autofill-profiles.json` (or its newer `autofill.db`), Chromium
+    /// `Web Data`.
+    pub has_cards: bool,
 }
 
 /// Every profile of every supported browser under the two roots.
@@ -131,8 +134,8 @@ pub fn firefox_profiles(roaming: &Path) -> Vec<Profile> {
             }
         }
     }
-    // A profile without any of the three files has nothing to import.
-    out.retain(|p| p.has_history || p.has_bookmarks || p.has_passwords);
+    // A profile without any of the files has nothing to import.
+    out.retain(|p| p.has_history || p.has_bookmarks || p.has_passwords || p.has_cards);
     out
 }
 
@@ -181,7 +184,14 @@ fn profile(
         Family::Firefox => (path.join("logins.json"), path.join("places.sqlite"), path.join("places.sqlite")),
         _ => (path.join("Login Data"), path.join("History"), path.join("Bookmarks")),
     };
+    let has_cards = match family {
+        Family::Firefox => {
+            path.join(super::cards::FIREFOX_FILE).is_file() || path.join(super::cards::FIREFOX_RUST_STORE).is_file()
+        }
+        _ => path.join("Web Data").is_file(),
+    };
     Profile {
+        has_cards,
         id: format!("{}:{}", family.id(), key.rsplit('/').next().unwrap_or(key)),
         family,
         name,
@@ -227,15 +237,16 @@ mod tests {
         );
         t.file("roaming/Mozilla/Firefox/Profiles/abcd.default-release/logins.json", "{}");
         t.file("roaming/Mozilla/Firefox/Profiles/abcd.default-release/places.sqlite", "");
+        t.file("roaming/Mozilla/Firefox/Profiles/abcd.default-release/autofill-profiles.json", "{}");
         t.file("roaming/Mozilla/Firefox/Profiles/wxyz.default/places.sqlite", "");
         let got = firefox_profiles(&t.0.join("roaming"));
         assert_eq!(got.len(), 2, "{got:?}");
         let rel = got.iter().find(|p| p.name == "default-release").unwrap();
-        assert!(rel.is_default && rel.has_passwords && rel.has_history && rel.has_bookmarks);
+        assert!(rel.is_default && rel.has_passwords && rel.has_history && rel.has_bookmarks && rel.has_cards);
         assert_eq!(rel.id, "firefox:abcd.default-release");
         let old = got.iter().find(|p| p.name == "default").unwrap();
         assert!(!old.is_default, "the Install section's default wins over Default=1");
-        assert!(!old.has_passwords && old.has_history);
+        assert!(!old.has_passwords && old.has_history && !old.has_cards);
         assert!(detect(&t.0.join("roaming"), &t.0.join("local")).len() == 2);
         // A profile folder with none of the files is not listed.
         std::fs::remove_file(t.0.join("roaming/Mozilla/Firefox/Profiles/wxyz.default/places.sqlite")).unwrap();
@@ -251,6 +262,7 @@ mod tests {
         );
         t.file("local/Google/Chrome/User Data/Default/Login Data", "");
         t.file("local/Google/Chrome/User Data/Default/History", "");
+        t.file("local/Google/Chrome/User Data/Default/Web Data", "");
         t.file("local/Google/Chrome/User Data/Profile 1/Bookmarks", "{}");
         t.file("local/Microsoft/Edge/User Data/Local State", r#"{"profile":{}}"#);
         t.file("local/Microsoft/Edge/User Data/Default/History", "");
@@ -259,6 +271,7 @@ mod tests {
         assert_eq!(ids, ["chrome:Default", "chrome:Profile 1", "edge:Default"]);
         assert_eq!(got[0].name, "Person 1 (Default)");
         assert!(got[0].has_passwords && got[0].has_history && !got[0].has_bookmarks && !got[0].is_default);
+        assert!(got[0].has_cards && !got[1].has_cards);
         assert!(got[1].is_default && got[1].has_bookmarks);
         assert_eq!(got[1].family, Family::Chrome);
         assert_eq!(got[2].family.name(), "Microsoft Edge");

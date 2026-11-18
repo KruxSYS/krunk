@@ -952,7 +952,7 @@ pub enum Request {
     },
     /// Settings → Passwords & import: the browser profiles found on this computer.
     ImportDetect,
-    /// Import `types` ("history", "bookmarks", "passwords") from the profile `profile`
+    /// Import `types` ("history", "bookmarks", "passwords", "cards") from the profile `profile`
     /// (an id from `ImportDetect`), with the Firefox primary password if one is needed.
     ImportRun {
         profile: String,

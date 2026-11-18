@@ -1,4 +1,5 @@
-//! A Chromium-family profile (Chrome, Edge, Brave): `Login Data` (passwords), `History`,
+//! A Chromium-family profile (Chrome, Edge, Brave): `Login Data` (passwords), `Web Data`
+//! (payment cards, read in `super::cards` with the decryption here), `History`,
 //! `Bookmarks` (JSON) and the `Local State` of the "User Data" folder that holds the
 //! encryption key.
 //!
@@ -55,14 +56,7 @@ pub fn read_logins(
 ) -> Result<ChromiumLogins, ImportError> {
     let conn = open_readonly(login_data)?;
     let fmt = |e: rusqlite::Error| ImportError::Format(format!("Login Data: {e}"));
-    let aes_key: Option<Zeroizing<Vec<u8>>> = match &keys.dpapi_key_blob {
-        Some(blob) => Some(
-            unprotect
-                .unprotect(blob)
-                .map_err(|e| ImportError::Format(format!("the password key cannot be unprotected: {e}")))?,
-        ),
-        None => None,
-    };
+    let aes_key = unprotect_key(keys, unprotect)?;
     let mut stmt = conn
         .prepare(
             "SELECT origin_url, username_value, password_value, date_created FROM logins
@@ -78,31 +72,15 @@ pub fn read_logins(
     for row in rows {
         let (url, username, blob, created) = row.map_err(fmt)?;
         let blob = Zeroizing::new(blob);
-        let password = if blob.starts_with(b"v20") {
-            out.app_bound += 1;
-            continue;
-        } else if let Some(rest) = blob.strip_prefix(b"v10") {
-            let Some(key) = aes_key.as_deref() else {
+        let password = match decrypt_value(&blob, aes_key.as_deref().map(Vec::as_slice), unprotect) {
+            Decrypted::Plain(p) => p,
+            Decrypted::AppBound => {
+                out.app_bound += 1;
+                continue;
+            }
+            Decrypted::Unreadable => {
                 out.skipped += 1;
                 continue;
-            };
-            match decrypt_v10(key, rest) {
-                Some(p) => p,
-                None => {
-                    out.skipped += 1;
-                    continue;
-                }
-            }
-        } else if blob.is_empty() {
-            out.skipped += 1;
-            continue;
-        } else {
-            match unprotect.unprotect(&blob) {
-                Ok(p) => p,
-                Err(_) => {
-                    out.skipped += 1;
-                    continue;
-                }
             }
         };
         let Ok(password) = String::from_utf8(password.to_vec()).map(Zeroizing::new) else {
@@ -122,6 +100,49 @@ pub fn read_logins(
         });
     }
     Ok(out)
+}
+
+/// The profile's AES key: `Local State`'s DPAPI blob unprotected (`None` without one).
+pub(crate) fn unprotect_key(
+    keys: &LocalStateKeys,
+    unprotect: &dyn Unprotect,
+) -> Result<Option<Zeroizing<Vec<u8>>>, ImportError> {
+    match &keys.dpapi_key_blob {
+        Some(blob) => unprotect
+            .unprotect(blob)
+            .map(Some)
+            .map_err(|e| ImportError::Format(format!("the password key cannot be unprotected: {e}"))),
+        None => Ok(None),
+    }
+}
+
+/// One value `os_crypt` encrypted (passwords in `Login Data`, card numbers in `Web Data`).
+pub(crate) enum Decrypted {
+    Plain(Zeroizing<Vec<u8>>),
+    /// A `v20` blob: app-bound, readable only through the browser's own elevated service.
+    AppBound,
+    /// Empty, or it would not decrypt (no key, another key, a damaged blob).
+    Unreadable,
+}
+
+/// Decrypts one `os_crypt` value: `v10` + 12-byte nonce + AES-256-GCM ciphertext and tag under
+/// `aes_key`; `v20` = app-bound; anything else = a legacy DPAPI blob of the value.
+pub(crate) fn decrypt_value(blob: &[u8], aes_key: Option<&[u8]>, unprotect: &dyn Unprotect) -> Decrypted {
+    if blob.starts_with(b"v20") {
+        Decrypted::AppBound
+    } else if let Some(rest) = blob.strip_prefix(b"v10") {
+        match aes_key.and_then(|key| decrypt_v10(key, rest)) {
+            Some(p) => Decrypted::Plain(p),
+            None => Decrypted::Unreadable,
+        }
+    } else if blob.is_empty() {
+        Decrypted::Unreadable
+    } else {
+        match unprotect.unprotect(blob) {
+            Ok(p) => Decrypted::Plain(p),
+            Err(_) => Decrypted::Unreadable,
+        }
+    }
 }
 
 fn decrypt_v10(key: &[u8], rest: &[u8]) -> Option<Zeroizing<Vec<u8>>> {
