@@ -1465,6 +1465,11 @@
     drafts.forEach(function (_, id) { if (!live.has(id)) drafts.delete(id); });
     renderTabs();
   });
+  // 0.25.0: a plain switch: only the active tab changed.
+  LB.on('tabActive', function (m) {
+    state.active = m.active;
+    renderTabs();
+  });
   // One tab changed (title, address, icon, loading, sound): only its node is patched, and the
   // strip's layout stays as it is (0.10.0).
   LB.on('tabUpdate', function (m) {

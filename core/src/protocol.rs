@@ -2774,6 +2774,10 @@ pub enum Event {
     TabUpdate {
         tab: TabInfo,
     },
+    /// 0.25.0: a plain tab switch: only the active tab changed (the list stays as it is).
+    TabActive {
+        active: u32,
+    },
     Nav {
         state: NavState,
     },
@@ -5401,6 +5405,7 @@ mod tests {
     fn events_round_trip_and_shape() {
         let j = Event::ok(Some(3), vec![1, 2]).to_json();
         assert_eq!(j, r#"{"event":"reply","reqId":3,"ok":true,"data":[1,2]}"#);
+        assert_eq!(Event::TabActive { active: 7 }.to_json(), r#"{"event":"tabActive","active":7}"#);
         assert_eq!(
             Event::FindResult { active: 1, total: 4 }.to_json(),
             r#"{"event":"findResult","active":1,"total":4}"#

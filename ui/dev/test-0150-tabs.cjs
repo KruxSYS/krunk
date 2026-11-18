@@ -99,6 +99,10 @@ module.exports = function ({ openPage, check, sent, lastSent, emit, shot }) {
       await page.waitForTimeout(60);
       await page.click('.tab[data-id="2"] .auth-badge');
       check((await lastSent(page, 'activateTab') || {}).id === 2, theme + ': a click on the badge activates the tab');
+      // 0.25.0: a plain switch comes as tabActive: the strip marks the new active tab.
+      await emit(page, { event: 'tabActive', active: 2 });
+      await page.waitForTimeout(60);
+      check(await page.locator('.tab[data-id="2"]').evaluate((n) => n.classList.contains('active')) && !(await page.locator('.tab[data-id="1"]').evaluate((n) => n.classList.contains('active'))), theme + ': tabActive moves the active mark');
       check(errors.length === 0, theme + ': no console errors (' + errors.join(' | ') + ')');
       await page.context().close();
     }

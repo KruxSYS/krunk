@@ -1045,6 +1045,18 @@ impl Browser {
         // 0.15.0: a closed tab whose window shows another tab next keeps its page on screen
         // until that one has painted (no black or blank frame between the two).
         let handed = lb_core::reveal::handed_over(&ops);
+        // 0.25.0: a plain switch (only activations) tells the shell the new active tab instead
+        // of sending every window its whole list.
+        let switched: Option<Vec<(WindowId, TabId)>> = (!ops.is_empty()
+            && ops.iter().all(|o| matches!(o, Op::Activate { .. })))
+        .then(|| {
+            ops.iter()
+                .filter_map(|o| match o {
+                    Op::Activate { win, to, .. } => Some((*win, *to)),
+                    _ => None,
+                })
+                .collect()
+        });
         for op in ops {
             match op {
                 Op::CreateWindow { win, bounds, maximized } => self.create_frame(win, bounds, maximized),
@@ -1057,7 +1069,15 @@ impl Browser {
             }
         }
         let t_tabs = crate::perf::now();
-        self.send_tabs();
+        match switched {
+            Some(wins) => {
+                for (win, to) in wins {
+                    self.post_shell_to(win, &Event::TabActive { active: to });
+                    self.refresh_tab_list(win);
+                }
+            }
+            None => self.send_tabs(),
+        }
         let t_nav = crate::perf::now();
         self.send_nav();
         if crate::perf::on() {
