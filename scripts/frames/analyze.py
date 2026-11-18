@@ -10,6 +10,8 @@
   analyze.py track  PATH --color RRGGBB [--tol N] [--box X,Y,W,H]  an object of one colour
   analyze.py white  PATH [--ymin Y] [--lum L] [--min N] [--sheet OUT.png]   white areas (resize)
   analyze.py addr   PATH                       the address bar's text and selection per frame
+  analyze.py switch PATH EVENTS.csv [--band Y0,Y1] [--tol N] [--out JSON]   input -> the target
+                                               tab's marker on screen (0.25.0 harness)
 
 flash: a frame is *white* when >= 98 % of its pixels are within 12 levels of one colour and that
 colour's luminance is >= 245. A run of at most --flash-frames (2) white frames between two
@@ -41,15 +43,33 @@ dark text samples (luminance < 100: typed or page text; the placeholder is light
 selection samples (the accent blue behind a selected completion). Reported: frames with text,
 and for a typing run, frames where the selection vanished after it first appeared.
 
+switch (0.25.0): the test pages paint a band in their tab's marker colour at the very top
+(vm-www/8094/marker.js, scripts/frames/markers.py). EVENTS.csv (the VM driver's) starts with
+`qpf,<freq>`, then one `qpc,kind,target` row per key or click (QPC of the key/button down; target
+= the marker index that should show, -1 = anything other than what was on screen). For each
+event: the time from it to the first frame (framecap's present time, on the same QPC time line
+via PATH.json's startQpc) whose band shows the target; for -1, whose band differs from the frame
+on screen at the event. An event whose target is already on screen is "already" (not timed); one
+whose target does not show before the next event (or the recording's end) is "missed". The band
+rows are found by themselves (rows that most often show a marker colour) or given with --band
+as recording rows (after --step) Y0,Y1 (Y1 exclusive). Printed: per kind count, median, p95 and
+max, every event >= 250 ms and every missed one; --out (default PATH.switch.json) gets it all,
+per event with what the band showed in between ("none" = no marker: a blank or loading page).
+
 bar: the bar's filled width per frame (columns where most pixels match the colour); reports
 backward moves and the largest jump.
 """
 import argparse
 import csv
 import json
+import os
+import re
 import sys
 
 import numpy as np
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import markers  # noqa: E402
 
 
 def load(path):
@@ -178,7 +198,225 @@ def cmd_selftest(a):
         ok = r["_bad"] == bad and r[key] == want
         failed += not ok
         print(("ok   " if ok else "FAIL ") + name + ("" if ok else " (%s=%s, bad=%s)" % (key, r[key], r["_bad"])))
+
+    # switch (0.25.0): frames of 8 rows x 16 columns, the band in rows 1-2, page content below.
+    def mframe(m, page=(240, 240, 240), partial=False):
+        f = np.full((8, 16, 3), page, dtype=np.uint8)
+        f[0] = (0x1F, 0x20, 0x23)               # the toolbar's edge above the page
+        if m is not None:
+            f[1:3] = markers.color(m)
+            if partial:
+                f[1:3, :4] = (250, 250, 250)    # a hover card over a quarter of the band
+        f[3:] = (np.arange(16)[None, :, None] * 13 + np.arange(5)[:, None, None] * 40) % 256
+        return f
+
+    seq = [3] * 10 + [None] * 3 + [5] * 6 + [5] * 4 + [7] * 6 + [None] * 6 + [9] * 3 + [70] * 6
+    frs = [mframe(m, partial=(i == 15)) for i, m in enumerate(seq)]
+    tms = np.arange(len(frs), dtype=float) * 20.0
+    evs = [(105.0, "switch", 5, 1), (370.0, "switch", 5, 2), (395.0, "click", 11, 3),
+           (470.0, "open", -1, 4), (590.0, "rapid", 9, 5), (690.0, "link", 70, 6)]
+    rep = switch_report(np.array(frs), tms, evs)
+    ev = rep["events"]
+    checks = [
+        ("switch: band rows found", rep["band_rows"] == [1, 3], rep["band_rows"]),
+        ("switch: latency to the target marker (blank frames between)", ev[0].get("latency_ms") == 155.0 and ev[0]["between"] == ["none"], ev[0]),
+        ("switch: hover card over part of the band still matches", rep["events"][0]["frame"] == 13, ev[0].get("frame")),
+        ("switch: target already on screen", ev[1]["status"] == "already", ev[1]["status"]),
+        ("switch: wrong tab shown -> missed, with what showed", ev[2]["status"] == "missed" and 7 in ev[2]["between"], ev[2]),
+        ("switch: -1 = anything different (a blank page)", ev[3].get("latency_ms") == 110.0, ev[3]),
+        ("switch: index past the palette wraps", ev[5]["status"] == "ok", ev[5]),
+        ("switch: target not shown before the next event -> missed", ev[4]["status"] == "missed", ev[4]),
+        ("switch: per-kind stats", rep["kinds"]["switch"]["timed"] == 1 and rep["kinds"]["click"]["missed"] == 1, rep["kinds"]),
+    ]
+    for name, ok, detail in checks + check_palette():
+        failed += not ok
+        print(("ok   " if ok else "FAIL ") + name + ("" if ok else " (%s)" % (detail,)))
     return 1 if failed else 0
+
+
+# ---------- switch (0.25.0): input -> the target tab's marker on screen ----------
+
+PAL = np.array(markers.PALETTE, dtype=int)
+
+
+def marker_of(region, tol):
+    """The marker index a band region shows (>= 60 % of its pixels within tol of one palette
+    colour), else None."""
+    flat = region.reshape(-1, 3).astype(int)
+    med = np.median(flat, axis=0)
+    d = np.abs(PAL - med).max(axis=1)
+    k = int(np.argmin(d))
+    if d[k] > tol:
+        return None
+    frac = (np.abs(flat - PAL[k]).max(axis=1) <= tol).mean()
+    return k if frac >= 0.6 else None
+
+
+def find_band(frames, tol):
+    """Rows (y0, y1) that most often show a marker colour across the recording."""
+    n, h = len(frames), frames.shape[1]
+    picks = np.linspace(0, n - 1, min(n, 120)).astype(int) if n else []
+    hits = np.zeros(h)
+    for i in picks:
+        for y in range(h):
+            if marker_of(frames[i, y : y + 1], tol) is not None:
+                hits[y] += 1
+    if not hits.any():
+        return None
+    rows = np.nonzero(hits >= 0.5 * hits.max())[0]
+    # The longest run of consecutive rows among them.
+    best, start = (rows[0], rows[0]), rows[0]
+    for a, b in zip(rows, rows[1:]):
+        if b != a + 1:
+            start = b
+        if b - start > best[1] - best[0]:
+            best = (start, b)
+    return int(best[0]), int(best[1]) + 1
+
+
+def load_events(path):
+    """EVENTS.csv: `qpf,<freq>` (or `qpf=<freq>`), then `qpc,kind,target` rows (a header row is
+    skipped)."""
+    lines = [l.strip() for l in open(path, encoding="utf-8-sig") if l.strip()]
+    qpf = float(re.split(r"[,=]", lines[0])[1])
+    events = []
+    for l in lines[1:]:
+        p = [x.strip() for x in l.split(",")]
+        if len(p) < 3 or not p[0].lstrip("-").isdigit():
+            continue
+        events.append((int(p[0]), p[1], int(p[2])))
+    events.sort(key=lambda e: e[0])
+    return qpf, events
+
+
+def pct(v, k):
+    return round(float(np.percentile(v, k)), 1) if len(v) else None
+
+
+def switch_report(frames, times, events, band=None, tol=24, slow_ms=250.0):
+    """events: (ms on the recording's time line, kind, target, qpc). See the module doc."""
+    if band is None:
+        band = find_band(frames, tol)
+    if band is None:
+        return {"error": "no marker band found in the recording", "events": len(events)}
+    y0, y1 = band
+    K = len(PAL)
+    marks = [marker_of(fr[y0:y1], tol) for fr in frames]
+    sigs = [fr[y0:y1].reshape(-1, 3).astype(float).mean(axis=0) for fr in frames]
+    times = np.asarray(times, dtype=float)
+    rows = []
+    for n_, (te, kind, target, qpc) in enumerate(events):
+        t_next = events[n_ + 1][0] if n_ + 1 < len(events) else float("inf")
+        row = {"n": n_, "qpc": qpc, "ms": round(te, 1), "kind": kind, "target": target}
+        prior = int(np.searchsorted(times, te, side="right")) - 1
+        if prior < 0 or te > times[-1]:
+            row["status"] = "outside"
+            rows.append(row)
+            continue
+        before = marks[prior]
+        row["before"] = before
+        want = None if target < 0 else target % K
+        if want is not None and before == want:
+            row["status"] = "already"
+            rows.append(row)
+            continue
+        between, hit = [], None
+        for j in range(prior + 1, len(frames)):
+            if times[j] >= t_next:
+                break
+            mk = marks[j]
+            if want is not None:
+                ok = mk == want
+            else:
+                ok = mk != before or (mk is None and float(np.abs(sigs[j] - sigs[prior]).max()) > 20)
+            if ok:
+                hit = j
+                break
+            state = "none" if mk is None else mk
+            if (mk != before or mk is None) and (not between or between[-1] != state):
+                between.append(state)
+        row["between"] = between[:12]
+        if hit is None:
+            row["status"] = "missed"
+        else:
+            row["status"] = "ok"
+            row["latency_ms"] = round(float(times[hit] - te), 1)
+            row["frame"] = hit
+            row["seen"] = marks[hit]
+        rows.append(row)
+    kinds = {}
+    for r in rows:
+        k = kinds.setdefault(r["kind"], {"count": 0, "timed": 0, "missed": 0, "already": 0, "outside": 0, "_l": []})
+        k["count"] += 1
+        if r["status"] == "ok":
+            k["timed"] += 1
+            k["_l"].append(r["latency_ms"])
+        elif r["status"] in ("missed", "already", "outside"):
+            k[r["status"]] += 1
+    for k in kinds.values():
+        lat = k.pop("_l")
+        k.update({"median_ms": pct(lat, 50), "p95_ms": pct(lat, 95), "max_ms": round(max(lat), 1) if lat else None})
+    gaps = np.diff(times) if len(times) > 1 else np.array([0.0])
+    return {
+        "frames": int(len(frames)),
+        "band_rows": [y0, y1],
+        "median_frame_gap_ms": round(float(np.median(gaps)), 2),
+        "kinds": kinds,
+        "slow": [r for r in rows if r.get("latency_ms", 0) >= slow_ms],
+        "missed": [r for r in rows if r["status"] == "missed"],
+        "events": rows,
+    }
+
+
+def print_switch(rep):
+    if "error" in rep:
+        print(rep["error"])
+        return
+    print("band rows %s, %d frames, median frame gap %.1f ms" % (rep["band_rows"], rep["frames"], rep["median_frame_gap_ms"]))
+    print("%-12s %5s %5s %6s %7s %8s %8s %8s" % ("kind", "count", "timed", "missed", "already", "median", "p95", "max"))
+    for kind, k in sorted(rep["kinds"].items()):
+        f = lambda v: "-" if v is None else "%.1f" % v  # noqa: E731
+        print("%-12s %5d %5d %6d %7d %8s %8s %8s" % (kind, k["count"], k["timed"], k["missed"], k["already"], f(k["median_ms"]), f(k["p95_ms"]), f(k["max_ms"])))
+    for title, key in (("events >= 250 ms", "slow"), ("missed events", "missed")):
+        if rep[key]:
+            print(title + ":")
+            for r in rep[key]:
+                print("  #%d %s target=%s at %.0f ms: %s (before=%s, between=%s)" % (
+                    r["n"], r["kind"], r["target"], r["ms"], r.get("latency_ms", "missed"), r.get("before"), r.get("between")))
+
+
+def cmd_switch(a):
+    meta, frames, times = load(a.path)
+    qpf, evs = load_events(a.events)
+    start, fq = meta.get("startQpc", 0), float(meta.get("qpf", qpf))
+    if abs(fq - qpf) > 1:
+        print("warning: different QPC frequencies (recording %s, events %s)" % (fq, qpf), file=sys.stderr)
+    events = [((q - start) / qpf * 1000.0, kind, target, q) for q, kind, target in evs]
+    band = tuple(int(v) for v in a.band.split(",")) if a.band else None
+    rep = switch_report(frames, times, events, band, a.tol)
+    rep = {"recording": a.path, "events_file": a.events, **rep}
+    print_switch(rep)
+    with open(a.out or a.path + ".switch.json", "w") as f:
+        json.dump(rep, f, indent=1)
+    return 0
+
+
+def check_palette():
+    """marker.js and markers.py hold the same palette, and it has the properties the analyser
+    relies on. Returns a list of (name, ok, detail)."""
+    js = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vm-www", "8094", "marker.js")
+    found = [tuple(int(h[k : k + 2], 16) for k in (0, 2, 4)) for h in re.findall(r"'#([0-9a-fA-F]{6})'", open(js).read())]
+    pal = [tuple(c) for c in markers.PALETTE]
+    out = [("marker.js palette == markers.py palette", found == pal, "%d vs %d colours" % (len(found), len(pal))),
+           ("at least 64 colours", len(pal) >= 64, str(len(pal)))]
+    close = [(i, j) for i in range(len(pal)) for j in range(i + 1, len(pal)) if max(abs(x - y) for x, y in zip(pal[i], pal[j])) < 40]
+    out.append(("every pair >= 40 levels apart in some channel", not close, str(close[:3])))
+    lums = [markers.lum(c) for c in pal]
+    out.append(("no near-black or near-white", min(lums) > 16 and max(lums) < 245, "%.0f..%.0f" % (min(lums), max(lums))))
+    bgs = [(0x1F, 0x20, 0x23), (0xF3, 0xF4, 0xF6)]
+    near = [c for c in pal for b in bgs if max(abs(x - y) for x, y in zip(c, b)) < 40]
+    out.append(("far from the theme backgrounds", not near, str(near[:3])))
+    return out
 
 
 def box_of(a, frames):
@@ -365,8 +603,11 @@ def cmd_addr(a):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("mode", choices=["flash", "motion", "bar", "track", "white", "addr", "selftest"])
+    p.add_argument("mode", choices=["flash", "motion", "bar", "track", "white", "addr", "switch", "selftest"])
     p.add_argument("path", nargs="?")
+    p.add_argument("events", nargs="?", help="switch: the driver's EVENTS.csv")
+    p.add_argument("--band", help="switch: band rows Y0,Y1 of the recording (after --step)")
+    p.add_argument("--out", help="switch: the JSON report (default PATH.switch.json)")
     p.add_argument("--sheet")
     p.add_argument("--box")
     p.add_argument("--color")
@@ -381,7 +622,9 @@ def main():
     a = p.parse_args()
     if a.mode != "selftest" and not a.path:
         p.error("PATH is required")
-    return {"selftest": cmd_selftest, "flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track, "white": cmd_white, "addr": cmd_addr}[a.mode](a)
+    if a.mode == "switch" and not a.events:
+        p.error("switch needs PATH and EVENTS.csv")
+    return {"selftest": cmd_selftest, "flash": cmd_flash, "motion": cmd_motion, "bar": cmd_bar, "track": cmd_track, "white": cmd_white, "addr": cmd_addr, "switch": cmd_switch}[a.mode](a)
 
 
 if __name__ == "__main__":

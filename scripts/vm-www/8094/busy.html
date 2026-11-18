@@ -71,5 +71,7 @@ if (q.get('churn') === '1') {
 addEventListener('focus', () => fetch('/m?' + encodeURIComponent(`${tag} focus at=${Date.now()}`)).catch(() => {}));
 document.addEventListener('visibilitychange', () => fetch('/m?' + encodeURIComponent(`${tag} visibility=${document.visibilityState} at=${Date.now()}`)).catch(() => {}));
 </script>
+<!-- 0.25.0: ?m=<index> paints the tab marker band (marker.js). -->
+<script src="marker.js"></script>
 </body>
 </html>

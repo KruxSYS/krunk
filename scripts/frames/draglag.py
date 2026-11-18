@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """How a dragged window follows the mouse (Krunk 0.11.1, scripts/vm-0111-drag.ps1 part 1).
 
-  draglag.py PATH MOVES.csv [--color 00d0a0] [--tol 30]
+  draglag.py PATH MOVES.csv [--color 00d0a0 | --marker K] [--tol 30]
 
 PATH is a framecap recording (PATH.raw/.csv/.json; the .json has the recording's start QPC);
 MOVES.csv the driver's moves (QPC time, screen x, y; the first line names the QPC frequency).
 The window's page shows a square of one colour; its centre per frame is the window's place.
+0.25.0: --marker K follows a test page's tab marker band instead (vm-www/8094/marker.js; the
+band's centre moves with the window just as the square does).
 The moves come in two runs: the tear-off (straight down) and the run at constant speed.
 
 Reported:
@@ -18,7 +20,9 @@ Reported:
 """
 import argparse
 import json
+import os
 import statistics as st
+import sys
 
 import numpy as np
 
@@ -38,8 +42,13 @@ def main():
     ap.add_argument("path")
     ap.add_argument("moves")
     ap.add_argument("--color", default="00d0a0")
+    ap.add_argument("--marker", type=int, help="the colour of tab marker K (markers.py)")
     ap.add_argument("--tol", type=int, default=30)
     a = ap.parse_args()
+    if a.marker is not None:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import markers
+        a.color = markers.hexcolor(a.marker)
     meta, frames, times = load(a.path)
     step = meta["step"]
     color = np.array([int(a.color[k : k + 2], 16) for k in (0, 2, 4)])
