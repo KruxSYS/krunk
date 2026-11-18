@@ -1047,16 +1047,15 @@ impl Browser {
         let handed = lb_core::reveal::handed_over(&ops);
         // 0.25.0: a plain switch (only activations) tells the shell the new active tab instead
         // of sending every window its whole list.
-        let switched: Option<Vec<(WindowId, TabId)>> = (!ops.is_empty()
-            && ops.iter().all(|o| matches!(o, Op::Activate { .. })))
-        .then(|| {
-            ops.iter()
-                .filter_map(|o| match o {
-                    Op::Activate { win, to, .. } => Some((*win, *to)),
-                    _ => None,
-                })
-                .collect()
-        });
+        let switched: Option<Vec<(WindowId, TabId)>> =
+            (!ops.is_empty() && ops.iter().all(|o| matches!(o, Op::Activate { .. }))).then(|| {
+                ops.iter()
+                    .filter_map(|o| match o {
+                        Op::Activate { win, to, .. } => Some((*win, *to)),
+                        _ => None,
+                    })
+                    .collect()
+            });
         for op in ops {
             match op {
                 Op::CreateWindow { win, bounds, maximized } => self.create_frame(win, bounds, maximized),
