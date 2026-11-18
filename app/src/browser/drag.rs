@@ -336,6 +336,7 @@ impl Browser {
             return;
         }
         d.last = (cx, cy);
+        let _done = super::TraceMove(crate::perf::now(), "drag_tick");
         let target = self.drop_target(cx, cy);
         if let Some(f) = self.frame(d.dragged) {
             if target.is_some() {

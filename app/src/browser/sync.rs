@@ -1059,7 +1059,10 @@ impl Browser {
             move |api| AApproval::respond(api, &item),
             move |b, r| match r {
                 Ok(a) => {
-                    info!("sync: answering a device that asks {}", if a.asked_pak { "for the passwords key" } else { "to join" });
+                    info!(
+                        "sync: answering a device that asks {}",
+                        if a.asked_pak { "for the passwords key" } else { "to join" }
+                    );
                     *b.sync.approving.borrow_mut() = Some((a, None, share));
                     b.push_sync();
                 }

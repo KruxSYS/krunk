@@ -1237,6 +1237,7 @@ impl Browser {
     pub(super) fn run_deferred(&self) {
         let tasks: Vec<Deferred> = self.deferred.borrow_mut().drain(..).collect();
         for t in tasks {
+            let _stall = crate::perf::Stall::new("deferred");
             t(self);
         }
     }

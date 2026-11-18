@@ -20,6 +20,8 @@ mod ffi;
 mod log;
 #[cfg(windows)]
 mod paths;
+#[cfg(windows)]
+mod perf;
 
 /// The browser process, after the engine's subprocess check: data folder,
 /// settings, then the engine and the browser window. Returns the exit code.
@@ -64,6 +66,9 @@ fn run() -> Result<i32, String> {
     let dirs = paths::DataDirs::resolve()?;
     // A second Krunk (it hands over to the running one) must not rotate that one's log away.
     log::init(&dirs.log_file(), !already_running);
+    if !already_running {
+        perf::init(&dirs.root().join("perf.log"));
+    }
     info!("Krunk {} starting, data dir {}", env!("CARGO_PKG_VERSION"), dirs.root().display());
     if let Some(m) = migration {
         info!("{m}");

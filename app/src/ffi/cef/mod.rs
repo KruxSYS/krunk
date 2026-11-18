@@ -30,9 +30,9 @@ pub use net::{NetRequest, NetVerdict, RequestPolicy};
 pub use scheme::InternalResponse;
 pub use scriptlets::set_scriptlets;
 pub use view::{
-    with_batched_moves, AuthChallenge, AuthResponder, AUTH_TIMEOUT_MS, CertErrorSeen, ClearKinds, DownloadControl, DownloadStart,
+    with_batched_moves, AuthChallenge, AuthResponder, CertErrorSeen, ClearKinds, DownloadControl, DownloadStart,
     DownloadStatus, DownloadUpdate, JsDialogRequest, JsDialogResponder, KeyPress, LoadingState, Menu, MessageSource,
-    NewWindow, OpenIn, Role, Scripts, View, ViewOptions,
+    NewWindow, OpenIn, Role, Scripts, View, ViewOptions, AUTH_TIMEOUT_MS,
 };
 
 use crate::log::{info, warning};
@@ -290,10 +290,8 @@ pub fn set_vpn_proxy(proxy: Option<(String, String)>, private_only: bool) -> boo
     let private = private.filter(|_| PRIVATE_READY.get());
     let mut contexts: Vec<RequestContext> = request_context_get_global_context().into_iter().collect();
     contexts.extend(private);
-    let ok = app::set_vpn_proxy(
-        proxy.map(|(server, bypass)| app::VpnProxy { server, bypass, private_only }),
-        &mut contexts,
-    );
+    let ok =
+        app::set_vpn_proxy(proxy.map(|(server, bypass)| app::VpnProxy { server, bypass, private_only }), &mut contexts);
     if ok {
         for ctx in &contexts {
             let mut done = ConnectionsClosed::new(if ctx.is_global() != 0 { "default" } else { "private" });
@@ -420,6 +418,7 @@ wrap_task! {
         fn execute(&self) {
             let f = self.f.borrow_mut().take();
             if let Some(f) = f {
+                let _stall = crate::perf::Stall::new("task");
                 f();
             }
         }
@@ -461,6 +460,7 @@ wrap_task! {
         fn execute(&self) {
             let f = self.f.lock().ok().and_then(|mut f| f.take());
             if let Some(f) = f {
+                let _stall = crate::perf::Stall::new("task_any");
                 f();
             }
         }

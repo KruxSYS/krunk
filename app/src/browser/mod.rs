@@ -411,6 +411,10 @@ pub struct Browser {
     /// 0.15.0: the views of closed tabs kept on screen until the next tab of their window has
     /// painted (`Reveals::keep`); they are no longer in `views`.
     kept_views: RefCell<HashMap<TabId, View>>,
+    /// 0.25.0 trace (`KRUNK_PERF_TRACE`): the input that starts a tab change, and the changes
+    /// under way (written out once the new tab is on top).
+    perf_input: Cell<Option<(&'static str, i64)>>,
+    perf_recs: RefCell<HashMap<TabId, lb_core::perftrace::Rec>>,
     /// The custom-DNS stub, once the settings asked for it.
     dns: RefCell<Option<crate::dns::Engine>>,
     /// Where the shell asked for the shield panel (it grows with its list from there).
@@ -560,6 +564,8 @@ impl Browser {
             engine_hints: RefCell::new(None),
             pending_reveal: RefCell::new(lb_core::reveal::Reveals::default()),
             kept_views: RefCell::new(HashMap::new()),
+            perf_input: Cell::new(None),
+            perf_recs: RefCell::new(HashMap::new()),
             dns: RefCell::new(None),
             bookmark_menu_at: Cell::new(None),
             adblock_source: Cell::new(None),
@@ -1019,6 +1025,7 @@ impl Browser {
     // ------------------------------------------------------------ effects
 
     fn apply(&self, ops: Vec<Op>) {
+        let t_apply = crate::perf::now();
         let mut exit = false;
         // 0.15.0: a closed tab whose window shows another tab next keeps its page on screen
         // until that one has painted (no black or blank frame between the two).
@@ -1034,8 +1041,13 @@ impl Browser {
                 Op::Exit => exit = true,
             }
         }
+        let t_tabs = crate::perf::now();
         self.send_tabs();
+        let t_nav = crate::perf::now();
         self.send_nav();
+        if crate::perf::on() {
+            self.perf_applied(t_apply, t_tabs, t_nav);
+        }
         // Saved a moment later (0.11.1): a tear-off or a drop doesn't wait for the database.
         // Exit saves right away.
         if exit {
@@ -1662,6 +1674,9 @@ impl Browser {
         if let Some(t) = self.tab_view(to) {
             t.set_visible(!self.frame(win).is_some_and(|f| f.window.is_minimized()));
         }
+        if crate::perf::on() {
+            self.perf_swapped(to);
+        }
         let Some(from) = from.filter(|f| *f != to) else { return };
         // The old page is hidden a moment later (0.7.3): the engine presents the new view's
         // first frame after it is shown (on a GPU that can be a frame late), and until then
@@ -1691,15 +1706,81 @@ impl Browser {
         });
     }
 
+    // ------------------------------------------------------------ 0.25.0 trace
+
+    /// `apply` is done: its timings go to the tab changes it started.
+    fn perf_applied(&self, t_apply: i64, t_tabs: i64, t_nav: i64) {
+        let end = crate::ffi::qpc();
+        let done: Vec<TabId> = {
+            let mut recs = self.perf_recs.borrow_mut();
+            for r in recs.values_mut().filter(|r| !r.applied) {
+                r.applied = true;
+                r.apply_ms = crate::perf::ms_between(t_apply, end);
+                r.send_tabs_ms = crate::perf::ms_between(t_tabs, t_nav);
+                r.send_nav_ms = crate::perf::ms_between(t_nav, end);
+            }
+            recs.iter().filter(|(_, r)| r.done()).map(|(t, _)| *t).collect()
+        };
+        for t in done {
+            self.perf_emit(t);
+        }
+    }
+
+    /// The signal that ends `id`'s wait came (the reveal follows after the settle frame).
+    fn perf_wait_end_kind(&self, id: TabId, kind: &'static str) {
+        if let Some(r) = self.perf_recs.borrow_mut().get_mut(&id).filter(|r| r.wait_end == "none") {
+            r.wait_end = kind;
+        }
+    }
+
+    /// `id`'s wait is over (`kind`: why, if no signal said so before).
+    fn perf_wait_end(&self, id: TabId, kind: Option<&'static str>) {
+        if !crate::perf::on() {
+            return;
+        }
+        if let Some(r) = self.perf_recs.borrow_mut().get_mut(&id) {
+            if let Some(k) = kind.filter(|_| r.wait_end == "none") {
+                r.wait_end = k;
+            }
+            if let Some(w) = r.wait_qpc {
+                r.wait_ms = crate::perf::ms_since(w);
+            }
+        }
+    }
+
+    fn perf_swapped(&self, to: TabId) {
+        let done = {
+            let mut recs = self.perf_recs.borrow_mut();
+            let Some(r) = recs.get_mut(&to) else { return };
+            r.swap_qpc = Some(crate::ffi::qpc());
+            r.done()
+        };
+        if done {
+            self.perf_emit(to);
+        }
+    }
+
+    fn perf_emit(&self, id: TabId) {
+        if let Some(r) = self.perf_recs.borrow_mut().remove(&id) {
+            crate::perf::line(&r.line());
+        }
+    }
+
     /// The tab a switch waited for has loaded (or waited long enough): swap the views now.
     fn reveal(&self, to: TabId) {
         let found = self.pending_reveal.borrow_mut().take(to);
+        if found.is_some() {
+            self.perf_wait_end(to, None);
+        }
         self.reveal_found(to, found);
     }
 
     /// The timeout of a switch to `to` (0.15.0: a timer of an earlier wait does nothing).
     fn reveal_due(&self, to: TabId) {
         let found = self.pending_reveal.borrow_mut().take_if_due(to, now_ms());
+        if found.is_some() {
+            self.perf_wait_end(to, Some("timeout"));
+        }
         self.reveal_found(to, found);
     }
 
@@ -1720,6 +1801,7 @@ impl Browser {
         if first && self.pending_reveal.borrow().is_waiting(id) {
             // A frame for the compositor to present the page's first paint.
             let weak = self.me.clone();
+            self.perf_wait_end_kind(id, "painted");
             crate::ffi::cef::post_ui_delayed(REVEAL_SETTLE_MS, move || {
                 if let Some(b) = weak.upgrade() {
                     b.reveal(id);
@@ -1742,6 +1824,7 @@ impl Browser {
             if b.pending_reveal.borrow().waiting_since(id) != Some(since) {
                 return;
             }
+            b.perf_wait_end_kind(id, "frames");
             crate::ffi::cef::post_ui_delayed(REVEAL_SETTLE_MS, move || {
                 if let Some(b) = weak.upgrade() {
                     b.reveal(id);
@@ -1751,6 +1834,23 @@ impl Browser {
     }
 
     fn activate_view(&self, win: WindowId, from: Option<TabId>, to: TabId) {
+        let t_act = crate::perf::now();
+        if crate::perf::on() {
+            let (kind, qpc_in) = match self.perf_input.take() {
+                Some((k, q)) => (k, Some(q)),
+                None => ("other", None),
+            };
+            // Changes never brought on top (a later switch took over) are written out unfinished.
+            let stale: Vec<lb_core::perftrace::Rec> = {
+                let mut recs = self.perf_recs.borrow_mut();
+                let ids: Vec<TabId> = recs.iter().filter(|(_, r)| r.applied).map(|(t, _)| *t).collect();
+                ids.iter().filter_map(|t| recs.remove(t)).collect()
+            };
+            for r in stale {
+                crate::perf::line(&r.line());
+            }
+            self.perf_recs.borrow_mut().insert(to, lb_core::perftrace::Rec::new(kind, to, qpc_in));
+        }
         // The tab left is still on screen: its hover-card picture now (0.15.0).
         if let Some(f) = from.filter(|f| *f != to) {
             self.preview_leaving(f);
@@ -1777,7 +1877,9 @@ impl Browser {
         // hiding first showed the frame's background for a moment, and the new view was sized
         // after it appeared.) A view that has not loaded once yet (a discarded tab coming back,
         // a new one) would show a blank frame first: the old page stays until it has.
+        let t_layout = crate::perf::now();
         self.layout();
+        let layout_ms = crate::perf::ms_since(t_layout);
         let old = from.filter(|f| *f != to && self.window_of(*f) == Some(win));
         let minimized = self.frame(win).is_some_and(|f| f.window.is_minimized());
         let ready = self.views.borrow().get(&to).is_some_and(|v| v.loaded_once.get());
@@ -1793,9 +1895,26 @@ impl Browser {
             v.set_visible(false);
         }
         let old = begin.shown.filter(|f| *f != to && self.on_screen_in(*f, win)).or(old);
+        if crate::perf::on() {
+            let path = if minimized {
+                "minimized"
+            } else if !ready {
+                "not_loaded"
+            } else if out_of_sight {
+                "out_of_sight"
+            } else {
+                "ready"
+            };
+            if let Some(r) = self.perf_recs.borrow_mut().get_mut(&to) {
+                r.path = path;
+            }
+        }
         match old.and_then(|f| self.screen_view(f).map(|v| (f, v))) {
             Some((f, above)) if (!ready || out_of_sight) && !minimized => {
                 self.pending_reveal.borrow_mut().wait(win, f, to, now_ms());
+                if let Some(r) = self.perf_recs.borrow_mut().get_mut(&to) {
+                    r.wait_qpc = Some(crate::perf::now());
+                }
                 // 0.15.0: the new page renders beneath the old one (shown to the engine, so it
                 // paints and is not throttled) and comes on top once it has painted.
                 if let Some(t) = self.tab_view(to) {
@@ -1820,12 +1939,20 @@ impl Browser {
         self.defer(move |b| b.show_hang_prompt(to));
         // A sign-in the tab waits for shows again with it (0.15.0), after the focus settled.
         self.http_auth_reshow_soon();
+        let t_layout2 = crate::perf::now();
         self.layout();
+        let layout_ms = layout_ms + crate::perf::ms_since(t_layout2);
         if self.cur_id() == Some(win) {
             self.focus_active();
         }
         self.update_title();
         self.send_devtools_state(win);
+        if crate::perf::on() {
+            if let Some(r) = self.perf_recs.borrow_mut().get_mut(&to) {
+                r.act_ms = crate::perf::ms_since(t_act);
+                r.layout_ms = layout_ms;
+            }
+        }
     }
 
     fn tab_view(&self, id: TabId) -> Option<View> {
@@ -2238,6 +2365,8 @@ impl Browser {
     /// Window `win` moved: popups and hints close, its views learn their new place, and the
     /// session saves later.
     fn frame_moved(&self, win: WindowId) {
+        let t = crate::perf::now();
+        let _done = TraceMove(t, "frame_moved");
         self.hide_popup();
         self.hide_status();
         self.hide_hint();
@@ -2353,6 +2482,9 @@ impl Browser {
         let win = self.window_of(opener)?;
         let window = self.frame(win)?.window;
         let private = self.tab(opener).is_some_and(|t| t.private);
+        if crate::perf::on() && nw.foreground {
+            self.perf_input.set(Some(("link", crate::perf::now())));
+        }
         let (id, effects) =
             self.ws.borrow_mut().open(win, &nw.url, private, Position::AfterOpener(opener), nw.foreground, now_ms())?;
         let (view, net) = self.new_tab_view(private);
@@ -2567,6 +2699,17 @@ impl Browser {
 
     fn run_command(&self, cmd: Command) {
         let now = now_ms();
+        if crate::perf::on() {
+            let kind = match cmd {
+                Command::NextTab | Command::PrevTab | Command::SelectTab(_) | Command::LastTab => Some("switch"),
+                Command::NewTab => Some("open"),
+                Command::CloseTab => Some("close"),
+                _ => None,
+            };
+            if let Some(k) = kind {
+                self.perf_input.set(Some((k, crate::perf::now())));
+            }
+        }
         match cmd {
             Command::ToggleAgent => self.toggle_agent(),
             Command::StopMacros => self.stop_macros("shortcut"),
@@ -2792,6 +2935,19 @@ impl Browser {
     fn dispatch(&self, sender: Sender, tab: Option<TabId>, env: Envelope) {
         let now = now_ms();
         let Envelope { req_id, request } = env;
+        let _stall =
+            crate::perf::Stall::named("req", || lb_core::perftrace::variant_name(&format!("{request:?}")).to_string());
+        if crate::perf::on() {
+            let kind = match &request {
+                Request::ActivateTab { .. } => Some("click"),
+                Request::NewTab { .. } => Some("open"),
+                Request::CloseTab { .. } => Some("close"),
+                _ => None,
+            };
+            if let Some(k) = kind {
+                self.perf_input.set(Some((k, crate::perf::now())));
+            }
+        }
         match request {
             Request::Ready => match sender {
                 Sender::Ext => {}
@@ -4266,4 +4422,15 @@ fn request_name(r: &Request) -> String {
         .ok()
         .and_then(|v| v.get("cmd").and_then(|c| c.as_str()).map(String::from))
         .unwrap_or_else(|| "?".into())
+}
+
+/// 0.25.0 trace: a window move's or drag step's handling time, written when it ends.
+pub(super) struct TraceMove(pub i64, pub &'static str);
+
+impl Drop for TraceMove {
+    fn drop(&mut self) {
+        if self.0 != 0 {
+            crate::perf::line(&lb_core::perftrace::move_line(self.0, self.1, crate::perf::ms_since(self.0)));
+        }
+    }
 }

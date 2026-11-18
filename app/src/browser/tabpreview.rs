@@ -211,7 +211,11 @@ impl Browser {
         // re-render the page on screen at the small size for a frame (seen on the VM). It is cut
         // and scaled on a job thread instead.
         let params = json!({ "format": "jpeg", "quality": CAPTURE_QUALITY, "optimizeForSpeed": true });
+        let sent = crate::perf::now();
         view.devtools_call("Page.captureScreenshot", &params, move |r| {
+            if sent != 0 {
+                crate::perf::line(&lb_core::perftrace::capture_line(sent, id, crate::perf::ms_since(sent)));
+            }
             let Some(b) = weak.upgrade() else { return };
             let Some(Value::String(data)) = r.ok().and_then(|mut v| v.get_mut("data").map(Value::take)) else {
                 return warning!("tab {id}: no hover-card picture (the page may be hidden already)");

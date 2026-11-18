@@ -69,7 +69,8 @@ impl Browser {
             // The last answer was refused: nothing to save.
             self.http_auth.answered.borrow_mut().take();
         }
-        let arrival = self.http_auth.tabs.borrow_mut().arrive(tab, origin, realm, Pending { responder, failed, at: now_ms() });
+        let arrival =
+            self.http_auth.tabs.borrow_mut().arrive(tab, origin, realm, Pending { responder, failed, at: now_ms() });
         match arrival {
             Arrival::Duplicate(p) => {
                 // The same challenge again while its dialog is open or waiting: one is enough.
@@ -248,7 +249,10 @@ impl Browser {
             let tabs: Vec<TabId> = t.tabs().collect();
             for tab in tabs {
                 // Oldest first: the queue of a tab is in arrival order.
-                while t.open(tab).is_some_and(|c| !c.payload.responder.is_live() || now - c.payload.at > AUTH_TIMEOUT_MS) {
+                while t
+                    .open(tab)
+                    .is_some_and(|c| !c.payload.responder.is_live() || now - c.payload.at > AUTH_TIMEOUT_MS)
+                {
                     if let Some(c) = t.take(tab) {
                         expired.push((tab, c.payload));
                     }

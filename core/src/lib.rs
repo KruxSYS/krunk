@@ -47,6 +47,7 @@ pub mod overlay;
 pub mod page_menu;
 pub mod pages;
 pub mod passgen;
+pub mod perftrace;
 pub mod permissions;
 pub mod pointer_lock;
 pub mod preprocess;

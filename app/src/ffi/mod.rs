@@ -19,3 +19,21 @@ pub mod procmem;
 pub mod scroll_lock;
 pub mod secure;
 pub mod window;
+
+/// The performance counter now, in ticks (0.25.0 trace).
+pub fn qpc() -> i64 {
+    use windows::Win32::System::Performance::QueryPerformanceCounter;
+    let mut now = 0i64;
+    // SAFETY: a plain query into a local.
+    let _ = unsafe { QueryPerformanceCounter(&mut now) };
+    now
+}
+
+/// The performance counter's ticks per second.
+pub fn qpf() -> i64 {
+    use windows::Win32::System::Performance::QueryPerformanceFrequency;
+    let mut f = 0i64;
+    // SAFETY: a plain query into a local.
+    let _ = unsafe { QueryPerformanceFrequency(&mut f) };
+    f.max(1)
+}

@@ -985,6 +985,7 @@ fn frame_thickness(hwnd: HWND) -> i32 {
 /// (Windows would draw classic buttons otherwise); returning `HTMAXBUTTON`
 /// is what gives the Windows 11 Snap Layouts flyout.
 extern "system" fn main_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let _stall = crate::perf::Stall::named("frame_wm", || format!("{msg:#x}"));
     use windows::Win32::UI::WindowsAndMessaging::{
         HTCLIENT, NCCALCSIZE_PARAMS, SC_KEYMENU, WM_NCCALCSIZE, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN,
         WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_SYSCOMMAND,
@@ -1730,6 +1731,7 @@ extern "system" fn ext_window_wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lpar
 }
 
 extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let _stall = crate::perf::Stall::named("wm", || format!("{msg:#x}"));
     let ev = events(hwnd);
     match msg {
         WM_SIZE => {
