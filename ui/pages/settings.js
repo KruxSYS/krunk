@@ -1220,6 +1220,8 @@
 
   // ---------- import (Passwords & import) ----------
   // Filled in by the host's import support; without it the section explains itself.
+  const IMPORT_TYPES = ['history', 'bookmarks', 'passwords', 'cards'];
+  const IMPORT_LABEL = { history: 'history', bookmarks: 'bookmarks', passwords: 'passwords', cards: 'payment cards' };
   function renderImportProfiles(profiles) {
     const box = $('import-profiles');
     box.textContent = '';
@@ -1229,9 +1231,9 @@
     }
     profiles.forEach(function (p) {
       // A type the profile has no file for is offered unchecked and greyed.
-      const has = { history: p.hasHistory !== false, bookmarks: p.hasBookmarks !== false, passwords: p.hasPasswords !== false };
-      const types = el('span', { class: 'types' }, ['history', 'bookmarks', 'passwords'].map((t) => el('label', { class: has[t] ? '' : 'off' }, [
-        el('input', { type: 'checkbox', checked: has[t], 'data-type': t }), t,
+      const has = { history: p.hasHistory !== false, bookmarks: p.hasBookmarks !== false, passwords: p.hasPasswords !== false, cards: p.hasCards !== false };
+      const types = el('span', { class: 'types' }, IMPORT_TYPES.map((t) => el('label', { class: has[t] ? '' : 'off' }, [
+        el('input', { type: 'checkbox', checked: has[t], 'data-type': t }), IMPORT_LABEL[t],
       ])));
       const pw = p.browser === 'firefox' ? el('input', { type: 'password', placeholder: 'Primary password (if set)', 'aria-label': 'Firefox primary password' }) : null;
       const btn = el('button', { class: 'btn', text: 'Import' });
@@ -1257,16 +1259,18 @@
     p.hidden = false;
     if (error) { p.textContent = 'Import failed: ' + error; return; }
     const parts = [];
-    ['history', 'bookmarks', 'passwords'].forEach(function (t) {
+    IMPORT_TYPES.forEach(function (t) {
       const c = r[t];
       if (!c) return;
-      if (c.error) { parts.push(t + ': failed (' + c.error + ')'); return; }
-      let s = t + ': ' + c.imported + ' imported';
+      const label = IMPORT_LABEL[t];
+      if (c.error) { parts.push(label + ': failed (' + c.error + ')'); return; }
+      let s = label + ': ' + c.imported + ' imported';
       if (c.updated) s += ', ' + c.updated + ' updated';
       if (c.merged) s += ', ' + c.merged + ' already there';
       // 0.7.0 (R25): why entries were skipped.
       if (c.skipped) s += ', ' + c.skipped + ' skipped' + (c.skippedReasons && c.skippedReasons.length ? ' (' + c.skippedReasons.map((x) => x.reason + ': ' + x.count).join(', ') + ')' : '');
-      if (c.appBound) s += ' (' + c.appBound + ' protected by Chrome, export a CSV for those)';
+      // Chrome has no card export: app-bound cards have to be added by hand.
+      if (c.appBound) s += t === 'cards' ? ' (' + c.appBound + ' protected by Chrome, add those by hand)' : ' (' + c.appBound + ' protected by Chrome, export a CSV for those)';
       // 0.7.2 (R12): a 0 always says why.
       if (c.why) s += ' (' + c.why + ')';
       // 0.7.4: the cipher and key sizes of fields that could not be decrypted (no secrets).

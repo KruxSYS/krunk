@@ -1,11 +1,13 @@
 //! Import from other browsers: Firefox (`places.sqlite`, `key4.db` + `logins.json`), the
-//! Chromium family (`History`, `Bookmarks`, `Login Data`) and password CSV files.
+//! Chromium family (`History`, `Bookmarks`, `Login Data`) and password CSV files; payment
+//! cards from Firefox (`autofill-profiles.json`) and the Chromium family (`Web Data`).
 //!
 //! Everything here is pure parsing and merging on files the host has already copied out of
 //! the other browser's profile (they are locked while it runs). Platform parts stay in the
 //! host: DPAPI (`Unprotect`), the profile roots and the temporary copies. No password is ever
 //! logged or printed; the login type redacts itself in `Debug`.
 
+pub mod cards;
 pub mod chromium;
 pub mod csv;
 pub mod firefox;

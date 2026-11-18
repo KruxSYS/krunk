@@ -434,7 +434,14 @@ fn card_aad(id: &str) -> Vec<u8> {
     v
 }
 
-fn validate_card(number: &str, exp_month: u8, exp_year: u16, name: &str, nickname: &str, address: &str) -> VResult<()> {
+pub(crate) fn validate_card(
+    number: &str,
+    exp_month: u8,
+    exp_year: u16,
+    name: &str,
+    nickname: &str,
+    address: &str,
+) -> VResult<()> {
     if normalize_card_number(number).as_deref() != Some(number) {
         return Err(VaultError::InvalidEntry("card number"));
     }
@@ -773,7 +780,7 @@ pub struct Vault {
     vk: Zeroizing<[u8; KEY_LEN]>,
     generation: u64,
     pub(crate) entries: Vec<Entry>,
-    cards: Vec<Card>,
+    pub(crate) cards: Vec<Card>,
     recovery: Option<RecoveryKey>,
     sync: Option<VaultSync>,
 }
