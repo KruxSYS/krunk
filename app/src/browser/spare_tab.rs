@@ -17,6 +17,8 @@ use lb_core::windows::WindowId;
 /// Timer (on the app window): make the pre-loaded new tab page.
 pub(super) const SPARE_TAB_TIMER: usize = 37;
 const PREPARE_AFTER_MS: u32 = 3000;
+/// After one was used: the next soon, so tabs opened one after another all get one.
+const PREPARE_AGAIN_MS: u32 = 500;
 const MAX_AGE_MS: i64 = 10 * 60 * 1000;
 
 pub(super) struct SpareTab {
@@ -31,11 +33,15 @@ pub(super) struct SpareTab {
 impl Browser {
     /// Makes the pre-loaded page a few seconds from now, if there is none.
     pub(super) fn spare_tab_schedule(&self) {
+        self.spare_tab_schedule_in(PREPARE_AFTER_MS);
+    }
+
+    fn spare_tab_schedule_in(&self, ms: u32) {
         if self.spare_tab.borrow().is_some() {
             return;
         }
         if let Some(app) = self.app() {
-            app.set_timer(SPARE_TAB_TIMER, PREPARE_AFTER_MS);
+            app.set_timer(SPARE_TAB_TIMER, ms);
         }
     }
 
@@ -53,7 +59,7 @@ impl Browser {
         let Some(frame) = self.cur() else { return };
         let id = self.ws.borrow_mut().reserve_tab_id();
         let url = Page::NewTab.url();
-        self.build_view(frame.id, frame.window, id, &url, false, false);
+        self.build_view(frame.id, frame.window, id, &url, false, false, true);
         if !self.views.borrow().contains_key(&id) {
             return;
         }
@@ -91,6 +97,7 @@ impl Browser {
     /// window of the tab; the tab switch that follows brings it on top.
     pub(super) fn spare_tab_adopted(&self, win: WindowId, id: TabId, active: bool) {
         let (Some(view), Some(frame)) = (self.tab_view(id), self.frame(win)) else { return };
+        view.allow_activation();
         let from = self.spare_tab_parent.take();
         if from != Some(win) && !view.reparent(frame.window.hwnd()) {
             crate::log::warning!("tab {id}: the new tab page made ahead could not move to window {win}");
@@ -102,7 +109,7 @@ impl Browser {
             self.layout();
         }
         self.send_nav();
-        self.spare_tab_schedule();
+        self.spare_tab_schedule_in(PREPARE_AGAIN_MS);
     }
 
     /// The spare's view is closed (it never became a tab).

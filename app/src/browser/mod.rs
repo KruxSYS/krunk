@@ -1211,11 +1211,23 @@ impl Browser {
             self.spare_tab_adopted(win, id, active);
             return;
         }
-        self.build_view(win, window, id, &url, private, active);
+        self.build_view(win, window, id, &url, private, active, false);
     }
 
     /// Makes, hooks and starts tab `id`'s view in `window` (its frame `win`).
-    fn build_view(&self, win: WindowId, window: Window, id: TabId, url: &str, private: bool, active: bool) {
+    /// `ahead`: the pre-loaded new tab page, made without taking the keyboard (the engine
+    /// activates a new browser's window; 0.11.1's spare frame had the same trap).
+    #[allow(clippy::too_many_arguments)]
+    fn build_view(
+        &self,
+        win: WindowId,
+        window: Window,
+        id: TabId,
+        url: &str,
+        private: bool,
+        active: bool,
+        ahead: bool,
+    ) {
         let url = url.to_string();
         let adopted = self.adopted.borrow_mut().remove(&id);
         let popup = adopted.is_some();
@@ -1254,7 +1266,9 @@ impl Browser {
             } else {
                 url.clone()
             };
-            if let Err(e) = view.start(window.hwnd(), &first) {
+            let started =
+                if ahead { view.start_inactive(window.hwnd(), &first) } else { view.start(window.hwnd(), &first) };
+            if let Err(e) = started {
                 warning!("tab {id}: {e}");
             }
         }
