@@ -1383,6 +1383,14 @@ async function testNewTabLongTitles(browser) {
   check(worst.length === 0, 'long titles at 800–2560 px and 100/125/150 %: no horizontal scrollbar, every tile inside the column, one tile width, at most 2 lines, the full title in the tooltip' + (worst.length ? ' (' + worst.join('; ') + ')' : ''));
 }
 
+// Since 63a2da7 a shortcut tile's Pin, Edit and Remove live in its ⋮ menu.
+async function tileMenu(page, n, label) {
+  const wrap = page.locator('.tile-wrap').nth(n);
+  await wrap.hover();
+  await wrap.locator('.tile-more').click();
+  await wrap.locator('.tile-menu-item', { hasText: label }).first().click();
+}
+
 async function testNewTab(browser) {
   console.log('new tab page');
   const tiles = [
@@ -1470,8 +1478,7 @@ async function testNewTab(browser) {
   check((await page.textContent('#tile-error')).includes('web address'), 'a refused address shows the host\'s message');
   await page.click('#tile-cancel');
   // Edit: the pencil on a tile.
-  await page.hover('.tile:not(.add) >> nth=0');
-  await page.click('.tile:not(.add) >> nth=0 >> .icon-btn[title=Edit]');
+  await tileMenu(page, 0, 'Edit');
   await page.waitForTimeout(40);
   await page.fill('#tile-name', 'Renamed');
   await page.click('#tile-save');
@@ -1509,15 +1516,15 @@ async function testNewTab(browser) {
   await page.waitForTimeout(150);
   await shot(page, 'newtab-tiles.png');
   await page.locator('.tile').nth(1).hover();
-  await page.locator('.tile').nth(1).locator('.pin').click();
+  await tileMenu(page, 1, 'Pin');
   const pin = await lastSent(page, 'pinSite');
   check(pin && pin.url === 'https://news.ycombinator.com/' && pin.title === 'Hacker News', 'pin sends pinSite{url,title}');
-  await page.locator('.tile').nth(2).hover();
-  await page.locator('.tile').nth(2).locator('.icon-btn[title="Remove"]').click();
+  await tileMenu(page, 2, 'Remove');
+  // Removal is sent once the 6-s Undo time has passed (63a2da7).
+  await page.waitForTimeout(6300);
   const hide = await lastSent(page, 'hideSite');
   check(hide && hide.url === 'https://en.wikipedia.org/wiki/Main_Page', 'remove sends hideSite{url}');
-  await page.locator('.tile').nth(0).hover();
-  await page.locator('.tile').nth(0).locator('.pin').click();
+  await tileMenu(page, 0, 'Unpin');
   check((await lastSent(page, 'unpinSite')).url === 'https://www.rust-lang.org/', 'unpin on a pinned tile');
   await page.fill('#q', 'weather');
   await page.keyboard.press('Enter');
