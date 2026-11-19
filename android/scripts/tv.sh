@@ -315,15 +315,13 @@ launcher)
   adb shell cmd package query-activities --brief -a android.intent.action.MAIN -c android.intent.category.LEANBACK_LAUNCHER | grep -q "$PKG/.MainActivity" &&
     pass "1 leanback launcher lists Krunk" || fail "1 not in the leanback launcher list"
   # The launcher's Apps tab: Krunk's banner in the Installed Apps row.
-  adb shell input keyevent HOME
+  # The launcher's own Apps view (its tabs move between launcher versions and boots).
+  adb shell am start -n com.google.android.tvlauncher/.appsview.AppsViewActivity >/dev/null
   sleep 20
-  KEY_PAUSE=3 key DPAD_UP DPAD_RIGHT DPAD_CENTER
-  sleep 15
   shot tv1-apps-row
   adb logcat -c
   # Open it from its tile: Down into the row, Right until the tile is Krunk's (by the
   # launcher's focus, read from the dump), Center. Falls back to the leanback intent.
-  key DPAD_DOWN
   for _ in 1 2 3 4 5 6; do
     if focused | grep -qi krunk; then break; fi
     KEY_PAUSE=2 key DPAD_RIGHT
