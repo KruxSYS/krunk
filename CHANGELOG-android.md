@@ -3,6 +3,14 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.11.1 — 2026-11-19
+
+- **Fingerprint unlock, offered right away.** After you make your password vault (in
+  Passwords, or when you turn on sync), Krunk asks whether you want to unlock it with your
+  fingerprint. **Use fingerprint** switches it on with one touch; **Not now** leaves it off,
+  and you can still switch it on later in Passwords › Settings. You only see the question when
+  your phone has a fingerprint set up.
+
 ## 0.11.0 — 2026-11-17
 
 - **Signed in to Krunk, signed in to the website.** While Krunk is signed in to your Krunk

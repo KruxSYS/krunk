@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.krunk.browser.R
+import org.krunk.browser.vault.BioAvailability
 import org.krunk.browser.vault.LockReason
 import org.krunk.browser.vault.VaultFailure
 import org.krunk.browser.vault.VaultItem
@@ -44,6 +45,9 @@ sealed class VaultDialog {
     data class ChangePassword(val error: VaultText? = null, val busy: Boolean = false) : VaultDialog()
 
     data object Settings : VaultDialog()
+
+    /** Right after the vault was made: "Unlock with your fingerprint?" Asked once. */
+    data object OfferBiometric : VaultDialog()
 
     /** KEY_LOST: the typed confirmation. [refused] after a wrong word. */
     data class ConfirmDestroy(val refused: Boolean = false, val busy: Boolean = false) : VaultDialog()
@@ -136,7 +140,20 @@ class VaultUiState(
         _model.update { it.copy(busy = true, createError = null) }
         scope.launch {
             val failure = failureOf { port.create(password) }
-            _model.update { it.copy(busy = false, createError = failure?.let(::failureText)) }
+            val offer = failure == null && offersBiometric(port.biometric)
+            _model.update {
+                it.copy(
+                    busy = false,
+                    createError = failure?.let(::failureText),
+                    dialog = if (offer &&
+                        port.state.value == VaultState.UNLOCKED
+                    ) {
+                        VaultDialog.OfferBiometric
+                    } else {
+                        it.dialog
+                    },
+                )
+            }
         }
     }
 
@@ -396,6 +413,13 @@ class VaultUiState(
         }
     }
 
+    /** "Use fingerprint" in the offer after creating the vault. */
+    fun acceptBiometricOffer(enable: suspend () -> Unit) {
+        if (_model.value.dialog != VaultDialog.OfferBiometric) return
+        _model.update { it.copy(dialog = null) }
+        setBiometric(true, enable)
+    }
+
     // ----- key lost -----
 
     fun askDestroy() {
@@ -438,3 +462,6 @@ class VaultUiState(
         const val REVEAL_MS = 30_000L
     }
 }
+
+/** Whether a just-made vault should ask to switch fingerprint unlock on. */
+fun offersBiometric(bio: BiometricPort): Boolean = bio.availability() == BioAvailability.AVAILABLE && !bio.enabled.value

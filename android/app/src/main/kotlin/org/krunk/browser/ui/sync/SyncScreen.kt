@@ -1,5 +1,6 @@
 package org.krunk.browser.ui.sync
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -59,8 +60,11 @@ import org.krunk.browser.sync.SyncController
 import org.krunk.browser.sync.sentence
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
+import org.krunk.browser.ui.vault.BiometricOfferDialog
 import org.krunk.browser.ui.vault.SecureVaultSurface
 import org.krunk.browser.ui.vault.VaultClipboard
+import org.krunk.browser.ui.vault.offersBiometric
+import org.krunk.browser.ui.vault.vaultPort
 import org.krunk.browser.vault.VaultFailure
 import org.krunk.browser.vault.VaultState
 import org.krunk.ffi.DeviceTabs
@@ -88,6 +92,10 @@ fun SyncScreen(vm: BrowserViewModel) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var secrets by remember { mutableStateOf<SetupSecretsText?>(null) }
+    // Set when the sync setup just made this phone's vault: "Unlock with your fingerprint?"
+    var offerBio by remember { mutableStateOf(false) }
+    val vaultPort = remember(app) { vaultPort(app) }
+    val activity = LocalActivity.current
 
     fun act(block: suspend () -> Result<*>) {
         if (busy) return
@@ -100,6 +108,17 @@ fun SyncScreen(vm: BrowserViewModel) {
     }
 
     LaunchedEffect(Unit) { sync.refresh() }
+
+    if (offerBio) {
+        BiometricOfferDialog(
+            onYes = {
+                offerBio = false
+                val a = activity ?: return@BiometricOfferDialog
+                scope.launch { runCatching { vaultPort.biometric.enable(a) } }
+            },
+            onNo = { offerBio = false },
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -152,7 +171,10 @@ fun SyncScreen(vm: BrowserViewModel) {
                 ) { pw ->
                     act {
                         openVaultWith(app, pw).fold(
-                            onSuccess = { sync.setupVault(pw).onSuccess { secrets = null } },
+                            onSuccess = { made ->
+                                if (made && offersBiometric(vaultPort.biometric)) offerBio = true
+                                sync.setupVault(pw).onSuccess { secrets = null }
+                            },
                             onFailure = { Result.failure<Unit>(it) },
                         )
                     }
@@ -168,7 +190,8 @@ fun SyncScreen(vm: BrowserViewModel) {
                     act {
                         // A phone vault with another password stays locked; sync still joins and
                         // the passwords come once the vault is opened with the PC's password.
-                        openVaultWith(app, pw)
+                        val made = openVaultWith(app, pw).getOrDefault(false)
+                        if (made && offersBiometric(vaultPort.biometric)) offerBio = true
                         sync.restoreVault(pw)
                     }
                 }
@@ -582,13 +605,22 @@ private fun VaultPasswordStep(
 
 /**
  * Opens this phone's vault with [pw], making it first when there is none, so the vault password
- * is the same here as on the other devices. A failure says why in plain words.
+ * is the same here as on the other devices. True when the vault was made just now. A failure
+ * says why in plain words.
  */
-private suspend fun openVaultWith(app: KrunkApp, pw: String): Result<Unit> = runCatching {
+private suspend fun openVaultWith(app: KrunkApp, pw: String): Result<Boolean> = runCatching {
     when (app.vault.state.value) {
-        VaultState.NONE -> app.vault.create(pw)
-        VaultState.LOCKED -> app.vault.unlock(pw)
-        VaultState.UNLOCKED, VaultState.KEY_LOST -> Unit
+        VaultState.NONE -> {
+            app.vault.create(pw)
+            true
+        }
+
+        VaultState.LOCKED -> {
+            app.vault.unlock(pw)
+            false
+        }
+
+        VaultState.UNLOCKED, VaultState.KEY_LOST -> false
     }
 }.recoverCatching { e ->
     throw IllegalStateException(

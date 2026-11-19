@@ -85,6 +85,28 @@ class VaultUiStateTest {
         assertTrue(f.model.items.isEmpty())
     }
 
+    @Test
+    fun aNewVaultOffersFingerprintUnlockAndYesSwitchesItOn() = runTest {
+        val f = fixture()
+        f.holder.create(PASSWORD, PASSWORD)
+        runCurrent()
+        assertEquals(VaultDialog.OfferBiometric, f.model.dialog)
+        f.holder.acceptBiometricOffer { f.port.biometric.enableNow() }
+        runCurrent()
+        assertNull(f.model.dialog)
+        assertTrue(f.port.biometric.enabled.value)
+    }
+
+    @Test
+    fun noFingerprintOfferWithoutAUsableSensor() = runTest {
+        val f = fixture()
+        f.port.biometric.available = BioAvailability.NONE_ENROLLED
+        f.holder.create(PASSWORD, PASSWORD)
+        runCurrent()
+        assertEquals(VaultState.UNLOCKED, f.model.vault)
+        assertNull(f.model.dialog)
+    }
+
     // ----- unlock -----
 
     @Test

@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -55,13 +56,45 @@ import org.krunk.browser.vault.VaultState
 internal fun VaultDialogHost(holder: VaultUiState, port: VaultPort, dialog: VaultDialog?) {
     when (dialog) {
         null -> Unit
+
         is VaultDialog.Entry -> EntryDialog(holder, dialog)
+
         is VaultDialog.Editor -> EditorDialog(holder, dialog)
+
         is VaultDialog.ConfirmDelete -> ConfirmDeleteDialog(holder, dialog.detail)
+
         is VaultDialog.ChangePassword -> ChangePasswordDialog(holder, dialog)
+
         VaultDialog.Settings -> VaultSettingsDialog(holder, port)
+
         is VaultDialog.ConfirmDestroy -> DestroyDialog(holder, dialog)
+
+        VaultDialog.OfferBiometric -> {
+            val activity = LocalActivity.current
+            BiometricOfferDialog(
+                onYes = {
+                    holder.acceptBiometricOffer {
+                        activity?.let { port.biometric.enable(it) } ?: error("no activity")
+                    }
+                },
+                onNo = holder::dismissDialog,
+            )
+        }
     }
+}
+
+/** Asked once, right after a vault was made (here or in the sync setup). */
+@Composable
+internal fun BiometricOfferDialog(onYes: () -> Unit, onNo: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onNo,
+        properties = SecureDialog,
+        icon = { Icon(Icons.Filled.Fingerprint, contentDescription = null) },
+        title = { Text(stringResource(R.string.vault_bio_offer_title)) },
+        text = { Text(stringResource(R.string.vault_bio_offer_text)) },
+        confirmButton = { TextButton(onClick = onYes) { Text(stringResource(R.string.vault_bio_offer_yes)) } },
+        dismissButton = { TextButton(onClick = onNo) { Text(stringResource(R.string.vault_bio_offer_no)) } },
+    )
 }
 
 /** The site as the list and the titles name it: `https://` is the rule and left out. */

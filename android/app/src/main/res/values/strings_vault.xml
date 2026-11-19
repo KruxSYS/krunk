@@ -97,6 +97,10 @@
     <string name="vault_bio_none_enrolled">No fingerprint enrolled on this device</string>
     <string name="vault_bio_unsupported_os">Needs Android 11 or newer</string>
     <string name="vault_bio_unavailable">Not available on this device right now</string>
+    <string name="vault_bio_offer_title">Unlock with your fingerprint?</string>
+    <string name="vault_bio_offer_text">Open your passwords with your fingerprint instead of typing the vault password. The password still works, and you can switch this off any time in Passwords settings.</string>
+    <string name="vault_bio_offer_yes">Use fingerprint</string>
+    <string name="vault_bio_offer_no">Not now</string>
     <string name="vault_bio_enable_failed">Fingerprint unlock was not switched on</string>
     <string name="vault_bio_failed">Fingerprint unlock did not work. Unlock with your password.</string>
     <string name="vault_bio_off_enrollment">Fingerprints on this device changed. Unlock with your password and switch fingerprint unlock on again in Passwords settings.</string>
