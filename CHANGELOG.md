@@ -3,6 +3,16 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.25.4 — 2026-11-19
+
+- **VPN kill switch.** Settings → Privacy & security → VPN has a new **Kill switch**. With it
+  on, Krunk never goes around the VPN: when Krunk starts without a VPN, after you press
+  Disconnect, or when the profile in use is removed, pages and Krunk's own requests (updates,
+  sync, extensions) are stopped with "VPN not connected" until you connect again, so your own
+  IP address never shows. Turning the kill switch off while not connected lets Krunk connect
+  directly again. A connection that drops was already blocked while the VPN reconnects, and
+  still is, with or without the kill switch.
+
 ## 0.25.3 — 2026-11-18
 
 - **No more "Save password?" for a login Krunk already has.** Krunk asked again after every

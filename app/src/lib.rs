@@ -180,8 +180,8 @@ fn update_filters_headless(dirs: &paths::DataDirs, settings: &lb_core::settings:
     let state = std::fs::read_to_string(dir.join("state.json")).map(|j| UpdateState::from_json(&j)).unwrap_or_default();
     // 0.14.0: with the VPN set to connect at start, Krunk's traffic goes through it only; this
     // command runs without it, so it doesn't download at all.
-    if settings.vpn.auto_connect {
-        log::write("WARN", "filter update skipped: the VPN connects at start (Krunk's traffic goes through it only)");
+    if settings.vpn.auto_connect || settings.vpn.kill_switch {
+        log::write("WARN", "filter update skipped: the VPN connects at start or its kill switch is on (Krunk's traffic goes through it only)");
         return 3;
     }
     let Some(mode) = ffi::http::ProxyMode::from_updater(updater_proxy(&settings.proxy)) else {

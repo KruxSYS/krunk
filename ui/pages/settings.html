@@ -386,6 +386,12 @@
           <p class="field-error" data-error-for="vpn.autoConnect"></p></div>
         <div class="control"><input type="checkbox" id="vpn.autoConnect" data-key="vpn.autoConnect"></div>
       </div>
+      <div class="row setting" data-keywords="vpn kill switch killswitch leak block ip address always on fail closed direct">
+        <div class="text"><label for="vpn.killSwitch">Kill switch</label>
+          <p class="desc">Never connect without the VPN. When Krunk starts without one, after you disconnect, or when the profile in use is removed, pages and Krunk's own requests are stopped until you connect again, so your own IP address never shows. A dropped connection is always blocked while the VPN reconnects, with or without this.</p>
+          <p class="field-error" data-error-for="vpn.killSwitch"></p></div>
+        <div class="control"><input type="checkbox" id="vpn.killSwitch" data-key="vpn.killSwitch"></div>
+      </div>
     </div>
 
     <div class="card group">

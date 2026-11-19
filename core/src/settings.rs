@@ -630,6 +630,10 @@ pub struct VpnSettings {
     pub allow_local_network: bool,
     /// 0.22.0: which tabs use the VPN (the popup's selector). Applied at once.
     pub scope: VpnScope,
+    /// 0.25.4: the kill switch. Nothing of the VPN's scope ever goes direct: at start without
+    /// a VPN, after Disconnect and after the profile in use is removed, Krunk's connections are
+    /// refused ("VPN not connected") until a VPN connects or this is turned off.
+    pub kill_switch: bool,
 }
 
 /// Which of the engine's traffic goes through the VPN (0.22.0).
@@ -1316,6 +1320,10 @@ impl Settings {
                 err("proxy", "The VPN connects at start: turn that off first (Privacy & security → VPN)");
             }
         }
+        if self.vpn.kill_switch && !self.proxy.trim().is_empty() {
+            err("vpn.killSwitch", "A manual proxy is set (Advanced): the VPN can't be used with it");
+            err("proxy", "The VPN's kill switch is on: turn it off first (Privacy & security → VPN)");
+        }
         for (field, v) in
             [("devtoolsSizeRight", self.devtools_size_right), ("devtoolsSizeBottom", self.devtools_size_bottom)]
         {
@@ -1463,8 +1471,12 @@ impl Settings {
                     "passgen.length" => s.passgen = crate::passgen::Passgen::default(),
                     // A valid proxy stays; the VPN's auto-connect goes instead (below).
                     "proxy" if !is_proxy(&s.proxy) => s.proxy.clear(),
-                    "vpn.activeProfile" => s.vpn = VpnSettings::default(),
+                    // The kill switch stays: a broken profile id must not open the way direct.
+                    "vpn.activeProfile" => {
+                        s.vpn = VpnSettings { kill_switch: s.vpn.kill_switch, ..VpnSettings::default() }
+                    }
                     "vpn.autoConnect" => s.vpn.auto_connect = false,
+                    "vpn.killSwitch" => s.vpn.kill_switch = false,
                     "extraFlags" => s.extra_flags.clear(),
                     "defaultZoom" => s.default_zoom = d.default_zoom,
                     "ai.providers" => {
@@ -2185,12 +2197,13 @@ mod tests {
                 active_profile: String::new(),
                 allow_local_network: false,
                 scope: VpnScope::Everywhere,
+                kill_switch: false,
             }
         );
         let j = serde_json::to_value(&d).unwrap();
         assert_eq!(
             j["vpn"],
-            serde_json::json!({ "showButton": false, "autoConnect": false, "activeProfile": "", "allowLocalNetwork": false, "scope": "everywhere" })
+            serde_json::json!({ "showButton": false, "autoConnect": false, "activeProfile": "", "allowLocalNetwork": false, "scope": "everywhere", "killSwitch": false })
         );
         // 0.22.0: the scope; a value from elsewhere falls back to everywhere (never resets all).
         let p: Settings = serde_json::from_str(r#"{"vpn":{"scope":"private"}}"#).unwrap();
@@ -2224,6 +2237,7 @@ mod tests {
                 active_profile: "ab12".into(),
                 allow_local_network: false,
                 scope: VpnScope::Everywhere,
+                kill_switch: false,
             }
         );
         let l = Settings::from_json_lenient(r#"{"vpn":{"showButton":true,"autoConnect":true,"activeProfile":"A/B"}}"#);
@@ -2231,6 +2245,19 @@ mod tests {
         // Older settings have none: the defaults.
         let old: Settings = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(old.vpn, VpnSettings::default());
+        // 0.25.4: the kill switch, not together with a manual proxy.
+        let mut s =
+            Settings { vpn: VpnSettings { kill_switch: true, ..VpnSettings::default() }, ..Settings::default() };
+        assert_eq!(s.validate(), Ok(()));
+        s.proxy = "127.0.0.1:8080".into();
+        assert_eq!(fields(&s), vec!["vpn.killSwitch", "proxy"]);
+        let l = Settings::from_json_lenient(r#"{"proxy":"127.0.0.1:8080","vpn":{"killSwitch":true}}"#);
+        assert_eq!(l.proxy, "127.0.0.1:8080");
+        assert!(!l.vpn.kill_switch);
+        // A broken profile id resets the VPN settings but keeps the kill switch.
+        let l = Settings::from_json_lenient(r#"{"vpn":{"activeProfile":"A/B","killSwitch":true}}"#);
+        assert!(l.vpn.kill_switch);
+        assert_eq!(l.vpn.active_profile, "");
     }
 
     /// The engine's DevTools port is a test-harness switch (cargo feature `devtools-port` of

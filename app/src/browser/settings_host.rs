@@ -254,6 +254,7 @@ impl Browser {
             self.vpn_settings_changed(
                 old.vpn.allow_local_network != new.vpn.allow_local_network,
                 old.vpn.scope != new.vpn.scope,
+                old.vpn.kill_switch != new.vpn.kill_switch,
             );
         }
         // 0.15.0: finished downloads older than the new limit leave the list at once.

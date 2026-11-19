@@ -36,6 +36,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use zeroize::Zeroizing;
 
+/// What the VPN popup and Settings say while the kill switch refuses (0.25.4).
+const KILL_SWITCH_START: &str =
+    "Kill switch on: Krunk's connections are stopped until you connect the VPN (or turn the kill switch off in Settings → VPN).";
+const KILL_SWITCH_STOPPED: &str =
+    "Disconnected. Kill switch on: Krunk's connections are stopped until you connect again (or turn the kill switch off in Settings → VPN).";
+
 /// `WM_APP` code: the VPN's state changed (or its counters moved).
 pub(super) const APP_VPN: usize = 6;
 
@@ -152,27 +158,34 @@ impl Browser {
     pub(super) fn init_vpn(&self) -> bool {
         self.vpn_reload_profiles();
         *self.vpn.status.borrow_mut() = VpnStatus { since_ms: now_ms(), ..VpnStatus::default() };
-        let (auto, id) = {
+        let (auto, id, kill) = {
             let s = self.settings.borrow();
-            (s.vpn.auto_connect, s.vpn.active_profile.clone())
+            (s.vpn.auto_connect, s.vpn.active_profile.clone(), s.vpn.kill_switch)
         };
-        if !auto {
-            // The engine keeps the proxy preference on disk: after a run that ended with the VPN
-            // on, it would still point at that run's (now closed) proxy port and every page would
-            // fail. Without auto-connect the start is direct, so put it back first (found on the
-            // VM, 0.14.0). Only when one is left: resetting an unset preference made the engine
-            // log a check failure (0.14.1).
-            if engine::clear_stale_vpn_proxy() {
-                info!("vpn: removed the proxy an earlier run left set");
+        let (blocked, why) = if !auto {
+            if !kill {
+                // The engine keeps the proxy preference on disk: after a run that ended with the
+                // VPN on, it would still point at that run's (now closed) proxy port and every
+                // page would fail. Without auto-connect the start is direct, so put it back first
+                // (found on the VM, 0.14.0). Only when one is left: resetting an unset preference
+                // made the engine log a check failure (0.14.1).
+                if engine::clear_stale_vpn_proxy() {
+                    info!("vpn: removed the proxy an earlier run left set");
+                }
+                return true;
             }
-            return true;
-        }
-        info!("vpn: connecting at start");
-        let Err(e) = self.vpn_connect(&id) else { return true };
-        warning!("vpn: could not connect at start: {e}");
-        let blocked = self.vpn_block(&format!(
-            "Could not connect at start: {e}. Krunk's connections are stopped until you connect or disconnect."
-        ));
+            // 0.25.4: the kill switch: no direct start, the stand-in refuses until a VPN connects.
+            info!("vpn: kill switch on and no VPN at start: Krunk's connections are refused until one connects");
+            (self.vpn_block(KILL_SWITCH_START), "the kill switch is on and no VPN is connected".to_string())
+        } else {
+            info!("vpn: connecting at start");
+            let Err(e) = self.vpn_connect(&id) else { return true };
+            warning!("vpn: could not connect at start: {e}");
+            let blocked = self.vpn_block(&format!(
+                "Could not connect at start: {e}. Krunk's connections are stopped until you connect or disconnect."
+            ));
+            (blocked, format!("the VPN couldn't start ({e})"))
+        };
         if !blocked {
             warning!(
                 "vpn: Krunk stays offline (no tabs restored) until the VPN connects or auto-connect is turned off"
@@ -180,7 +193,7 @@ impl Browser {
             self.vpn.hold_session.set(true);
             let mut status = self.vpn.status.borrow_mut();
             status.error = Some(format!(
-                "The VPN couldn't start ({e}). Krunk stays offline until you connect or turn auto-connect off; \
+                "Krunk stays offline because {why}. Connect, or turn auto-connect and the kill switch off; \
                  your tabs are kept for the next start."
             ));
         }
@@ -637,8 +650,43 @@ impl Browser {
         Ok(())
     }
 
-    /// Stops the VPN (or the stand-in): the engine and Krunk's requests go direct again.
+    /// 0.25.4: whether the kill switch is on (nothing of the VPN's scope may go direct).
+    fn vpn_kill_switch(&self) -> bool {
+        self.settings.borrow().vpn.kill_switch
+    }
+
+    /// Stops the VPN. With the kill switch on, the stand-in takes over (Krunk's connections are
+    /// refused); else the engine and Krunk's requests go direct again.
     pub(super) fn vpn_disconnect(&self) {
+        if self.vpn_kill_switch() {
+            self.vpn_stop_blocked();
+        } else {
+            self.vpn_go_direct();
+        }
+    }
+
+    /// The kill switch's Disconnect: the stand-in becomes the engine's proxy first, then the
+    /// tunnel stops (its own proxy answers 503 until it is closed), so there is no moment direct.
+    fn vpn_stop_blocked(&self) {
+        self.vpn.generation.set(self.vpn.generation.get() + 1);
+        if self.vpn.block.borrow().is_some() || self.vpn.offline.get() {
+            // Already refusing: only the words change.
+            let mut status = self.vpn.status.borrow_mut();
+            status.state = VpnState::Failed;
+            status.error = Some(KILL_SWITCH_STOPPED.into());
+            status.since_ms = now_ms();
+        } else {
+            self.vpn_block(KILL_SWITCH_STOPPED);
+        }
+        let running = self.vpn.running.borrow_mut().take();
+        if let Some(r) = running {
+            stop_later(r.vpn);
+        }
+        info!("vpn: disconnected with the kill switch on; Krunk's connections are refused until a VPN connects");
+    }
+
+    /// Stops the VPN (or the stand-in): the engine and Krunk's requests go direct again.
+    fn vpn_go_direct(&self) {
         let engaged = self.vpn_engaged();
         if engaged && !engine::set_vpn_proxy(None, false) {
             warning!("vpn: the engine kept the VPN's proxy setting; its connections fail until Krunk restarts");
@@ -679,7 +727,7 @@ impl Browser {
 
     /// A VPN setting changed (the button, auto-connect, the profile used last, the local
     /// network's bypass, the scope).
-    pub(super) fn vpn_settings_changed(&self, bypass_changed: bool, scope_changed: bool) {
+    pub(super) fn vpn_settings_changed(&self, bypass_changed: bool, scope_changed: bool, kill_changed: bool) {
         // The local network's bypass or the scope changed while the engine uses the VPN's proxy
         // (or the stand-in): the engine takes it at once (0.14.2, 0.22.0), and its open
         // connections are closed so they come back the new way.
@@ -702,6 +750,19 @@ impl Browser {
             if self.vpn_engaged() {
                 // Krunk's own requests and the DNS settings follow normal tabs.
                 self.vpn_route_changed();
+            }
+        }
+        // 0.25.4: the kill switch applies at once when no VPN runs: on, the stand-in starts
+        // refusing; off, Krunk goes direct (the user's choice).
+        if kill_changed && self.vpn.running.borrow().is_none() {
+            if self.vpn_kill_switch() {
+                if !self.vpn_engaged() {
+                    info!("vpn: kill switch on without a VPN: Krunk's connections are refused until one connects");
+                    self.vpn_block(KILL_SWITCH_STOPPED);
+                }
+            } else if self.vpn_engaged() {
+                info!("vpn: kill switch off without a VPN");
+                self.vpn_go_direct();
             }
         }
         self.vpn_push();
