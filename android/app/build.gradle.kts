@@ -302,8 +302,9 @@ android {
         versionName = "0.11.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            // Devices (arm64-v8a) and the emulator (x86_64); GeckoView's other ABIs are dropped.
-            abiFilters += listOf("arm64-v8a", "x86_64")
+            // Devices (arm64-v8a; armeabi-v7a since 0.12.0 for 32-bit Android TV devices) and the
+            // emulator (x86_64); GeckoView's x86 is dropped.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
         buildConfigField("String", "GECKOVIEW_VERSION", "\"${libs.versions.geckoview.get()}\"")
         buildConfigField("String", "SITE_URL", "\"https://krunk.209.wf\"")
@@ -319,7 +320,7 @@ android {
             // so they are off in a Gradle run that builds a bundle.
             isEnable = gradle.startParameter.taskNames.none { it.contains("bundle", ignoreCase = true) }
             reset()
-            include("arm64-v8a", "x86_64")
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
             isUniversalApk = true
         }
     }

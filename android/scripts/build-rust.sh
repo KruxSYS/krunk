@@ -3,11 +3,11 @@
 #   1. host build of krunk_ffi (libkrunk_ffi.so for Linux): uniffi-bindgen reads the exported
 #      API from it, and the JVM unit tests load it through JNA
 #   2. Kotlin bindings  -> android/app/build/rust/<profile>/kotlin/org/krunk/ffi/krunk_ffi.kt
-#   3. cargo-ndk builds -> android/app/build/rust/<profile>/jniLibs/{arm64-v8a,x86_64}/libkrunk_ffi.so
+#   3. cargo-ndk builds -> android/app/build/rust/<profile>/jniLibs/{arm64-v8a,armeabi-v7a,x86_64}/libkrunk_ffi.so
 #
 # Gradle runs this (tasks cargoBuildDebug / cargoBuildRelease) before compiling; by hand:
 #   android/scripts/build-rust.sh [debug|release] [jniLibs out dir] [kotlin out dir]
-# Environment: KRUNK_ABIS (default arm64-v8a,x86_64), CARGO_BUILD_JOBS (default 4),
+# Environment: KRUNK_ABIS (default arm64-v8a,armeabi-v7a,x86_64), CARGO_BUILD_JOBS (default 4),
 #              ANDROID_HOME, and the NDK version from android/toolchain.lock.
 set -euo pipefail
 
@@ -23,7 +23,7 @@ case "$PROFILE" in
   release) CARGO_PROFILE_FLAG=(--release) ;;
   *) echo "usage: build-rust.sh [debug|release]" >&2; exit 2 ;;
 esac
-ABIS="${KRUNK_ABIS:-arm64-v8a,x86_64}"
+ABIS="${KRUNK_ABIS:-arm64-v8a,armeabi-v7a,x86_64}"
 JOBS="${CARGO_BUILD_JOBS:-4}"
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/opt/android-sdk}}"
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$SDK/ndk/$NDK}"
@@ -69,6 +69,9 @@ BINDGEN_ENV=()
 for triple in aarch64-linux-android x86_64-linux-android; do
   BINDGEN_ENV+=("BINDGEN_EXTRA_CLANG_ARGS_$triple=--target=$triple$MIN_SDK --sysroot=$SYSROOT -I$SYSROOT/usr/include/$triple")
 done
+# 32-bit ARM (0.12.0, Android TV devices such as the Chromecast with Google TV): Rust says
+# armv7-linux-androideabi, clang armv7a-linux-androideabi<api>, the sysroot arm-linux-androideabi.
+BINDGEN_ENV+=("BINDGEN_EXTRA_CLANG_ARGS_armv7-linux-androideabi=--target=armv7a-linux-androideabi$MIN_SDK --sysroot=$SYSROOT -I$SYSROOT/usr/include/arm-linux-androideabi")
 env "${BINDGEN_ENV[@]}" cargo ndk "${TARGET_FLAGS[@]}" --platform "$MIN_SDK" --output-dir "$JNI_OUT" \
   build --locked -j"$JOBS" -p krunk_ffi "${CARGO_PROFILE_FLAG[@]}"
 # Debug builds carry ~130 MB of DWARF per ABI, which AGP does not strip for debug variants: strip
