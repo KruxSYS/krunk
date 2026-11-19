@@ -28,6 +28,14 @@ pub struct HistoryEntry {
 /// `visits.device`: `''` = this device (also after a sync re-join under a new id), a sync device
 /// id = that device, `'#<short>'` = a device known only by its short id until the engine
 /// resolves it, `NULL` = unknown (synced before 0.23.0).
+/// Pages the address bar matches typed text against (most visited first).
+const SUGGEST_SCAN: u32 = 5000;
+
+pub(crate) const SCHEMA_V12: &str = "
+CREATE INDEX IF NOT EXISTS urls_rank ON urls(visit_count DESC, last_visit DESC);
+CREATE INDEX IF NOT EXISTS urls_url_rank ON urls(url, visit_count, last_visit);
+";
+
 pub(crate) const SCHEMA_V11: &str = "
 ALTER TABLE visits ADD COLUMN device TEXT DEFAULT '';
 CREATE INDEX visits_device_ts ON visits(device, ts);
@@ -407,11 +415,17 @@ impl Store {
             return Ok(Vec::new());
         }
         let pattern = like_pattern(prefix.trim());
+        // 0.25.5: among the most visited pages only (in rank order, `urls_rank`), so text that
+        // matches little no longer reads the whole history on every keystroke. Rarer pages
+        // still come up by their site (`pages_starting_with`).
         let mut stmt = self.conn.prepare_cached(
-            "SELECT url, title FROM urls WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
+            "SELECT url, title FROM
+               (SELECT url, title, visit_count, last_visit FROM urls
+                ORDER BY visit_count DESC, last_visit DESC LIMIT ?3)
+             WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
              ORDER BY visit_count DESC, last_visit DESC LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![pattern, limit.min(20)], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        let rows = stmt.query_map(params![pattern, limit.min(20), SUGGEST_SCAN], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect()
     }
 
@@ -422,21 +436,24 @@ impl Store {
         if start.is_empty() {
             return Ok(Vec::new());
         }
-        let mut esc = String::with_capacity(start.len() + 1);
-        for c in start.chars() {
-            if matches!(c, '%' | '_' | '\\') {
-                esc.push('\\');
-            }
-            esc.push(c);
-        }
-        esc.push('%');
+        // Prefix ranges on an address index that also holds the rank (0.25.5; four LIKEs read
+        // the whole table on every keystroke); titles only for the rows kept. Browsers store scheme and host in lowercase, as `start` is.
+        let lo: Vec<String> =
+            ["https://", "http://", "https://www.", "http://www."].iter().map(|p| format!("{p}{start}")).collect();
+        let hi: Vec<String> = lo.iter().map(|l| format!("{l}\u{10FFFF}")).collect();
         let mut stmt = self.conn.prepare_cached(
-            "SELECT url, title, visit_count FROM urls
-             WHERE url LIKE 'https://' || ?1 ESCAPE '\\' OR url LIKE 'http://' || ?1 ESCAPE '\\'
-                OR url LIKE 'https://www.' || ?1 ESCAPE '\\' OR url LIKE 'http://www.' || ?1 ESCAPE '\\'
-             ORDER BY visit_count DESC, last_visit DESC LIMIT ?2",
+            "SELECT u.url, u.title, u.visit_count FROM
+               (SELECT id FROM urls INDEXED BY urls_url_rank
+                WHERE (url >= ?1 AND url < ?2) OR (url >= ?3 AND url < ?4)
+                   OR (url >= ?5 AND url < ?6) OR (url >= ?7 AND url < ?8)
+                ORDER BY visit_count DESC, last_visit DESC LIMIT ?9) t
+             JOIN urls u ON u.id = t.id
+             ORDER BY u.visit_count DESC, u.last_visit DESC",
         )?;
-        let rows = stmt.query_map(params![esc, limit.min(500)], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let rows = stmt
+            .query_map(params![lo[0], hi[0], lo[1], hi[1], lo[2], hi[2], lo[3], hi[3], limit.min(500)], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })?;
         rows.collect()
     }
 
@@ -708,6 +725,36 @@ mod tests {
     /// A 0.22.x / Android 0.7.4 profile: v10, visits without devices. Nothing is lost; a profile
     /// that never synced history owns them all, one that did has them as "unknown".
     #[test]
+    fn pages_starting_with_every_scheme_and_www_most_visited_first() {
+        let s = Store::open_in_memory().unwrap();
+        for (url, n) in [
+            ("https://www.news.example/a", 1),
+            ("http://news.example/b", 3),
+            ("https://news.example/", 2),
+            ("http://www.news.example/c", 4),
+            ("https://newer.example/", 1),
+            ("https://www.other.example/news", 9),
+        ] {
+            for i in 0..n {
+                s.record_visit(url, "", 1000 + i).unwrap();
+            }
+        }
+        let got: Vec<String> = s.pages_starting_with("news.", 10).unwrap().into_iter().map(|r| r.0).collect();
+        assert_eq!(
+            got,
+            [
+                "http://www.news.example/c",
+                "http://news.example/b",
+                "https://news.example/",
+                "https://www.news.example/a"
+            ]
+        );
+        assert_eq!(s.pages_starting_with("new", 10).unwrap().len(), 5);
+        assert_eq!(s.pages_starting_with("new", 2).unwrap().len(), 2);
+        assert!(s.pages_starting_with("zz", 10).unwrap().is_empty());
+    }
+
+    #[test]
     fn upgrade_to_v11_keeps_every_visit() {
         for synced in [false, true] {
             let dir = std::env::temp_dir().join(format!("krunk-hist-v11-{}-{synced}", std::process::id()));
@@ -732,7 +779,7 @@ mod tests {
             }
             let s = Store::open(&path).unwrap();
             let v: i64 = s.conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap();
-            assert_eq!(v, 11);
+            assert!(v >= 11, "upgraded to {v}");
             assert_eq!(s.visit_total().unwrap(), 2);
             let all = s.query_history_in("", None, 10, &HistoryFilter::All).unwrap();
             assert_eq!(all.len(), 2);

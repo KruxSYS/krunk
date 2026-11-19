@@ -16,7 +16,7 @@ pub const BOOKMARKS_BAR: i64 = 1;
 /// Id of the "Other bookmarks" root folder.
 pub const OTHER_BOOKMARKS: i64 = 2;
 
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 /// Fixed sync guids of the two root folders (PROTOCOL §9.5): "bar" and "other".
 pub const ROOT_GUID_BAR: [u8; 16] = [0x01; 16];
@@ -380,6 +380,14 @@ impl Store {
             tx.execute_batch(&crate::history::SCHEMA_V11_TRIGGERS.replace("@TRACK", TRACKING).replace("@NOW", NOW_MS))?;
             crate::history::upgrade_v11(&tx)?;
             tx.pragma_update(None, "user_version", 11)?;
+            tx.commit()?;
+        }
+        // 0.25.5: history in rank order, so the address bar's matches stop at the first few
+        // instead of sorting the whole table on every keystroke.
+        if version < 12 && max >= 12 {
+            let tx = self.conn.transaction()?;
+            tx.execute_batch(crate::history::SCHEMA_V12)?;
+            tx.pragma_update(None, "user_version", 12)?;
             tx.commit()?;
         }
         Ok(())

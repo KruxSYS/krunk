@@ -59,10 +59,15 @@ impl Browser {
             self.address_suggest_close();
             return;
         }
+        let started = std::time::Instant::now();
         let (entries, inline) = {
             let template = self.settings.borrow().search_template().to_string();
             omnibox::query(&self.store.borrow(), &text, &template)
         };
+        let ms = started.elapsed().as_millis();
+        if ms > 10 {
+            info!("address bar: suggestions took {ms} ms to find");
+        }
         let selected = inline.as_ref().map(|i| i.index);
         self.post_shell(&Event::AddressSuggestions { text: text.clone(), entries: entries.clone(), inline });
         if entries.is_empty() {

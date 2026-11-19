@@ -3,6 +3,15 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.25.5 — 2026-11-19
+
+- **Faster address-bar suggestions.** The list now opens right after the first letter you
+  type. Krunk used to wait 60 ms before looking, then read the whole history and sort it on
+  every keystroke, which took 70 ms or more with a large (for example imported) history. The
+  history now has indexes, so a lookup takes a few milliseconds whatever its size. Typed text
+  is matched against your 5,000 most visited pages; any page still comes up when you type its
+  site's address.
+
 ## 0.25.4 — 2026-11-19
 
 - **VPN kill switch.** Settings → Privacy & security → VPN has a new **Kill switch**. With it

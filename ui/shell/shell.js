@@ -887,15 +887,15 @@
     if (suggest.tail && address.selectionEnd === v.length && address.selectionStart < v.length) return v.slice(0, address.selectionStart);
     return v;
   }
+  // Asked at once (0.25.5; it waited 60 ms before): the host answers from indexed history
+  // in a few ms, so the first row shows within a frame or two of the keystroke.
   function askSuggestions() {
     clearTimeout(suggest.timer);
-    suggest.timer = setTimeout(function () {
-      const text = typedText().trim();
-      suggest.text = text;
-      suggest.selected = null;
-      if (!text) { closeSuggestions(); return; }
-      LB.post('addressSuggest', { text: text, rect: suggestRect() });
-    }, 60);
+    const text = typedText().trim();
+    suggest.text = text;
+    suggest.selected = null;
+    if (!text) { closeSuggestions(); return; }
+    LB.post('addressSuggest', { text: text, rect: suggestRect() });
   }
   function closeSuggestions() {
     clearTimeout(suggest.timer);

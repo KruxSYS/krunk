@@ -276,6 +276,10 @@ pub(super) struct PendingShow {
     seq: u64,
     rect: ScreenRect,
     focus: bool,
+    /// When it was asked for, and whether the window was hidden then (0.25.5: the address
+    /// bar's dropdown logs a slow first show).
+    at: std::time::Instant,
+    opening: bool,
 }
 
 /// How long a popup waits for its paint answer before it shows anyway (a stuck popup
@@ -3767,7 +3771,13 @@ impl Browser {
             if gate {
                 let n = self.popup_seq.get() + 1;
                 self.popup_seq.set(n);
-                popup.pending = Some(PendingShow { seq: n, rect: target, focus });
+                popup.pending = Some(PendingShow {
+                    seq: n,
+                    rect: target,
+                    focus,
+                    at: std::time::Instant::now(),
+                    opening: !popup.window.is_visible(),
+                });
                 seq = Some(n);
                 if popup.window.is_visible() {
                     // Shown already (a subfolder or Back in a dropdown): it takes the new place
@@ -3844,6 +3854,12 @@ impl Browser {
         p.pending = None;
         if late {
             warning!("popup: shown without its paint answer ({} ms)", POPUP_PAINT_WAIT_MS);
+        }
+        if matches!(&p.content, Some(PopupContent::AddressSuggest { .. })) {
+            let ms = pending.at.elapsed().as_millis();
+            if pending.opening || ms > 50 {
+                info!("address bar: suggestions on screen {ms} ms after the query (opening: {})", pending.opening);
+            }
         }
         let mut r = pending.rect;
         if let Some(h) = height_css.filter(|h| h.is_finite()) {
