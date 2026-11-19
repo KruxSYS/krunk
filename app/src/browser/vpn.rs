@@ -758,7 +758,7 @@ impl Browser {
             if self.vpn_kill_switch() {
                 if !self.vpn_engaged() {
                     info!("vpn: kill switch on without a VPN: Krunk's connections are refused until one connects");
-                    self.vpn_block(KILL_SWITCH_STOPPED);
+                    self.vpn_block(KILL_SWITCH_START);
                 }
             } else if self.vpn_engaged() {
                 info!("vpn: kill switch off without a VPN");
