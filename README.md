@@ -2205,7 +2205,7 @@ sides and the top); pages and full-screen video use the whole screen. The toolba
 the top on a TV, whatever the toolbar-position setting says.
 
 **User agent.** Krunk keeps its normal mobile user agent on TV: the sites tried rendered fine in
-a 960 dp wide landscape window. **Request desktop site** in the menu switches a site to the
+a 960 dp wide landscape window (Wikipedia, DuckDuckGo and YouTube's mobile site were tried). **Request desktop site** in the menu switches a site to the
 desktop layout when it looks better that way.
 
 **What a TV doesn't do.** Share is hidden; fingerprint unlock is not offered (there is no
