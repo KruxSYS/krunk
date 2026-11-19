@@ -59,10 +59,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
@@ -79,6 +89,7 @@ import org.krunk.browser.ui.theme.CardMark
 import org.krunk.browser.ui.theme.KrunkTheme
 import org.krunk.browser.ui.theme.LocalKrunkStyle
 import org.krunk.browser.ui.theme.ThemeStyles
+import org.krunk.browser.ui.tv.LocalIsTv
 import org.krunk.ffi.hostOf
 
 /** Grid columns for the switcher: phones two, sw600dp tablets three, wide tablets four. */
@@ -105,6 +116,8 @@ fun tabMatches(tab: TabUi, query: String): Boolean {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TabSwitcherScreen(vm: BrowserViewModel) {
+    val tv = LocalIsTv.current
+    val newTabFocus = remember { FocusRequester() }
     val tabs by vm.tabs.tabs.collectAsStateWithLifecycle()
     val activeId by vm.tabs.activeId.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
@@ -172,7 +185,7 @@ fun TabSwitcherScreen(vm: BrowserViewModel) {
                         },
                         icon = { Icon(Icons.Filled.Add, contentDescription = null) },
                         text = { Text(label) },
-                        modifier = Modifier.semantics { contentDescription = label },
+                        modifier = Modifier.focusRequester(newTabFocus).semantics { contentDescription = label },
                     )
                 },
             ) { padding ->
@@ -238,6 +251,7 @@ fun TabSwitcherScreen(vm: BrowserViewModel) {
                                     canCloseOthers = section.size > 1,
                                     onSelect = { select(tab) },
                                     onClose = { close(tab) },
+                                    newTabFocus = newTabFocus.takeIf { tv },
                                     onDuplicate = { vm.tabs.duplicate(tab.id) },
                                     onCloseOthers = {
                                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -307,7 +321,10 @@ private fun TabCard(
     onClose: () -> Unit,
     onDuplicate: () -> Unit,
     onCloseOthers: () -> Unit,
+    /** TV: Down from a card of the last row goes to the New tab button (far to the right). */
+    newTabFocus: FocusRequester? = null,
 ) {
+    val focusManager = LocalFocusManager.current
     val title = tab.title.ifBlank {
         if (tab.isNewTab || tab.displayUrl.isBlank()) {
             stringResource(R.string.tabs_untitled)
@@ -325,6 +342,10 @@ private fun TabCard(
     )
     var menu by remember { mutableStateOf(false) }
     val actions = tabCardActions(tab.private, canCloseOthers, onDuplicate, onCloseOthers, onClose)
+    val tv = LocalIsTv.current
+    val cardFocus = remember { FocusRequester() }
+    val closeFocus = remember { FocusRequester() }
+    var cardFocused by remember { mutableStateOf(false) }
     val menuLabel = stringResource(R.string.tabs_menu_open)
     val style = LocalKrunkStyle.current
     val shape = style.cardShape
@@ -343,6 +364,34 @@ private fun TabCard(
                 // A tap opens the tab; a long press opens the card's menu. TalkBack gets the
                 // menu's entries as actions on the card as well.
                 .clip(shape)
+                // TV: the close button is inside the card, where the remote's focus search does
+                // not go by itself: Right on the card moves to it, Left goes back.
+                .then(
+                    if (tv) {
+                        Modifier
+                            .focusRequester(cardFocus)
+                            .onPreviewKeyEvent { ev ->
+                                when {
+                                    ev.type != KeyEventType.KeyDown || !cardFocused -> false
+
+                                    ev.key == Key.DirectionRight -> {
+                                        closeFocus.requestFocus()
+                                        true
+                                    }
+
+                                    ev.key == Key.DirectionDown && newTabFocus != null -> {
+                                        if (!focusManager.moveFocus(FocusDirection.Down)) newTabFocus.requestFocus()
+                                        true
+                                    }
+
+                                    else -> false
+                                }
+                            }
+                            .onFocusChanged { cardFocused = it.isFocused }
+                    } else {
+                        Modifier
+                    },
+                )
                 .combinedClickable(
                     onLongClickLabel = menuLabel,
                     onLongClick = { menu = true },
@@ -393,7 +442,23 @@ private fun TabCard(
                             modifier = Modifier.size(14.dp),
                         )
                     }
-                    IconButton(onClick = onClose) {
+                    IconButton(
+                        onClick = onClose,
+                        modifier = if (tv) {
+                            Modifier
+                                .focusRequester(closeFocus)
+                                .onPreviewKeyEvent { ev ->
+                                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) {
+                                        cardFocus.requestFocus()
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }
+                        } else {
+                            Modifier
+                        },
+                    ) {
                         Icon(
                             Icons.Filled.Close,
                             contentDescription = stringResource(R.string.tabs_close_tab, title),

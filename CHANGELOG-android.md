@@ -3,6 +3,28 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.12.0 — 2026-11-19
+
+- **Krunk on your TV.** Krunk now installs and runs on Android TV and Google TV (Android 8 and
+  later) and shows up in the TV's app row with its own banner. Everything works with the remote
+  alone: the address bar, tabs, the menu, the new tab page, all of Settings (Passwords, VPN,
+  Account & sync, Downloads, History, Bookmarks) and its dialogs. The element you are on is
+  marked with a thick outline that you can see from the sofa, and Krunk keeps its buttons inside
+  the TV's safe area.
+- **Browsing with the remote.** On a page, **Up/Down** scroll, **Left/Right** jump to the previous
+  or next link or field, and **Center** opens it (on a text field it brings up the TV keyboard).
+  **Up** at the top of the page, or the **Menu** key, takes you back to the address bar; **Down**
+  from there goes back into the page. **Back** goes back a page; on the first page it moves to
+  the address bar first.
+- **Cursor mode.** Many sites can't be used with arrow keys alone. Hold **Center** (or pick
+  **Cursor mode** in the menu) to get a pointer: the arrows move it, **Center** clicks, and the page
+  scrolls when the pointer reaches an edge. Hold **Center** again or press **Back** to leave it.
+- **For 32-bit TVs.** There is now an `armeabi-v7a` APK as well, for devices such as the
+  Chromecast with Google TV. The update check picks the right file for each device by itself.
+- Phones and tablets work exactly as before. On a TV, things a TV can't do stay out of the way:
+  Share is hidden, fingerprint unlock isn't offered, and a missing file picker or settings page
+  gets a short message instead of an error.
+
 ## 0.11.1 — 2026-11-19
 
 - **Fingerprint unlock, offered right away.** After you make your password vault (in

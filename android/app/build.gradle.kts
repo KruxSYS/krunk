@@ -192,6 +192,9 @@ fun com.android.build.api.dsl.ApplicationBuildType.syncFields(staging: String?) 
     buildConfigField("boolean", "SYNC_ALLOW_HTTP", (staging != null).toString())
     buildConfigField("String", "SYNC_VERIFY_BASE", if (staging != null) "\"\"" else "\"$releaseSyncBase\"")
     buildConfigField("boolean", "SYNC_LOG", (name != "release").toString())
+    // 0.12.0: `debug.krunk.force_tv 1` makes a debug or qa build behave as on a TV (the D-pad
+    // checks on a phone emulator); a release build only ever asks the system (ui/tv/Tv.kt).
+    buildConfigField("boolean", "TV_OVERRIDE", (name != "release").toString())
 }
 
 fun isReleaseTask(name: String) = Regex("(package|bundle|sign|assemble)(Direct|Play)?Release").containsMatchIn(name)
@@ -298,8 +301,8 @@ android {
         applicationId = "org.krunk.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "0.11.1"
+        versionCode = 21
+        versionName = "0.12.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Devices (arm64-v8a; armeabi-v7a since 0.12.0 for 32-bit Android TV devices) and the

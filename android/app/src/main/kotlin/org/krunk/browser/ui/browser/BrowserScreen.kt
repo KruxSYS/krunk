@@ -56,6 +56,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -287,7 +288,8 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 runCatching { addressFocus.requestFocus() }
             },
         )
-        LaunchedEffect(onTop, editing, tab?.id) {
+        val inputMode = LocalInputModeManager.current.inputMode
+        LaunchedEffect(onTop, editing, tab?.id, inputMode) {
             if (!onTop || editing) return@LaunchedEffect
             withFrameNanos { }
             val view = geckoView

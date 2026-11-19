@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import org.krunk.browser.KrunkApp
@@ -31,6 +32,7 @@ import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
 import org.krunk.browser.ui.theme.LocalKrunkDark
 import org.krunk.browser.ui.tv.TvScreen
+import org.krunk.browser.ui.tv.tvTextFieldEscape
 import org.krunk.browser.ui.vault.SecureVaultSurface
 import org.krunk.browser.ui.vault.UnlockVaultDialog
 import org.krunk.browser.ui.vault.VaultScreen
@@ -83,7 +85,9 @@ fun KrunkRoot(vm: BrowserViewModel) {
             privateMode = activeTab?.private == true && top == Screen.Browser,
             appearance = settings.appearance,
         ) {
-            ScreenHost(screens, key = { it.stateKey }, onPop = { vm.pop() }) { screen ->
+            ScreenHost(screens, key = {
+                it.stateKey
+            }, onPop = { vm.pop() }, modifier = Modifier.tvTextFieldEscape()) { screen ->
                 // The browser screen sets the system bar icons for its own (possibly private) theme;
                 // every other screen needs them set for the theme it is drawn in.
                 if (screen != Screen.Browser) SystemBarsEffect(fullScreen = false, darkTheme = LocalKrunkDark.current)

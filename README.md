@@ -1865,7 +1865,8 @@ open the sites and read `memory-report.log` (steps in `docs/MANUAL_TEST.md`).
 
 ## Krunk for Android (preview)
 Krunk for Android (0.6.0) is an installable preview of the same browser for phones and
-tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator). It is built from
+tablets (Android 8 and later, `arm64-v8a` devices and the `x86_64` emulator), and since 0.12.0
+for Android TV and Google TV (with an `armeabi-v7a` APK for 32-bit TVs; see Android TV below). It is built from
 this repository (`android/`, `ffi/`) and shares Krunk's Rust `core` with the Windows app: the same
 address-bar rules (DuckDuckGo by default), the same SQLite database layout for history, bookmarks,
 new-tab shortcuts and settings, the same session format and background-tab policy. Details:
@@ -2157,6 +2158,78 @@ tests only. The round report lists each flow.
 then `cd android && ./gradlew assembleDebug` builds the Rust core for both ABIs with `cargo-ndk`,
 generates the Kotlin bindings with UniFFI and packages the APKs. `docs/ANDROID_DEV.md` has the
 emulator scripts, the tests and the known traps.
+
+### Android TV (0.12.0)
+
+Krunk for Android also runs on **Android TV and Google TV** (Android 8.0 / API 26 and later).
+It is the same app and the same APK, not a separate TV build: on a TV it shows up in the
+launcher's app row with its banner, and it can be used with nothing but the remote's arrows,
+Center, Back and (where the remote has one) Menu. Phones and tablets are unchanged.
+
+**Installing.** Krunk is not on the TV's Play Store yet. Sideload it:
+- With the **Downloader** app (or any TV file manager), open
+  `https://krunk.209.wf/download/android.json` to see the current files, or go straight to the APK:
+  `https://krunk.209.wf/download/android/<version>/Krunk-android-<version>-<abi>-release.apk`.
+  Most Google TV and Android TV devices are 64-bit (`arm64-v8a`); **32-bit TVs, such as the
+  Chromecast with Google TV, need the `armeabi-v7a` APK**; the `universal` APK works on all of
+  them but is larger. Allow "Install unknown apps" for Downloader when the TV asks.
+- Or from a computer: `adb connect <tv-ip>` (with network debugging switched on in the TV's
+  developer options), then `adb install Krunk-android-<version>-<abi>-release.apk`.
+- Updates: Settings › About › **Check for updates** works on the TV as on a phone and fetches the
+  APK for the TV's own ABI from the same signed manifest (`updates/android-arm64/latest.json`,
+  which since 0.12.0 also lists the `armeabi-v7a` APK). If the TV has no "Install unknown apps"
+  settings page, Krunk says so; install the new APK with Downloader instead.
+
+**Remote controls.**
+
+| Where | Key | What it does |
+|---|---|---|
+| Toolbar, menus, Settings, dialogs | Arrows | move the focus (a thick outline and tint on the focused element) |
+| | Center | open or switch the focused element |
+| | Back | close the dialog or menu, or go back one screen |
+| Address bar | Center | edit the address with the TV keyboard; Enter/Go loads it |
+| Toolbar | Down | into the web page |
+| Web page | Up / Down | scroll |
+| | Left / Right | the previous / next link or form field (like Shift+Tab / Tab) |
+| | Center | open the focused link or button; on a text field, show the TV keyboard |
+| | Up at the very top, or Menu | back to the address bar |
+| | Back | the previous page; on the first page, the address bar |
+| Cursor mode | hold Center, or menu › **Cursor mode** | a pointer appears in the middle of the page |
+| | Arrows | move it (faster the longer an arrow is held); at an edge the page scrolls |
+| | Center | click where the pointer is (works on anything, also elements that cannot take focus) |
+| | Back, or hold Center again | leave cursor mode |
+
+The first element (the address bar at start-up, the first entry on each screen) has the focus
+whenever a screen opens. Krunk's own UI keeps inside the TV's overscan safe area (5 % at the
+sides and the top); pages and full-screen video use the whole screen. The toolbar is always at
+the top on a TV, whatever the toolbar-position setting says.
+
+**User agent.** Krunk keeps its normal mobile user agent on TV: the sites tried rendered fine in
+a 960 dp wide landscape window. **Request desktop site** in the menu switches a site to the
+desktop layout when it looks better that way.
+
+**What a TV doesn't do.** Share is hidden; fingerprint unlock is not offered (there is no
+fingerprint hardware); a missing file picker (VPN profile import, bookmark import/export, page
+uploads), camera or settings page gets a short "This device has no app for that" message.
+Downloads, notifications and the update check work as on a phone. Signing in to the Krunk account
+uses the same web sign-in page with the TV keyboard.
+
+**Known limitations.**
+- The remote-control checks (`android/scripts/tv.sh tv`) ran on the KVM phone emulator switched to
+  1920×1080 at 320 dpi with a test build forced into TV mode (`debug.krunk.force_tv 1`, compiled
+  out of release builds), because the build machine has no KVM for an Android TV emulator image.
+  The Android TV image itself (API 36, software emulation) was used for the launcher entry and
+  start-up only (`tv.sh launcher`). **No real TV, no real 32-bit ARM device and no Fire TV were
+  tested**; the `armeabi-v7a` APK is verified by build and `aapt2 dump badging` only.
+- Fire TV (Fire OS) is not a target. The APK should install and work there when sideloaded,
+  since Fire OS is Android, but it has not been tried.
+- Text fields: on a hardware remote Compose moves the focus out of a text field with Up/Down; in
+  the main window Krunk also does this for remotes that Compose doesn't recognise. In a dialog a
+  text field may need Back (to close the keyboard) and then Down to reach the buttons.
+- Up/Down scroll by Gecko's arrow-key step, which is short on long pages; cursor mode (hold an
+  arrow against the edge) scrolls faster.
+- A long press of Center is cursor mode, so the long-press menu of a link (open in new tab, copy
+  link) is not reachable with a remote.
 
 ## Building from source
 The release is cross-compiled on Linux for `x86_64-pc-windows-msvc` with `cargo-xwin`. CEF's

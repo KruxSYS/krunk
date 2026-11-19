@@ -52,6 +52,7 @@ fun <S : Any> ScreenHost(
     key: (S) -> String,
     onPop: () -> Unit,
     keepRoot: Boolean = true,
+    modifier: Modifier = Modifier,
     content: @Composable (S) -> Unit,
 ) {
     val holder = rememberSaveableStateHolder()
@@ -59,7 +60,7 @@ fun <S : Any> ScreenHost(
     val top = stack.last()
     val composed = ScreenStack.composed(stack, keepRoot)
     val rootCovered = composed.size > 1
-    Surface(Modifier.fillMaxSize()) {
+    Surface(modifier.fillMaxSize()) {
         // Before the screens: theirs are registered later and so are asked first.
         BackHandler(enabled = stack.size > 1, onBack = onPop)
         // Whatever had the focus under the new screen (a text field, with the keyboard) lets go.

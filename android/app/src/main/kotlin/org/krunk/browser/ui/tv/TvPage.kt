@@ -5,6 +5,9 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.inputmethod.CursorAnchorInfo
+import android.view.inputmethod.ExtractedText
+import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,6 +25,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import org.mozilla.geckoview.GeckoSession
+import org.mozilla.geckoview.PanZoomController
 import org.mozilla.geckoview.ScreenLength
 
 /**
@@ -36,6 +40,9 @@ class TvBrowserState {
     val router = TvKeyRouter()
     private val cursor = TvCursor()
     private var cursorPlaced = false
+    private var pendingX = 0f
+    private var pendingY = 0f
+    private var flushPosted = false
 
     /** CSS pixels from the top of the page on screen (GeckoSession.ScrollDelegate). */
     var scrollY = 0
@@ -55,10 +62,25 @@ class TvBrowserState {
         val scroll = cursor.move(dx, dy, repeat, view.width, view.height, density)
         cursorAt = Offset(cursor.x, cursor.y)
         if (scroll.dx != 0f || scroll.dy != 0f) {
-            session.panZoomController.scrollBy(
-                ScreenLength.fromPixels((scroll.dx * EDGE_SCROLL).toDouble()),
-                ScreenLength.fromPixels((scroll.dy * EDGE_SCROLL).toDouble()),
-            )
+            // Added up and sent once per frame, instantly: Gecko keeps only the last of several
+            // scrolls asked for at once, and a smooth one is cancelled by the next step.
+            pendingX += scroll.dx * EDGE_SCROLL
+            pendingY += scroll.dy * EDGE_SCROLL
+            if (!flushPosted) {
+                flushPosted = true
+                view.postOnAnimation {
+                    flushPosted = false
+                    val dx = pendingX
+                    val dy = pendingY
+                    pendingX = 0f
+                    pendingY = 0f
+                    session.panZoomController.scrollBy(
+                        ScreenLength.fromPixels(dx.toDouble()),
+                        ScreenLength.fromPixels(dy.toDouble()),
+                        PanZoomController.SCROLL_BEHAVIOR_AUTO,
+                    )
+                }
+            }
         }
         hover(view, session)
     }
@@ -133,6 +155,43 @@ fun TvPageKeys(state: TvBrowserState, view: View?, session: GeckoSession?, activ
                 state.scrollY = scrollY
             }
         }
+        // Whether an editable element of the page has the focus: Center then opens the keyboard
+        // (Enter would submit its form). Gecko says so with restartInput; every call still goes
+        // to its own delegate, which talks to the keyboard.
+        val textInput = session.textInput
+        val original: GeckoSession.TextInputDelegate = textInput.delegate ?: object : GeckoSession.TextInputDelegate {}
+        var editable = false
+        // Every method forwarded by hand: Kotlin's `by` does not forward Java default methods.
+        textInput.setDelegate(object : GeckoSession.TextInputDelegate {
+            override fun restartInput(session: GeckoSession, reason: Int) {
+                when (reason) {
+                    GeckoSession.TextInputDelegate.RESTART_REASON_FOCUS -> editable = true
+                    GeckoSession.TextInputDelegate.RESTART_REASON_BLUR -> editable = false
+                }
+                original.restartInput(session, reason)
+            }
+
+            override fun showSoftInput(session: GeckoSession) = original.showSoftInput(session)
+
+            override fun hideSoftInput(session: GeckoSession) = original.hideSoftInput(session)
+
+            override fun updateSelection(
+                session: GeckoSession,
+                selStart: Int,
+                selEnd: Int,
+                compositionStart: Int,
+                compositionEnd: Int,
+            ) = original.updateSelection(session, selStart, selEnd, compositionStart, compositionEnd)
+
+            override fun updateExtractedText(
+                session: GeckoSession,
+                request: ExtractedTextRequest,
+                text: ExtractedText,
+            ) = original.updateExtractedText(session, request, text)
+
+            override fun updateCursorAnchorInfo(session: GeckoSession, info: CursorAnchorInfo) =
+                original.updateCursorAnchorInfo(session, info)
+        })
         // The view gets or loses the focus some other way too (Compose focus search, a click).
         view.setOnFocusChangeListener { _, has ->
             if (has && state.mode == TvMode.CHROME) state.mode = TvMode.PAGE
@@ -175,11 +234,11 @@ fun TvPageKeys(state: TvBrowserState, view: View?, session: GeckoSession?, activ
                 }
 
                 TvAction.Activate -> {
-                    view.sendKey(KeyEvent.KEYCODE_ENTER)
-                    // A focused text field: the TV keyboard. Gecko offers an input connection
-                    // only for an editable element, so nothing opens after a link.
-                    view.post {
+                    if (editable) {
+                        // A text field: the TV keyboard.
                         view.context.getSystemService(InputMethodManager::class.java)?.showSoftInput(view, 0)
+                    } else {
+                        view.sendKey(KeyEvent.KEYCODE_ENTER)
                     }
                     true
                 }
@@ -210,6 +269,7 @@ fun TvPageKeys(state: TvBrowserState, view: View?, session: GeckoSession?, activ
             if (TvKeys.handler === handler) TvKeys.handler = null
             view.onFocusChangeListener = null
             session.scrollDelegate = null
+            if (textInput.delegate !== original) textInput.setDelegate(original)
         }
     }
 }

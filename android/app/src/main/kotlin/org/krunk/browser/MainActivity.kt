@@ -1,5 +1,6 @@
 package org.krunk.browser
 
+import android.annotation.SuppressLint
 import android.content.ContentResolver
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -58,6 +59,9 @@ class MainActivity : ComponentActivity() {
         app.sitePermissions.android.attach(this, sitePermissionDialog::launch, ::shouldShowRequestPermissionRationale)
         handleIntent(intent, fresh = savedInstanceState == null)
         setContent { CompositionLocalProvider(LocalIsTv provides tv) { KrunkRoot(vm) } }
+        // A TV has no touch mode: the remote's focus shows from the start. (A device that also
+        // has a touch screen starts in touch mode, where nothing in Compose takes the focus.)
+        if (tv) window.decorView.post { findViewById<android.view.View>(android.R.id.content)?.requestFocusFromTouch() }
         // "Open VPN settings" on the VPN error page (0.10.0). Set for this activity, cleared in
         // onDestroy so a finished activity is never kept alive by the hook.
         val onErrorAction: (ErrorPageAction) -> Unit = { action ->
@@ -69,6 +73,9 @@ class MainActivity : ComponentActivity() {
 
     // On TV the browser screen sees the remote's keys before the views do: they scroll the page,
     // move its focus, drive the cursor or bring the toolbar back (ui/tv/TvKeys.kt).
+    // RestrictedApi: androidx.core's ComponentActivity marks its own override of this platform
+    // Activity method; overriding and calling up is what the platform API is for.
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (tv && TvKeys.handler?.invoke(event) == true) return true
         return super.dispatchKeyEvent(event)

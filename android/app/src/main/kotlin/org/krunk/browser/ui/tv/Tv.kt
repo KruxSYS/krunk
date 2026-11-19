@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.CornerRadius
@@ -36,11 +37,20 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.ContentDrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.node.DelegatableNode
 import androidx.compose.ui.node.DrawModifierNode
 import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalInputModeManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import org.krunk.browser.BuildConfig
 import org.krunk.browser.R
 
 /**
@@ -48,10 +58,27 @@ import org.krunk.browser.R
  * TV-only behaviour hangs off this (through [LocalIsTv] in the UI); phones and tablets keep theirs.
  */
 fun Context.isTv(): Boolean {
+    // Test builds only (BuildConfig.TV_OVERRIDE is a constant false in release builds, so R8
+    // drops this): the D-pad checks run on a phone emulator at TV size.
+    if (BuildConfig.TV_OVERRIDE && forcedTv()) return true
+    return systemIsTv()
+}
+
+/** What the system says: a television, or a device with the leanback feature. */
+fun Context.systemIsTv(): Boolean {
     val uiMode = getSystemService(UiModeManager::class.java)?.currentModeType
     return uiMode == Configuration.UI_MODE_TYPE_TELEVISION ||
         packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
 }
+
+/** `adb shell setprop debug.krunk.force_tv 1` (read once at start-up). */
+private fun forcedTv(): Boolean = runCatching {
+    val cls = Class.forName("android.os.SystemProperties")
+    val get = cls.getMethod("get", String::class.java, String::class.java)
+    (get.invoke(null, FORCE_TV_PROP, "") as? String)?.trim() == "1"
+}.getOrDefault(false)
+
+const val FORCE_TV_PROP = "debug.krunk.force_tv"
 
 /** Whether Krunk runs on a TV ([isTv]); provided once by the activity. */
 val LocalIsTv = staticCompositionLocalOf { false }
@@ -165,7 +192,9 @@ fun TvScreen(enabled: Boolean, content: @Composable () -> Unit) {
     Box(Modifier.fillMaxSize().padding(TvSafeArea).focusRequester(first).focusGroup()) {
         content()
     }
-    LaunchedEffect(Unit) {
+    // Again when the remote takes over from touch (nothing is focusable in touch mode).
+    val inputMode = LocalInputModeManager.current.inputMode
+    LaunchedEffect(inputMode) {
         // After the first frame: the lazy lists have their rows by then.
         withFrameNanos { }
         runCatching { first.requestFocus() }
@@ -182,4 +211,27 @@ fun Context.launchOrSay(start: () -> Unit): Boolean = try {
 } catch (_: ActivityNotFoundException) {
     Toast.makeText(this, R.string.no_app_for_action, Toast.LENGTH_LONG).show()
     false
+}
+
+/**
+ * TV: Up and Down leave a focused text field. Compose does this itself for a hardware D-pad, but
+ * not for every remote (virtual and some Bluetooth devices): without it the focus could be stuck
+ * in a search field. Only while a text field has the focus (the view is a text editor then);
+ * the page view (Gecko) keeps its keys. A no-op on phones and tablets.
+ */
+@Composable
+fun Modifier.tvTextFieldEscape(): Modifier {
+    if (!LocalIsTv.current) return this
+    val focus = LocalFocusManager.current
+    val view = LocalView.current
+    return onPreviewKeyEvent { ev ->
+        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        val dir = when (ev.key) {
+            Key.DirectionUp -> FocusDirection.Up
+            Key.DirectionDown -> FocusDirection.Down
+            else -> return@onPreviewKeyEvent false
+        }
+        if (view.findFocus() !== view || !view.onCheckIsTextEditor()) return@onPreviewKeyEvent false
+        focus.moveFocus(dir)
+    }
 }
