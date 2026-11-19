@@ -2218,8 +2218,9 @@ uses the same web sign-in page with the TV keyboard.
 - The remote-control checks (`android/scripts/tv.sh tv`) ran on the KVM phone emulator switched to
   1920×1080 at 320 dpi with a test build forced into TV mode (`debug.krunk.force_tv 1`, compiled
   out of release builds), because the build machine has no KVM for an Android TV emulator image.
-  The Android TV image itself (API 36, software emulation) was used for the launcher entry and
-  start-up only (`tv.sh launcher`). **No real TV, no real 32-bit ARM device and no Fire TV were
+  The Android TV image itself (API 36, software emulation, too slow for the D-pad flows) was used
+  for the launcher (Krunk's banner in Installed Apps, opened from its tile) and the start-up of the
+  release APK (TV layout, the address bar focused, no crash; `tv.sh launcher`). **No real TV, no real 32-bit ARM device and no Fire TV were
   tested**; the `armeabi-v7a` APK is verified by build and `aapt2 dump badging` only.
 - Fire TV (Fire OS) is not a target. The APK should install and work there when sideloaded,
   since Fire OS is Android, but it has not been tried.
