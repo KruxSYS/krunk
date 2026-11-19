@@ -42,10 +42,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -76,6 +83,13 @@ import org.krunk.browser.ui.newtab.NewTabScreen
 import org.krunk.browser.ui.tabs.RestoreTabsPrompt
 import org.krunk.browser.ui.theme.LocalKrunkDark
 import org.krunk.browser.ui.theme.LocalKrunkStyle
+import org.krunk.browser.ui.tv.LocalIsTv
+import org.krunk.browser.ui.tv.TvBrowserState
+import org.krunk.browser.ui.tv.TvCursorOverlay
+import org.krunk.browser.ui.tv.TvMode
+import org.krunk.browser.ui.tv.TvPageKeys
+import org.krunk.browser.ui.tv.TvSafeArea
+import org.krunk.browser.ui.tv.TvToolbarMargins
 import org.krunk.ffi.ToolbarPosition
 
 /**
@@ -106,8 +120,14 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val dark = LocalKrunkDark.current
     val toolbarScroll = rememberToolbarScrollState()
-    val toolbarHeightPx = with(LocalDensity.current) { ToolbarHeight.toPx() }
-    val top = settings.toolbarPosition == ToolbarPosition.TOP
+    // On TV (0.12.0) the toolbar is always at the top, below the overscan margin, and the remote
+    // moves between it and the page (ui/tv).
+    val tv = LocalIsTv.current
+    val top = settings.toolbarPosition == ToolbarPosition.TOP || tv
+    val chromeHeight = if (tv) ToolbarHeight + TvSafeArea.calculateTopPadding() else ToolbarHeight
+    val toolbarHeightPx = with(LocalDensity.current) { chromeHeight.toPx() }
+    val tvState = remember { TvBrowserState() }
+    val addressFocus = remember { FocusRequester() }
     var geckoView by remember { mutableStateOf<NestedGeckoView?>(null) }
     var contextTarget by remember { mutableStateOf<Pair<UInt, ContextTarget>?>(null) }
     var refreshing by remember { mutableStateOf(false) }
@@ -147,6 +167,13 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 nowMs = now,
             ),
         )
+        if (tv && tvState.mode != TvMode.CHROME && decision == BackDecision.ArmExit) {
+            // TV: nothing to go back to on the page; the remote goes to the toolbar first.
+            tvState.mode = TvMode.CHROME
+            toolbarScroll.show()
+            runCatching { addressFocus.requestFocus() }
+            return@BackHandler
+        }
         if (decision != BackDecision.ArmExit) exitArmedAt = null
         when (decision) {
             BackDecision.CloseFind -> vm.closeFind()
@@ -246,6 +273,33 @@ fun BrowserScreen(vm: BrowserViewModel) {
 
     val chromeVisible = !fullScreen
 
+    // TV: the remote's keys on the page, and a focused element whenever the browser is on top
+    // (at launch, after another screen or the address editor closed).
+    if (tv) {
+        val webPage = session != null && tab?.isNewTab == false && blockedUrl == null && certError == null && !crashed
+        TvPageKeys(
+            state = tvState,
+            view = geckoView.takeIf { webPage },
+            session = session?.gecko,
+            active = onTop && !editing && !findActive && !fullScreen && webPage,
+            toChrome = {
+                toolbarScroll.show()
+                runCatching { addressFocus.requestFocus() }
+            },
+        )
+        LaunchedEffect(onTop, editing, tab?.id) {
+            if (!onTop || editing) return@LaunchedEffect
+            withFrameNanos { }
+            val view = geckoView
+            if (tvState.mode != TvMode.CHROME && view != null && webPage) {
+                view.requestFocus()
+            } else {
+                tvState.mode = TvMode.CHROME
+                runCatching { addressFocus.requestFocus() }
+            }
+        }
+    }
+
     Box(Modifier.fillMaxSize()) {
         // With the toolbar at the top the status bar strip takes the toolbar's colour, so the two
         // read as one header (also while the toolbar slides away under it).
@@ -276,7 +330,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     vm,
                     Modifier
                         .fillMaxSize()
-                        .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
+                        .padding(top = if (top) chromeHeight else 0.dp, bottom = if (!top) chromeHeight else 0.dp),
                 )
             } else if (blockedUrl != null) {
                 PageBlocked(
@@ -285,7 +339,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     onOpenOnce = { vm.tabs.openBlockedOnce() },
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
+                        .padding(top = if (top) chromeHeight else 0.dp, bottom = if (!top) chromeHeight else 0.dp),
                 )
             } else if (certError != null) {
                 PageCertError(
@@ -294,14 +348,14 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     onContinue = { keep, onDone -> vm.tabs.continuePastCertError(remember = keep, onDone = onDone) },
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
+                        .padding(top = if (top) chromeHeight else 0.dp, bottom = if (!top) chromeHeight else 0.dp),
                 )
             } else if (crashed) {
                 PageCrashed(
                     onReload = { vm.tabs.reload() },
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(top = if (top) ToolbarHeight else 0.dp, bottom = if (!top) ToolbarHeight else 0.dp),
+                        .padding(top = if (top) chromeHeight else 0.dp, bottom = if (!top) chromeHeight else 0.dp),
                 )
             } else {
                 PullToRefreshBox(
@@ -325,6 +379,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         toolbarMaxPx = toolbarHeightPx,
                         onView = { geckoView = it },
                     )
+                    if (tv) TvCursorOverlay(tvState)
                     // The menu over selected text gets Krunk's entries (search, open address).
                     // It needs the activity, so it is set while the page is on screen.
                     val openLabel = stringResource(R.string.selection_open)
@@ -375,7 +430,30 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         .fillMaxWidth()
                         .graphicsLayer {
                             translationY = if (top) -toolbarScroll.offsetPx else toolbarScroll.offsetPx
-                        },
+                        }
+                        .then(
+                            if (tv) {
+                                Modifier
+                                    .background(style.toolbar)
+                                    .padding(TvToolbarMargins)
+                                    // Down from the toolbar: into the page (the new tab page is
+                                    // Compose and is reached by the normal focus search).
+                                    .onPreviewKeyEvent { ev ->
+                                        val view = geckoView
+                                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown &&
+                                            view != null && tab?.isNewTab == false && !editing
+                                        ) {
+                                            view.requestFocus()
+                                            tvState.mode = TvMode.PAGE
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    }
+                            } else {
+                                Modifier
+                            },
+                        ),
                 ) {
                     if (!top && page != null && page.loading) ProgressLine(page.progress)
                     when {
@@ -402,6 +480,17 @@ fun BrowserScreen(vm: BrowserViewModel) {
                                 }
                             },
                             onMessage = { msg -> scope.launch { snackbar.showSnackbar(msg) } },
+                            addressFocus = addressFocus.takeIf { tv },
+                            onCursorMode = if (tv && session != null && tab?.isNewTab == false) {
+                                {
+                                    geckoView?.let { view ->
+                                        view.requestFocus()
+                                        tvState.showCursor(view)
+                                    }
+                                }
+                            } else {
+                                null
+                            },
                         )
                     }
                     if (top && page != null && page.loading) ProgressLine(page.progress)
@@ -417,6 +506,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         Modifier
                             .fillMaxWidth()
                             .background(style.toolbar)
+                            .then(if (tv) Modifier.padding(TvToolbarMargins) else Modifier)
                             .height(ToolbarHeight)
                             .padding(horizontal = 8.dp),
                         contentAlignment = Alignment.Center,
@@ -437,7 +527,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 snackbar,
                 Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(bottom = if (!top && chromeVisible) ToolbarHeight else 0.dp),
+                    .padding(bottom = if (!top && chromeVisible) chromeHeight else 0.dp),
             )
             if (onTop) RestoreTabsPrompt(vm)
         }

@@ -415,6 +415,25 @@ mod tests {
     }
 
     #[test]
+    fn a_32_bit_tv_gets_the_armv7_file() {
+        // 0.12.0 lists an armeabi-v7a APK in the same manifest (Android TV devices such as the
+        // Chromecast with Google TV are 32-bit only); 64-bit phones still get theirs.
+        let body = good().replace(
+            r#"{"abi":"universal""#,
+            &format!(
+                r#"{{"abi":"armeabi-v7a","url":"/download/android/0.5.0/K-armeabi-v7a.apk","size":3,"sha256":"{}"}},{{"abi":"universal""#,
+                hex_of(b"v7a")
+            ),
+        );
+        let m = check(&body).unwrap();
+        assert_eq!(m.files.len(), 4);
+        let pick = |list: &[&str]| m.pick(&abis(list)).map(|f| f.abi.clone());
+        assert_eq!(pick(&["armeabi-v7a", "armeabi"]).as_deref(), Some("armeabi-v7a"));
+        assert_eq!(pick(&["arm64-v8a", "armeabi-v7a", "armeabi"]).as_deref(), Some("arm64-v8a"));
+        assert_eq!(pick(&["x86_64", "x86", "arm64-v8a"]).as_deref(), Some("x86_64"));
+    }
+
+    #[test]
     fn only_higher_version_codes_are_offered() {
         let m = check(&good()).unwrap();
         assert_eq!(offer(5, 36, &m), Offer::Install, "0.4.0 -> 0.5.0");

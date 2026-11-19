@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>TV long page</title>
+<style>
+body { font: 22px sans-serif; margin: 24px; background: #fafafa; }
+.block { height: 260px; border-bottom: 1px solid #ccc; padding-top: 8px; }
+#target { width: 360px; height: 120px; background: #c2185b; color: #fff; display: flex; align-items: center; justify-content: center; margin: 24px 0; }
+#target.done { background: #2e7d32; }
+</style></head>
+<body>
+<h1>Krunk TV test page</h1>
+<!-- Not focusable: no tabindex, not a link. Only a click (cursor mode) reaches it. -->
+<div id="target">Click me (cursor)</div>
+<p><input id="field" placeholder="Type here" style="font-size:22px"></p>
+<div class="block">Block 1</div>
+<div class="block">Block 2</div>
+<div class="block">Block 3</div>
+<div class="block">Block 4 <a id="next" href="/page2.html">Go to page 2</a></div>
+<div class="block">Block 5</div>
+<div class="block">Bottom</div>
+<script>
+document.getElementById('target').addEventListener('click', function () {
+  this.classList.add('done');
+  this.textContent = 'Clicked!';
+  fetch('/clicked?t=' + Date.now());
+});
+</script>
+</body></html>

@@ -51,6 +51,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -72,6 +73,7 @@ import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.theme.KrunkColors
 import org.krunk.browser.ui.theme.LocalKrunkStyle
 import org.krunk.browser.ui.theme.ThemeStyles
+import org.krunk.browser.ui.tv.LocalIsTv
 import org.krunk.ffi.NtpBackgroundMode
 import org.krunk.ffi.Tile
 import org.krunk.ffi.bookmarkable
@@ -239,6 +241,7 @@ fun NewTabScreen(vm: BrowserViewModel, modifier: Modifier = Modifier) {
 @Composable
 private fun SearchBox(vm: BrowserViewModel, engineName: String) {
     var text by remember { mutableStateOf("") }
+    val tv = LocalIsTv.current
     val hint = if (engineName.isBlank()) {
         stringResource(R.string.ntp_search_hint_generic)
     } else {
@@ -270,6 +273,9 @@ private fun SearchBox(vm: BrowserViewModel, engineName: String) {
             keyboardActions = KeyboardActions(onGo = { if (text.isNotBlank()) vm.go(text) }),
             modifier = Modifier
                 .fillMaxWidth()
+                // TV: the remote would start editing just by passing over it; the toolbar's
+                // address field above does the same, so this one is not a focus stop there.
+                .then(if (tv) Modifier.focusProperties { canFocus = false } else Modifier)
                 .onFocusChanged { if (it.isFocused) vm.startEditing(text) },
         )
     }

@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import org.krunk.browser.BuildConfig
 import org.krunk.browser.R
+import org.krunk.browser.ui.tv.launchOrSay
 
 /**
  * The website APK's update channel (direct flavour). The play flavour has its own [UpdateChannel]
@@ -209,7 +210,8 @@ private fun PermissionDialog(context: Context) {
                 dismissed = true
                 val intent =
                     Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}"))
-                runCatching { context.startActivity(intent) }
+                // Some TVs have no such settings page: then say so instead of doing nothing.
+                context.launchOrSay { context.startActivity(intent) }
             }) { Text(stringResource(R.string.update_permission_open)) }
         },
         dismissButton = {

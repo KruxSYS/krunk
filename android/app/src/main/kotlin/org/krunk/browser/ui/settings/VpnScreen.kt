@@ -65,6 +65,7 @@ import kotlinx.coroutines.withContext
 import org.krunk.browser.R
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.theme.KrunkSwitch
+import org.krunk.browser.ui.tv.launchOrSay
 import org.krunk.browser.vpn.ImportResult
 import org.krunk.browser.vpn.VpnController
 import org.krunk.browser.vpn.VpnCredentials
@@ -252,7 +253,7 @@ fun VpnScreen(vm: BrowserViewModel) {
                 }
             }
             OutlinedButton(
-                onClick = { picker.launch(arrayOf("*/*")) },
+                onClick = { context.launchOrSay { picker.launch(arrayOf("*/*")) } },
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
             ) {
                 Icon(Icons.Outlined.UploadFile, contentDescription = null)

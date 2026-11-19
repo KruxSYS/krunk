@@ -115,6 +115,8 @@ fun AddressPill(
     leading: @Composable () -> Unit = {},
     /** Tapping the lock / "not secure" sign: opens the site's connection details; null = not a button. */
     onSecurityClick: (() -> Unit)? = null,
+    /** TV: lets the browser screen put the remote's focus on the pill. */
+    focusRequester: FocusRequester? = null,
     trailing: @Composable () -> Unit = {},
 ) {
     val page = tab?.page
@@ -138,6 +140,7 @@ fun AddressPill(
                 .fillMaxWidth()
                 .height(AddressPillHeight)
                 .clip(style.pillShape)
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .clickable(onClick = onClick)
                 .semantics {
                     role = Role.Button

@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
+import org.krunk.browser.ui.tv.TvFocusTheme
 import org.krunk.ffi.ResolvedTheme
 import org.krunk.ffi.ThemeAppearance
 import org.krunk.ffi.ThemeHighlight
@@ -168,6 +169,7 @@ fun KrunkTheme(mode: ThemeMode, privateMode: Boolean, appearance: ThemeAppearanc
         LocalKrunkPrivate provides privateMode,
         LocalKrunkStyle provides style,
     ) {
-        MaterialTheme(colorScheme = scheme, content = content)
+        // On TV the focused element is marked for a remote across the room (ui/tv/Tv.kt).
+        MaterialTheme(colorScheme = scheme) { TvFocusTheme(content) }
     }
 }

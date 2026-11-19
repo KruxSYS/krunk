@@ -30,6 +30,8 @@
     <string name="menu_bookmark_remove">Remove bookmark</string>
     <string name="menu_share">Share page</string>
     <string name="menu_find">Find in page</string>
+    <string name="menu_cursor_mode">Cursor mode</string>
+    <string name="no_app_for_action">This device has no app for that</string>
     <string name="menu_desktop_site">Request desktop site</string>
     <string name="menu_recently_closed">Reopen closed tab</string>
     <string name="menu_bookmarks">Bookmarks</string>

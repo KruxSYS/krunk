@@ -24,6 +24,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Masks
+import androidx.compose.material.icons.outlined.Mouse
 import androidx.compose.material.icons.outlined.Password
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.Settings
@@ -68,6 +69,7 @@ import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.Screen
 import org.krunk.browser.ui.theme.KrunkColors
+import org.krunk.browser.ui.tv.LocalIsTv
 import org.krunk.ffi.NavItem
 
 /** The ⋮ menu of the toolbar. */
@@ -81,6 +83,8 @@ fun BrowserMenu(
     onHome: () -> Unit,
     onHistory: (forward: Boolean) -> Unit,
     onMessage: (String) -> Unit,
+    /** TV, on a web page: the cursor mode entry (null hides it). */
+    onCursorMode: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -175,9 +179,18 @@ fun BrowserMenu(
                 }
             },
         )
-        Item(stringResource(R.string.menu_share), Icons.Outlined.Share, enabled = hasPage) {
-            onDismiss()
-            if (tab != null) Share.text(context, tab.url, tab.title, shareTitle)
+        // TVs have no apps to share to (the system sheet would be empty).
+        if (!LocalIsTv.current) {
+            Item(stringResource(R.string.menu_share), Icons.Outlined.Share, enabled = hasPage) {
+                onDismiss()
+                if (tab != null) Share.text(context, tab.url, tab.title, shareTitle)
+            }
+        }
+        if (onCursorMode != null) {
+            Item(stringResource(R.string.menu_cursor_mode), Icons.Outlined.Mouse, enabled = hasPage) {
+                onDismiss()
+                onCursorMode()
+            }
         }
         Item(stringResource(R.string.menu_find), Icons.Outlined.FindInPage, enabled = hasPage) {
             onDismiss()

@@ -30,6 +30,7 @@ import org.krunk.browser.ui.sync.SyncScreen
 import org.krunk.browser.ui.tabs.TabSwitcherScreen
 import org.krunk.browser.ui.theme.KrunkTheme
 import org.krunk.browser.ui.theme.LocalKrunkDark
+import org.krunk.browser.ui.tv.TvScreen
 import org.krunk.browser.ui.vault.SecureVaultSurface
 import org.krunk.browser.ui.vault.UnlockVaultDialog
 import org.krunk.browser.ui.vault.VaultScreen
@@ -86,42 +87,51 @@ fun KrunkRoot(vm: BrowserViewModel) {
                 // The browser screen sets the system bar icons for its own (possibly private) theme;
                 // every other screen needs them set for the theme it is drawn in.
                 if (screen != Screen.Browser) SystemBarsEffect(fullScreen = false, darkTheme = LocalKrunkDark.current)
-                when (screen) {
-                    Screen.Browser -> BrowserScreen(vm)
-
-                    Screen.TabSwitcher -> TabSwitcherScreen(vm)
-
-                    Screen.Bookmarks -> BookmarksScreen(vm)
-
-                    Screen.History -> HistoryScreen(vm)
-
-                    Screen.Settings -> SettingsScreen(vm)
-
-                    Screen.About -> AboutScreen(vm)
-
-                    Screen.Downloads -> DownloadsScreen(vm)
-
-                    Screen.SitePermissions -> SitePermissionsScreen(vm)
-
-                    is Screen.SiteDetail -> SiteDetailScreen(vm, screen.origin)
-
-                    Screen.SiteData -> SiteDataScreen(vm)
-
-                    Screen.CertExceptions -> CertExceptionsScreen(vm)
-
-                    Screen.Sync -> SyncScreen(vm)
-
-                    Screen.Vpn -> VpnScreen(vm)
-
-                    Screen.Vault -> {
-                        val app = LocalContext.current.applicationContext as? Application
-                        if (app != null) VaultScreen(vm, vaultPort(app))
-                    }
+                // On TV every screen but the browser keeps inside the overscan safe area, and its
+                // first element takes the focus (the remote needs one to start from).
+                TvScreen(enabled = screen != Screen.Browser) {
+                    KrunkScreen(vm, screen)
                 }
             }
             // Downloads ask and report over whatever screen is up. Outside ScreenHost: its content
             // runs for the covered browser and the screen on top, this must run once.
             DownloadsHost(vm.downloads)
+        }
+    }
+}
+
+@Composable
+private fun KrunkScreen(vm: BrowserViewModel, screen: Screen) {
+    when (screen) {
+        Screen.Browser -> BrowserScreen(vm)
+
+        Screen.TabSwitcher -> TabSwitcherScreen(vm)
+
+        Screen.Bookmarks -> BookmarksScreen(vm)
+
+        Screen.History -> HistoryScreen(vm)
+
+        Screen.Settings -> SettingsScreen(vm)
+
+        Screen.About -> AboutScreen(vm)
+
+        Screen.Downloads -> DownloadsScreen(vm)
+
+        Screen.SitePermissions -> SitePermissionsScreen(vm)
+
+        is Screen.SiteDetail -> SiteDetailScreen(vm, screen.origin)
+
+        Screen.SiteData -> SiteDataScreen(vm)
+
+        Screen.CertExceptions -> CertExceptionsScreen(vm)
+
+        Screen.Sync -> SyncScreen(vm)
+
+        Screen.Vpn -> VpnScreen(vm)
+
+        Screen.Vault -> {
+            val app = LocalContext.current.applicationContext as? Application
+            if (app != null) VaultScreen(vm, vaultPort(app))
         }
     }
 }

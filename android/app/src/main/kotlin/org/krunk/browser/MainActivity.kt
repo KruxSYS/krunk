@@ -2,15 +2,18 @@ package org.krunk.browser
 
 import android.content.ContentResolver
 import android.content.Intent
+import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.core.content.IntentCompat
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.launch
@@ -25,6 +28,9 @@ import org.krunk.browser.ui.KrunkRoot
 import org.krunk.browser.ui.Screen
 import org.krunk.browser.ui.settings.VpnImportSniff
 import org.krunk.browser.ui.settings.importVpnUri
+import org.krunk.browser.ui.tv.LocalIsTv
+import org.krunk.browser.ui.tv.TvKeys
+import org.krunk.browser.ui.tv.isTv
 import org.krunk.browser.vpn.ImportResult
 import org.krunk.ffi.searchUrl
 
@@ -38,16 +44,20 @@ class MainActivity : ComponentActivity() {
             app.sitePermissions.android.onResult()
         }
 
+    /** Android TV / Google TV (0.12.0): landscape only, keys from a remote (TvKeys). */
+    private val tv by lazy { isTv() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        if (tv) requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         // Saved instance state means Android is bringing the task back (it killed the process in
         // the background): the tabs return whatever the start-up setting is.
         app.tabs.start(restoredBySystem = savedInstanceState != null)
         app.downloads.start(app.tabs)
         app.sitePermissions.android.attach(this, sitePermissionDialog::launch, ::shouldShowRequestPermissionRationale)
         handleIntent(intent, fresh = savedInstanceState == null)
-        setContent { KrunkRoot(vm) }
+        setContent { CompositionLocalProvider(LocalIsTv provides tv) { KrunkRoot(vm) } }
         // "Open VPN settings" on the VPN error page (0.10.0). Set for this activity, cleared in
         // onDestroy so a finished activity is never kept alive by the hook.
         val onErrorAction: (ErrorPageAction) -> Unit = { action ->
@@ -55,6 +65,13 @@ class MainActivity : ComponentActivity() {
         }
         errorAction = onErrorAction
         ErrorPage.onAction = onErrorAction
+    }
+
+    // On TV the browser screen sees the remote's keys before the views do: they scroll the page,
+    // move its focus, drive the cursor or bring the toolbar back (ui/tv/TvKeys.kt).
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (tv && TvKeys.handler?.invoke(event) == true) return true
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onNewIntent(intent: Intent) {

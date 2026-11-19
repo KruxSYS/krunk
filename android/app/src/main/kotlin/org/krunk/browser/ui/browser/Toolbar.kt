@@ -32,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalDensity
@@ -82,6 +83,10 @@ fun BrowserToolbar(
     onOpenTabs: () -> Unit,
     onMessage: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /** TV: the address pill's focus requester (the remote's way back to the toolbar). */
+    addressFocus: FocusRequester? = null,
+    /** TV, on a web page: turns the cursor mode on (a menu entry). */
+    onCursorMode: (() -> Unit)? = null,
 ) {
     val page = tab?.page
     val session = tab?.let { vm.tabs.session(it.id) }
@@ -144,6 +149,7 @@ fun BrowserToolbar(
                 placeholder = placeholder,
                 onClick = { vm.startEditing(if (tab == null || tab.isNewTab) "" else tab.displayUrl) },
                 modifier = Modifier.weight(1f).padding(horizontal = ToolbarLayout.PILL_PADDING_DP.dp),
+                focusRequester = addressFocus,
                 compact = !layout.showNotSecureWords,
                 hasLeading = showShield || vpnPhase != null,
                 leading = {
@@ -198,6 +204,7 @@ fun BrowserToolbar(
                         }
                     },
                     onMessage = onMessage,
+                    onCursorMode = onCursorMode,
                 )
             }
         }

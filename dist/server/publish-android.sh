@@ -7,7 +7,7 @@
 #
 #   VERSION       the Android app version, e.g. 0.1.0 (android/app/build.gradle.kts versionName)
 #   --apks DIR    where the APKs are (default dist/android):
-#                 Krunk-android-<VERSION>-{arm64-v8a,universal,x86_64}-release.apk
+#                 Krunk-android-<VERSION>-{arm64-v8a,armeabi-v7a,universal,x86_64}-release.apk
 #   --dest DIR    a plain folder (mounted into the container as /srv/releases)
 #   --volume NAME a Docker named volume, written through a throwaway pinned alpine container
 #   --changelog FILE  release notes source (default CHANGELOG-android.md): its "## VERSION — DATE"
@@ -38,7 +38,9 @@
 # The Windows files (download/release.json, updates/win-x64/) are never touched.
 set -euo pipefail
 ALPINE="alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f"
-ABIS="arm64-v8a universal x86_64"
+# armeabi-v7a since 0.12.0 (32-bit Android TV devices such as the Chromecast with Google TV); it
+# is one more file in the same signed manifest, picked by the app from Build.SUPPORTED_ABIS.
+ABIS="arm64-v8a armeabi-v7a universal x86_64"
 
 usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 [ $# -ge 1 ] || usage
@@ -157,7 +159,15 @@ for abi in $ABIS; do
   case "$abi" in
     universal) kind="universal"; label="Universal APK" ;;
     x86_64) kind="emulator"; label="x86_64 APK (emulator)" ;;
+    armeabi-v7a) kind="armv7"; label="armeabi-v7a APK (32-bit Android TV and older devices)" ;;
   esac
+  # Each split carries exactly its own native code (the universal one all three).
+  native=$(sed -n "s/^native-code: //p" <<<"$badging")
+  case "$abi" in
+    universal) want="'arm64-v8a' 'armeabi-v7a' 'x86_64'" ;;
+    *) want="'$abi'" ;;
+  esac
+  [ "$native" = "$want" ] || { echo "$name: native-code is ${native:-none}, expected $want" >&2; exit 1; }
   files_json="$files_json${files_json:+,}
     {\"name\": \"$name\", \"abi\": \"$abi\", \"kind\": \"$kind\", \"label\": \"$label\", \"url\": \"/download/android/$version/$name\", \"size\": $size, \"sha256\": \"$sha\"}"
 done

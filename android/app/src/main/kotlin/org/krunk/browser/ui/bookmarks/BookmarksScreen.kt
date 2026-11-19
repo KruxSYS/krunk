@@ -71,6 +71,7 @@ import org.krunk.browser.core.FolderChoice
 import org.krunk.browser.core.readCapped
 import org.krunk.browser.ui.BrowserViewModel
 import org.krunk.browser.ui.newtab.SiteIcon
+import org.krunk.browser.ui.tv.launchOrSay
 import org.krunk.ffi.Bookmark
 
 /** The folder ids from the top level down to the open folder, as saved state. */
@@ -234,16 +235,20 @@ fun BookmarksScreen(vm: BrowserViewModel) {
                                     text = { Text(stringResource(R.string.bookmarks_import)) },
                                     onClick = {
                                         menu = false
-                                        importLauncher.launch(
-                                            arrayOf("text/html", "application/xhtml+xml", "text/plain"),
-                                        )
+                                        context.launchOrSay {
+                                            importLauncher.launch(
+                                                arrayOf("text/html", "application/xhtml+xml", "text/plain"),
+                                            )
+                                        }
                                     },
                                 )
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.bookmarks_export)) },
                                     onClick = {
                                         menu = false
-                                        exportLauncher.launch(res.getString(R.string.bookmarks_export_name))
+                                        context.launchOrSay {
+                                            exportLauncher.launch(res.getString(R.string.bookmarks_export_name))
+                                        }
                                     },
                                 )
                             }
