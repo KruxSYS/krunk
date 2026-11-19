@@ -6,15 +6,17 @@
 # are sent, never target/.
 
 # The site as it is served: the static pages, the /changelog page generated from CHANGELOG.md
+# and, below it, CHANGELOG-android.md (Krunk for Android, since Android 0.12.0)
 # (check fails the build on a malformed file) and, last, a content hash on every link to the
 # site's own scripts, styles and images (stamp-assets.py: Cloudflare lets browsers keep those
 # for hours, so a changed file needs a changed link). Python 3.13.18.
 FROM python:3.13-alpine@sha256:1e1f6334529d1fb26a2ef619d7cffb30a7c7d7cc1cc7338ebee283a58d1aeaca AS site
 WORKDIR /build
-COPY CHANGELOG.md dist/server/changelog.py dist/server/stamp-assets.py ./
+COPY CHANGELOG.md CHANGELOG-android.md dist/server/changelog.py dist/server/stamp-assets.py ./
 COPY dist/server/site/ /out/
 RUN python3 -I changelog.py check CHANGELOG.md \
-    && python3 -I changelog.py render CHANGELOG.md /out/changelog.html \
+    && python3 -I changelog.py check CHANGELOG-android.md \
+    && python3 -I changelog.py render CHANGELOG.md /out/changelog.html CHANGELOG-android.md \
     && python3 -I stamp-assets.py /out
 
 FROM caddy:2.11.8-alpine@sha256:3db3a09e418f86a8fce8de4bc0026fccd2b4cd925aef00cc7d843d9fdc75e442

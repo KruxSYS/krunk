@@ -2,7 +2,7 @@
 """Krunk's CHANGELOG.md: check it, render the website's /changelog page, or print one version.
 
   python3 -I dist/server/changelog.py check    CHANGELOG.md
-  python3 -I dist/server/changelog.py render   CHANGELOG.md OUT.html
+  python3 -I dist/server/changelog.py render   CHANGELOG.md OUT.html [CHANGELOG-android.md]
   python3 -I dist/server/changelog.py section  CHANGELOG.md VERSION   (Markdown body, for NOTES.md)
   python3 -I dist/server/changelog.py date     CHANGELOG.md VERSION   (its YYYY-MM-DD)
   python3 -I dist/server/changelog.py selftest
@@ -310,7 +310,7 @@ PAGE_HEAD = """<!doctype html>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body class="site">
-<!-- Generated from CHANGELOG.md by dist/server/changelog.py; do not edit. -->
+<!-- Generated from CHANGELOG.md (and CHANGELOG-android.md) by dist/server/changelog.py; do not edit. -->
 <a class="skip" href="#main">Skip to content</a>
 <header class="bar site-bar">
   <div class="wrap">
@@ -344,7 +344,7 @@ PAGE_FOOT = """</div>
 """
 
 
-def render_page(doc):
+def render_page(doc, android=None):
     out = [PAGE_HEAD.rstrip("\n")]
     out.append('<nav class="toc versions" aria-label="Versions">')
     out.append("  <h2>Versions</h2>")
@@ -353,6 +353,14 @@ def render_page(doc):
         v = esc(s.version)
         out.append(f'    <li><a href="#{v}">{v}</a></li>')
     out.append("  </ol>")
+    if android is not None:
+        # Krunk for Android has its own version numbers: its anchors are android-<version>.
+        out.append('  <h2><a href="#android">Android</a></h2>')
+        out.append("  <ol>")
+        for s in android.sections:
+            v = esc(s.version)
+            out.append(f'    <li><a href="#android-{v}">{v}</a></li>')
+        out.append("  </ol>")
     out.append("</nav>")
     out.append('<main id="main" class="prose">')
     out.append(f"  <h1>{inline(doc.title or 'Changelog')}</h1>")
@@ -365,6 +373,21 @@ def render_page(doc):
         out.append(f'    <p class="updated">Released <time datetime="{esc(s.date)}">{text(long_date(s.date))}</time></p>')
         out.extend(render_blocks(blocks(s.lines), 2))
         out.append("  </section>")
+    if android is not None:
+        out.append("")
+        out.append('  <section id="android">')
+        # The file's own intro points at files in the repository: not for the website.
+        out.append("    <h2>Krunk for Android</h2>")
+        out.append("    <p>What changed in each Krunk for Android release, newest first.</p>")
+        out.append("  </section>")
+        for s in android.sections:
+            v = esc(s.version)
+            out.append("")
+            out.append(f'  <section id="android-{v}">')
+            out.append(f'    <h2><a href="#android-{v}">Krunk for Android {v}</a></h2>')
+            out.append(f'    <p class="updated">Released <time datetime="{esc(s.date)}">{text(long_date(s.date))}</time></p>')
+            out.extend(render_blocks(blocks(s.lines), 2))
+            out.append("  </section>")
     out.append("</main>")
     return "\n".join(out) + "\n" + PAGE_FOOT
 
@@ -413,8 +436,9 @@ def main(argv):
     if cmd == "check" and len(args) == 1:
         doc = load(args[0])
         print(f"{args[0]}: ok, {len(doc.sections)} versions, newest {doc.sections[0].version}")
-    elif cmd == "render" and len(args) == 2:
-        page = render_page(load(args[0]))
+    elif cmd == "render" and len(args) in (2, 3):
+        # An optional third file: Krunk for Android's changelog, shown after the Windows one.
+        page = render_page(load(args[0]), load(args[2]) if len(args) == 3 else None)
         out_dir = os.path.dirname(os.path.abspath(args[1]))
         fd, tmp = tempfile.mkstemp(dir=out_dir, prefix=".changelog.")
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:

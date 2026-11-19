@@ -2,6 +2,7 @@
 # Dockerfile copies is sent: everything else (target/ is tens of GB) stays out.
 *
 !CHANGELOG.md
+!CHANGELOG-android.md
 !dist/server/changelog.py
 !dist/server/stamp-assets.py
 !dist/server/Caddyfile
