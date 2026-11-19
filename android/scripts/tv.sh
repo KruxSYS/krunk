@@ -239,7 +239,9 @@ tv)
     local section=$1 entry=$2 name=$3
     # Its section may already be open (the content follows the categories down the left).
     if [ "${4:-}" = direct ] && focus_to "^$entry" DPAD_DOWN 25; then
-      key DPAD_CENTER; sleep 3; shot "tv7-$name"; pass "7 reached $name ($(focused))"; key BACK; sleep 2; return
+      key DPAD_CENTER; sleep 3; shot "tv7-$name"
+      dump | python3 -I -c 'import re,sys; print("\n".join(t for t in re.findall(r" text=\"([^\"]+)\"", sys.stdin.read())))' > "$EV/tv7-$name.txt"
+      pass "7 reached $name ($(focused); screen text: $(head -3 "$EV/tv7-$name.txt" | tr '\n' '|'))"; key BACK; sleep 2; return
     fi
     if focus_to "^$section" DPAD_DOWN 10; then
       key DPAD_CENTER DPAD_RIGHT
@@ -247,7 +249,9 @@ tv)
         key DPAD_CENTER
         sleep 3
         shot "tv7-$name"
-        pass "7 reached $name ($(focused))"
+        # A secure window (the vault) screenshots black; its UI tree is still readable.
+        dump | python3 -I -c 'import re,sys; print("\n".join(t for t in re.findall(r" text=\"([^\"]+)\"", sys.stdin.read())))' > "$EV/tv7-$name.txt"
+        pass "7 reached $name ($(focused); screen text: $(head -3 "$EV/tv7-$name.txt" | tr '\n' '|'))"
         key BACK
         sleep 2
         return
