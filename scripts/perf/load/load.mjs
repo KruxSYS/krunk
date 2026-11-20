@@ -189,7 +189,8 @@ async function pageTarget() {
     try {
       s = await session(t);
       const r = await s.send('Runtime.evaluate', {
-        expression: '(document.hasFocus() ? 1e9 : 0) + innerWidth * innerHeight',
+        // A visible page wins over Krunk's hidden made-ahead new tab page (same size, 0.25.0).
+        expression: "(document.hasFocus() ? 1e9 : 0) + (document.visibilityState === 'visible' ? 1e8 : 0) + innerWidth * innerHeight",
         returnByValue: true,
       });
       const v = r.result?.result?.value ?? 0;
@@ -362,7 +363,7 @@ async function startBrowser(b, profile, tag) {
   kinput(`focus:${exe}`);
   await sleep(800);
   const s = await attach();
-  log(b, 'attached to', s.url);
+  log(b, 'attached to', s.url, 'of', (await targets()).map((x) => x.url.slice(0, 60)).join(' | '));
   await cdpGo(s, BLANK);
   return s;
 }
