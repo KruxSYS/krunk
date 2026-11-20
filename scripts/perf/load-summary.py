@@ -2,7 +2,11 @@
 """Krunk 0.26.0 page-load harness: tables from one or more passes (results.jsonl).
 
   load-summary.py DIR [DIR...]          markdown to stdout (later DIRs' sessions replace earlier ones)
-  load-summary.py DIR... --json OUT     also the numbers as JSON
+  load-summary.py DIR... --json OUT     also the numbers as JSON (with the noise band, if any)
+  load-summary.py DIR... --ab A=B [--band baseline.json]
+                                        B against A per scenario and metric: kept only if B's
+                                        corpus median is lower by more than the noise band (the
+                                        A/A band of these dirs, or the one in --band's JSON)
 
 Per browser and scenario: per page median / p90 (nearest rank) of the times from the input
 (ttfb, fcp, lcp, dcl, load; bfcache restores: show and frame), and the corpus value: the median of
@@ -49,6 +53,17 @@ def main():
     args = sys.argv[1:]
     jout = None
     pools = []
+    abs_ = []
+    band_file = None
+    while "--ab" in args:
+        i = args.index("--ab")
+        a_, b_ = args[i + 1].split("=", 1)
+        abs_.append((a_, b_))
+        del args[i : i + 2]
+    if "--band" in args:
+        i = args.index("--band")
+        band_file = args[i + 1]
+        del args[i : i + 2]
     while "--pool" in args:
         i = args.index("--pool")
         name, members = args[i + 1].split("=", 1)
@@ -169,10 +184,11 @@ def main():
         if b2 not in browsers:
             continue
         print(f"\n## Noise band ({a} vs {b2}, same build)\n")
-        print("| scenario | metric | corpus median diff | per-page median |diff| (median, max) |")
-        print("|---|---|---|---|")
+        print("Band = the larger of |corpus median diff %| and the median per-page |diff %|; a fix must beat it.\n")
+        print("| scenario | metric | corpus median diff | per-page median |diff| (median, max) | band |")
+        print("|---|---|---|---|---|")
         for s in scen:
-            for m in ["fcp", "lcp", "load"] if s not in ("back", "forward") else ["frame", "lcp"]:
+            for m in ["fcp", "lcp", "load", "ttfb", "nav"] if s not in ("back", "forward") else ["frame", "lcp"]:
                 x = out["corpus"].get(a, {}).get(s, {}).get(m)
                 y = out["corpus"].get(b2, {}).get(s, {}).get(m)
                 if not x or not y:
@@ -185,7 +201,40 @@ def main():
                         diffs.append(abs(ma - mb) / max(ma, mb, 1) * 100)
                 rel = (y[0] - x[0]) / max(x[0], 1) * 100
                 if diffs:
-                    print(f"| {s} | {m} | {y[0] - x[0]:+.0f} ms ({rel:+.1f} %) | {statistics.median(diffs):.1f} %, {max(diffs):.1f} % |")
+                    band = max(abs(rel), statistics.median(diffs))
+                    out.setdefault("band", {}).setdefault(s, {})[m] = round(band, 2)
+                    print(f"| {s} | {m} | {y[0] - x[0]:+.0f} ms ({rel:+.1f} %) | {statistics.median(diffs):.1f} %, {max(diffs):.1f} % | {band:.1f} % |")
+    # A/B verdicts: B against A on the corpus median, kept only when faster by more than the band.
+    if abs_:
+        band = out.get("band")
+        if band_file:
+            with open(band_file) as f:
+                band = json.load(f).get("band", band)
+        print("\n## A/B verdicts (corpus median (p90), ms from the input)\n")
+        if not band:
+            print("_No noise band (no A/A pair here and no --band file): no verdicts._\n")
+        print("| A → B | scenario | metric | A | B | change | band | verdict |")
+        print("|---|---|---|---|---|---|---|---|")
+        for a_, b_ in abs_:
+            for s in scen:
+                for m in ["fcp", "lcp", "load", "ttfb", "nav"] if s not in ("back", "forward") else ["frame", "lcp"]:
+                    x = out["corpus"].get(a_, {}).get(s, {}).get(m)
+                    y = out["corpus"].get(b_, {}).get(s, {}).get(m)
+                    if not x or not y:
+                        continue
+                    rel = (y[0] - x[0]) / max(x[0], 1) * 100
+                    bnd = (band or {}).get(s, {}).get(m)
+                    if bnd is None:
+                        verdict = "no band"
+                    elif rel < -bnd:
+                        verdict = "**beats the band**"
+                    elif rel > bnd:
+                        verdict = "slower (beyond the band)"
+                    else:
+                        verdict = "within the band"
+                    out.setdefault("ab", []).append({"a": a_, "b": b_, "scenario": s, "metric": m, "a_ms": x[:2], "b_ms": y[:2], "change_pct": round(rel, 2), "band_pct": bnd, "verdict": verdict.strip("*")})
+                    bs = f"{bnd:.1f} %" if bnd is not None else "–"
+                    print(f"| {a_} → {b_} | {s} | {m} | {x[0]:.0f} ({x[1]:.0f}) | {y[0]:.0f} ({y[1]:.0f}) | {rel:+.1f} % | {bs} | {verdict} |")
     if jout:
         with open(jout, "w") as f:
             json.dump(out, f, indent=1)

@@ -2359,6 +2359,39 @@ Testing on Windows:
   such as a test password.
 - The Windows checklist is `docs/MANUAL_TEST.md`.
 
+Page-load harness (0.26.0; details and every option in
+[scripts/perf/README-load.md](scripts/perf/README-load.md)):
+- **What it measures:** the same recorded pages in Krunk, Chrome and Edge on the test VM. Each
+  load is timed from the real input (Enter in the address bar, a link click, Alt+Left/Right) to
+  navigation start, TTFB, FCP, LCP, DOMContentLoaded and load. Back/forward-cache restores are
+  timed to the first frame. Median and p90 per page; the corpus value is the median over pages.
+- **Replay:**
+  - Web Page Replay (`wpr.exe`, cross-compiled with Go) serves the corpus. `lshim.exe`
+    (`scripts/perf/load/kinput/src/bin/lshim.rs`) sits in front of it and adds a fixed 40 ms
+    round-trip time.
+  - A private test CA, valid 90 days, is trusted in the VM's machine root store only while a pass
+    runs. `load-run.sh` removes it once the pass's `done` marker exists.
+  - These tools live in `../.pipeline/loadtools`, outside git, and are pushed when they change.
+- **Krunk under test:** a harness build, `scripts/build-dist.sh --harness`. It is the release
+  build plus `perf-harness`: the DevTools port, `KRUNK_HOST_RULES` to reach the replay, and the
+  `KRUNK_PERF_OFF` A/B switches. Release builds have none of these.
+  - Install it with `KRUNK_DIST=target/harness-dist KRUNK_APP=app260h scripts/vm.sh deploy`.
+  - Make the base profile once with `scripts/vm.sh ps1 scripts/vm-0260-prep.ps1`.
+- **A pass:**
+  ```sh
+  python3 scripts/perf/load/mkconfig.py replay 5 krunk-a,krunk-b,chrome,edge typed,link > /tmp/c.json
+  scripts/perf/load-run.sh TAG /tmp/c.json          # pushes, runs scripts/vm-0260-load.ps1 on the VM, waits, pulls
+  python3 scripts/perf/load-summary.py ../.pipeline/evidence-0.26.0/runs/TAG --pool krunk=krunk-a,krunk-b
+  ```
+  - `load-run.sh` holds `/tmp/krunk-vm-busy`, so no host build runs meanwhile.
+  - `ATTACH=1` waits for a pass that is already running.
+  - `scripts/perf/load-fill.py` reruns incomplete sessions; `load-summary.py` takes the passes in
+    order, and later sessions replace earlier ones.
+  - With the same build twice (`krunk-a`, `krunk-b`), `load-summary.py` prints the noise band
+    and, with `--ab A=B`, whether B's change beats it.
+- **Recording the corpus again:** `mkconfig.py record 1 chrome typed`, then `load-run.sh record`
+  (Chrome, real network, about 7 minutes).
+
 ## Known limitations
 - **Theme colour of open tabs (0.15.0):** after switching between light and dark, tabs that were
   already open keep the previous background colour for the moment before one of their pages
