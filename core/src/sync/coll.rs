@@ -1155,6 +1155,9 @@ mod tests {
             // 0.20.1: keeping media tabs awake is about this device's memory (it was in
             // neither list, so it never synced: this only says so).
             "keepMediaTabsAwake",
+            // 0.26.0: "Preload pages" is this device's (the synced key set, shared with
+            // Krunk for Android, stays as it is).
+            "preloadPages",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v

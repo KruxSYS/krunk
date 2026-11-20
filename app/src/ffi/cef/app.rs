@@ -383,7 +383,8 @@ fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) -> bool {
 pub(super) fn set_krunk_pref(ctx: &mut RequestContext, name: &str, mut value: Value) -> bool {
     let n = CefString::from(name);
     let mut error = CefString::from("");
-    let ok = ctx.can_set_preference(Some(&n)) != 0 && ctx.set_preference(Some(&n), Some(&mut value), Some(&mut error)) != 0;
+    let ok =
+        ctx.can_set_preference(Some(&n)) != 0 && ctx.set_preference(Some(&n), Some(&mut value), Some(&mut error)) != 0;
     if !ok {
         thread_local! {
             static WARNED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };

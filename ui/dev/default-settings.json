@@ -11,6 +11,7 @@
   "tabDiscardEnabled": false,
   "autoPip": false,
   "tabDiscardMinutes": 30,
+  "preloadPages": true,
   "adblockEnabled": true,
   "filterLists": [
     "easylist",
