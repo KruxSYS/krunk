@@ -21,6 +21,9 @@ import sys
 from collections import defaultdict
 
 METRICS = ["nav", "ttfb", "fcp", "lcp", "dcl", "load"]
+# The same times from navigation start (input → navigationStart taken out): a browser's own
+# hand-off delay (e.g. Edge's omnibox) apart from its page loading.
+NS = ["fcp_ns", "lcp_ns", "load_ns"]
 BF = ["show", "frame"]
 SCEN_ORDER = ["cold", "warm", "link", "back", "forward"]
 
@@ -46,6 +49,11 @@ def load(dirs):
             new = [json.loads(line) for line in f if line.strip()]
         replaced = {session_key(r) for r in new}
         rows = [r for r in rows if session_key(r) not in replaced] + new
+    for r in rows:
+        if isinstance(r.get("nav"), (int, float)):
+            for m in ("fcp", "lcp", "load"):
+                if isinstance(r.get(m), (int, float)):
+                    r[m + "_ns"] = r[m] - r["nav"]
     return rows
 
 
@@ -87,7 +95,7 @@ def main():
     for r in rows:
         k = (r["browser"], r.get("scenario"), r["page"])
         kinds[(r["browser"], r.get("scenario"))][r.get("kind", "?")] += 1
-        for m in METRICS + BF:
+        for m in METRICS + BF + NS:
             v = r.get(m)
             if isinstance(v, (int, float)) and r.get("kind") in ("load", "bfcache"):
                 vals[k][m].append(v)
@@ -103,7 +111,7 @@ def main():
     if typed:
         print("## Headline: corpus median (p90) over cold + warm typed loads\n")
         print("Per page: median and p90 of the cold and warm loads together; corpus: the median over the pages. ms from the input.\n")
-        hm = ["ttfb", "fcp", "lcp", "dcl", "load", "nav"]
+        hm = ["ttfb", "fcp", "lcp", "dcl", "load", "nav", "fcp_ns", "lcp_ns", "load_ns"]
         print("| browser | " + " | ".join(hm) + " | pages |")
         print("|---|" + "---|" * (len(hm) + 1))
         for b in browsers:
