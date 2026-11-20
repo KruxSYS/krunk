@@ -1602,7 +1602,8 @@ impl Settings {
             args.push(format!("--proxy-bypass-list={}", unreachable.join(";")));
         }
         // The list switches, in LIST_SWITCHES order; the user's lists are merged into ours.
-        let mut lists: Vec<String> = vec![DISABLED_FEATURES.join(","), ENABLED_FEATURES.join(","), String::new(), String::new()];
+        let mut lists: Vec<String> =
+            vec![DISABLED_FEATURES.join(","), ENABLED_FEATURES.join(","), String::new(), String::new()];
         for flag in self.extra_flags.split_whitespace() {
             let (name, value) = flag.trim_start_matches('-').split_once('=').unwrap_or((flag, ""));
             match LIST_SWITCHES.iter().position(|l| l.eq_ignore_ascii_case(name)) {
