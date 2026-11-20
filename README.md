@@ -832,7 +832,9 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   tab with that id. Made again after a theme change; never for private tabs or another new-tab
   setting. `KRUNK_PERF_TRACE=1` writes `perf.log` (per switch: path, wait, UI time, stalls;
   `scripts/perf/trace-summary.py`); the VM measurement is `scripts/vm-0250-tabs.ps1` with
-  `scripts/perf/vm-0250-run.sh`.
+  `scripts/perf/vm-0250-run.sh`. Since 0.26.0 it also writes one `load` line per top-level
+  navigation (input, engine call, the engine's steps, first paint, Krunk's UI-thread work on
+  the way, request and cookie filtering cost; `scripts/perf/load-trace-summary.py`).
 - **Moving a tab between windows** re-parents its browser's child window (`SetParent`, then
   CEF's move/resize notifications). The browser, its renderer, its request context (so a
   private tab stays private) and its history are untouched, so nothing reloads.

@@ -1277,7 +1277,7 @@ impl Browser {
             }
         });
         self.hook_tab(id, &view, host_navigation.clone(), net.clone());
-        self.hook_blocking(&view, net.clone());
+        self.hook_blocking(id, &view, net.clone());
         self.ext_attach_tab(id, &view);
         self.userscripts_attach_tab(id, &view);
         self.agent_attach_tab(id, &view);
@@ -1355,6 +1355,7 @@ impl Browser {
         let weak = self.me.clone();
         let net_start = net.clone();
         c.on_before_browse(move |nav| {
+            let t = crate::perf::now();
             let Some(b) = weak.upgrade() else { return false };
             let host = host_navigation.replace(false);
             // An email link (0.11.3): the page stays; the user's email app or site opens.
@@ -1403,6 +1404,7 @@ impl Browser {
             }
             // A new page: the old one's pointer lock ends.
             b.release_pointer_of(id, lb_core::pointer_lock::Release::Navigated);
+            crate::perf::load_before_browse(id, t, nav.redirected, host, net_start.perf_cost());
             true
         });
         let weak = self.me.clone();
@@ -1410,6 +1412,10 @@ impl Browser {
         c.on_cert_error(move |seen| weak.upgrade().is_some_and(|b| b.cert_error_seen(id, &net_cert, seen)));
         let weak = self.me.clone();
         c.on_loading(move |state: LoadingState| {
+            if !state.loading {
+                crate::perf::load_mark(id, crate::perf::Mark::LoadingDone);
+            }
+            let _s = crate::perf::LoadSpan::handler(id, "loading");
             if let Some(b) = weak.upgrade() {
                 if let Some(v) = b.views.try_borrow_mut().ok().as_mut().and_then(|v| v.get_mut(&id)) {
                     v.can_go_back = state.can_go_back;
@@ -1435,10 +1441,15 @@ impl Browser {
         let net_done = net.clone();
         c.on_load_finished(move |error| {
             if let Some(b) = weak.upgrade() {
+                let _s = crate::perf::LoadSpan::handler(id, "load_finished");
                 b.ext_tab_event("tabUpdated", serde_json::json!({ "tabId": id }));
                 b.ext_tab_left_page(id);
-                b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
+                {
+                    let _s = crate::perf::LoadSpan::step(id, "navigation_completed");
+                    b.navigation_completed(id, &net_done, error.map(LoadFailure::from_net_error));
+                }
                 if error.is_none() {
+                    let _s = crate::perf::LoadSpan::step(id, "preview_loaded");
                     b.preview_loaded(id);
                 }
                 // Once per top-level navigation, when it loaded.
@@ -1447,10 +1458,13 @@ impl Browser {
                 }
                 b.tab_changed(id);
             }
+            // After the handlers above: their time is in the line.
+            crate::perf::load_done(id, net_done.perf_cost());
         });
         let weak = self.me.clone();
         let net_address = net.clone();
         c.on_address(move |url| {
+            let _s = crate::perf::LoadSpan::handler(id, "address");
             committed.replace(url.clone());
             net_address.committed.replace(url.clone());
             if let Some(b) = weak.upgrade() {
@@ -1465,6 +1479,7 @@ impl Browser {
                     }
                     b.forget_blank_start(id);
                 }
+                crate::perf::load_mark(id, crate::perf::Mark::Commit);
                 b.release_address_focus_unless(id, &url);
                 b.hang_navigated(id);
                 b.with_tab(id, |m, t| m.set_url(t, &url));
@@ -1475,6 +1490,7 @@ impl Browser {
         });
         let weak = self.me.clone();
         c.on_title(move |title| {
+            let _s = crate::perf::LoadSpan::handler(id, "title");
             if let Some(b) = weak.upgrade() {
                 b.with_tab(id, |m, t| m.set_title(t, &title));
                 b.record_title(id);
@@ -1489,6 +1505,7 @@ impl Browser {
         });
         let weak = self.me.clone();
         c.on_favicon(move |png| {
+            let _s = crate::perf::LoadSpan::handler(id, "favicon");
             if let Some(b) = weak.upgrade() {
                 let key = {
                     use std::hash::{Hash, Hasher};
@@ -1501,7 +1518,10 @@ impl Browser {
                     return;
                 }
                 b.with_tab(id, |m, t| m.set_favicon(t, assets::png_data_url(&png)));
-                b.cache_favicon(id, &png);
+                {
+                    let _s = crate::perf::LoadSpan::step(id, "favicon_cache");
+                    b.cache_favicon(id, &png);
+                }
                 b.send_tab_update(id);
             }
         });
@@ -1564,6 +1584,8 @@ impl Browser {
         });
         let weak = self.me.clone();
         c.on_load_end(move |status| {
+            crate::perf::load_end(id, status);
+            let _s = crate::perf::LoadSpan::handler(id, "load_end");
             if let Some(b) = weak.upgrade() {
                 b.js_dialog_load_end(id);
                 b.http_auth_load_end(id, status);
@@ -2241,11 +2263,18 @@ impl Browser {
     }
 
     fn tab_changed(&self, id: TabId) {
-        self.schedule_session_save();
+        {
+            let _s = crate::perf::LoadSpan::step(id, "session_save");
+            self.schedule_session_save();
+        }
         let Some(win) = self.window_of(id) else { return };
         self.send_tab_update(id);
         if self.ws.borrow().model(win).is_some_and(|m| m.active_id() == Some(id)) {
-            self.send_nav_to(win);
+            {
+                let _s = crate::perf::LoadSpan::step(id, "send_nav");
+                self.send_nav_to(win);
+            }
+            let _s = crate::perf::LoadSpan::step(id, "update_title");
             self.update_title();
         }
     }
@@ -2289,6 +2318,7 @@ impl Browser {
 
     /// One tab's entry in its window's strip (title, address, icon, loading, sound).
     fn send_tab_update(&self, id: TabId) {
+        let _s = crate::perf::LoadSpan::step(id, "send_tab_update");
         let Some(win) = self.window_of(id) else { return };
         let info = self.ws.try_borrow().ok().and_then(|ws| ws.model(win).and_then(|m| m.info(id)));
         if let Some(mut tab) = info {
@@ -2891,6 +2921,15 @@ impl Browser {
             if let Some(k) = kind {
                 self.perf_input.set(Some((k, crate::perf::now())));
             }
+            let load = match cmd {
+                Command::Back => Some("back"),
+                Command::Forward => Some("forward"),
+                Command::Reload | Command::HardReload => Some("reload"),
+                _ => None,
+            };
+            if let (Some(k), Some(id)) = (load, self.active_id()) {
+                crate::perf::load_input(id, k, crate::perf::now());
+            }
         }
         match cmd {
             Command::ToggleAgent => self.toggle_agent(),
@@ -2923,11 +2962,11 @@ impl Browser {
                 if let Some(id) = self.active_id() {
                     self.free_stuck_connections(id);
                 }
-                self.active_do(|c| if cmd == Command::Reload { c.reload() } else { c.hard_reload() });
+                self.active_load(|c| if cmd == Command::Reload { c.reload() } else { c.hard_reload() });
             }
             Command::Stop => self.stop_active(),
-            Command::Back => self.active_do(|c| c.go_back()),
-            Command::Forward => self.active_do(|c| c.go_forward()),
+            Command::Back => self.active_load(|c| c.go_back()),
+            Command::Forward => self.active_load(|c| c.go_forward()),
             Command::Home => self.go_home(false, false),
             Command::ZoomIn => self.zoom(ZoomAction::In),
             Command::ZoomOut => self.zoom(ZoomAction::Out),
@@ -2982,6 +3021,14 @@ impl Browser {
 
     fn active_do(&self, f: impl FnOnce(&View)) {
         if let Some(c) = self.active_view() {
+            f(&c);
+        }
+    }
+
+    /// [`Self::active_do`] for a call that loads (back, forward, reload): the load trace notes it.
+    fn active_load(&self, f: impl FnOnce(&View)) {
+        if let (Some(id), Some(c)) = (self.active_id(), self.active_view()) {
+            crate::perf::load_url(id);
             f(&c);
         }
     }
@@ -3063,7 +3110,11 @@ impl Browser {
                 Ok(ContentMessage::NotificationPermission {}) => self.notification_permission_requested(id, &origin),
                 Ok(ContentMessage::Media { videos }) => self.media_changed(id, &origin, videos),
                 Ok(ContentMessage::PipBackToTab {}) => self.pip_back_to_tab(id),
-                Ok(ContentMessage::Painted {}) => self.first_load_done(id),
+                Ok(ContentMessage::Painted {}) => {
+                    crate::perf::load_mark(id, crate::perf::Mark::Painted);
+                    let _s = crate::perf::LoadSpan::handler(id, "painted");
+                    self.first_load_done(id);
+                }
                 Ok(ContentMessage::Shown {}) => self.tab_shown_signal(id),
                 // Only the store's own pages (and their tab's address decides what is installed).
                 Ok(ContentMessage::ExtStoreClick {}) => {
@@ -3149,6 +3200,17 @@ impl Browser {
             if let Some(k) = kind {
                 self.perf_input.set(Some((k, crate::perf::now())));
             }
+            // 0.26.0: a navigation of the active tab starts here (the load trace).
+            let load = match &request {
+                Request::Navigate { .. } if sender == Sender::Page(Page::NewTab) => Some("ntp"),
+                Request::Navigate { .. } => Some("omnibox"),
+                Request::AddressSuggestPick { .. } => Some("suggest"),
+                Request::OpenUrl { new_tab: false, .. } => Some("open_url"),
+                _ => None,
+            };
+            if let (Some(k), Some(id)) = (load, self.active_id()) {
+                crate::perf::load_input(id, k, crate::perf::now());
+            }
         }
         match request {
             Request::Ready => match sender {
@@ -3177,6 +3239,7 @@ impl Browser {
                     }
                     // Krunk's own page has its theme: the tab switch may show it (R7).
                     if let Some(t) = tab {
+                        crate::perf::load_mark(t, crate::perf::Mark::Painted);
                         self.first_load_done(t);
                     }
                 }

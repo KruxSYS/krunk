@@ -64,6 +64,11 @@ pub trait RequestPolicy: Send + Sync {
 
     /// A request was answered with a redirect to `new_url` (bounce-tracker bookkeeping).
     fn redirected(&self, _resource_type: i32, _from_url: &str, _new_url: &str) {}
+
+    /// Where the load trace counts this tab's filtering cost (0.26.0; read only while it is on).
+    fn perf_cost(&self) -> Option<&crate::perf::NetCost> {
+        None
+    }
 }
 
 /// Rewrites the request's header map without the named headers (case-insensitive).
@@ -205,6 +210,7 @@ wrap_resource_request_handler! {
             let resource_type = sys::cef_resource_type_t::from(request.resource_type()) as i32;
             let referrer = CefString::from(&request.referrer_url()).to_string();
             let net_request = NetRequest { url: &url, resource_type, initiator: &self.initiator, referrer: &referrer };
+            let t = crate::perf::now();
             let verdict = self.policy.check(&net_request);
             if matches!(verdict, NetVerdict::Allow { .. }) {
                 let get = CefString::from(&request.method()).to_string().eq_ignore_ascii_case("GET");
@@ -216,6 +222,11 @@ wrap_resource_request_handler! {
                     for (name, value) in [("Cache-Control", "no-cache"), ("Pragma", "no-cache")] {
                         request.set_header_by_name(Some(&CefString::from(name)), Some(&CefString::from(value)), 1);
                     }
+                }
+            }
+            if t != 0 {
+                if let Some(cost) = self.policy.perf_cost() {
+                    cost.request(t, resource_type == 0, !matches!(verdict, NetVerdict::Allow { .. }));
                 }
             }
             match verdict {
@@ -266,8 +277,7 @@ wrap_cookie_access_filter! {
             request: Option<&mut Request>,
             _cookie: Option<&Cookie>,
         ) -> ::std::os::raw::c_int {
-            let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
-            ::std::os::raw::c_int::from(self.policy.cookie_allowed(&url))
+            ::std::os::raw::c_int::from(cookie_allowed(&self.policy, request))
         }
 
         fn can_save_cookie(
@@ -278,10 +288,22 @@ wrap_cookie_access_filter! {
             _response: Option<&mut Response>,
             _cookie: Option<&Cookie>,
         ) -> ::std::os::raw::c_int {
-            let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
-            ::std::os::raw::c_int::from(self.policy.cookie_allowed(&url))
+            ::std::os::raw::c_int::from(cookie_allowed(&self.policy, request))
         }
     }
+}
+
+/// The cookie filter's answer, timed for the load trace.
+fn cookie_allowed(policy: &Arc<dyn RequestPolicy>, request: Option<&mut Request>) -> bool {
+    let t = crate::perf::now();
+    let url = request.map(|r| CefString::from(&r.url()).to_string()).unwrap_or_default();
+    let allowed = policy.cookie_allowed(&url);
+    if t != 0 {
+        if let Some(cost) = policy.perf_cost() {
+            cost.cookie(t);
+        }
+    }
+    allowed
 }
 
 /// The filter for a script response (2xx, a JavaScript type), else none.
