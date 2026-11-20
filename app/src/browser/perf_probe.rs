@@ -5,7 +5,8 @@
 //! `preconnect-block` (the engine gets an empty blocked-host set) and `filter-fast` (the request
 //! filter takes the page's address per use, as in 0.25.5) and `preload` (network prediction off,
 //! as with the setting off) and `login-defer` (login.js watches the DOM from the document's
-//! start again, as in 0.25.5).
+//! start again, as in 0.25.5) and `defer-writes` (the history visit is written at load end, as in
+//! 0.25.5).
 
 use crate::ffi::cef::Scripts;
 

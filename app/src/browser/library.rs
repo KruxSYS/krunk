@@ -266,6 +266,23 @@ impl Browser {
     // ------------------------------------------------------------ history
 
     /// A top-level navigation finished: record it (unless private/internal).
+    /// 0.26.0 (F-writes): the visit is written 1 s after the load ends, off the engine's
+    /// load-end handling (it then also has the page's final title). Measurement builds:
+    /// KRUNK_PERF_OFF=defer-writes writes it at once, as in 0.25.5.
+    pub(super) fn record_visit_soon(&self, id: TabId) {
+        #[cfg(feature = "perf-probe")]
+        if super::perf_probe::off("defer-writes") {
+            self.record_visit(id);
+            return;
+        }
+        let weak = self.me.clone();
+        crate::ffi::cef::post_ui_delayed(1000, move || {
+            if let Some(b) = weak.upgrade() {
+                b.record_visit(id);
+            }
+        });
+    }
+
     pub(super) fn record_visit(&self, id: TabId) {
         let (url, title, private) = {
             let Some(t) = self.tab(id) else { return };
