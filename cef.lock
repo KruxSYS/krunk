@@ -14,13 +14,13 @@ CEF_CRATE=156.3.0+156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 CEF_SOURCE=self-built
-CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav.tar.bz2
-CEF_SHA256=30f00b4c740e8d83bb5e52fe71f4a1ff0acdfb2e36592ae6fd6b35b95bd8b23f
+CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect.tar.bz2
+CEF_SHA256=d36aa7ee314e18056fc73649711bbf5c8b2c25d5b5f48b112fdd02cd26e5ac03
 # Where the archive is kept (outside git, with the release artifacts): the pipeline's artifact
 # store and the GitHub release of 0.12.3 (dist/). 0.5.2-0.9.0 shipped the unpatched ..._krunk-codecs
 # archive (a8bb5c42…), 0.10.0-0.12.0 ..._krunk-codecs-hidden (5aab8496…), 0.12.1-0.12.2
 # ..._krunk-codecs-hidden-brand (29d97fa8…).
-CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav.tar.bz2
+CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect.tar.bz2
 # Build inputs: CEF cf671c0, Chromium tag 156.0.8078.80, Linux->Windows cross build, GN args in
 # scripts/cef-build/cross-build.sh (is_official_build proprietary_codecs ffmpeg_branding=Chrome
 # enable_platform_hevc enable_platform_ac3_eac3_audio), MSVC 14.51.36231 / SDK 10.0.28000.0.
@@ -48,4 +48,12 @@ CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156
 #     (which hold the build tree's paths); the second half is lld's constant "LLD PDB.". Checked
 #     0.19.0 by a byte diff of all four (same size, same code, same timestamps, same checksum).
 #     resources.pak differs by the new protocol command.
-CEF_PATCHES="krunk-windowed-hidden.patch:86e46b0042bc18de8cd385124ce3623bbea1a18f7f9c8737c2000451d3c7f14b chromium-private-media.patch:1316748dc6ffb7d76d16aa02b3c8d4de7e9f4c102dd2565f42332c04e52452d6 chromium-clone-navigation.patch:e70936d42a179a5f7ad56f378a11c838284f73d708e066833f3e7b63e477d5a0 chromium-sockets-per-host.patch:1b6061d9d90a43c466f51aabe8ca06b396bfb98ac05c561b98b8983e68aa811c"
+#   scripts/cef-build/patches/chromium-preconnect-blocked-hosts.patch (0.26.0, Chromium checkout)
+#     sha256 9a118b67fded7b220409c7c360868f493ce51c9013ebe7819db3eb90c8785ea4
+#     no preconnect or DNS pre-resolve to a host in Krunk's blocked set (krunk.blocked_hosts)
+#   scripts/cef-build/patches/krunk-preconnect-pref.patch (0.26.0, CEF)
+#     sha256 b88a7d85d705eec876bb22ddaca4d1ba8ed9e29998ccf3727dc28e80e999edca
+#     pseudo-preference krunk.preconnect: the address bar's top row preconnected like Chrome's
+#     omnibox. Archive ..._krunk-codecs-hidden-brand-private-nav-preconnect (d36aa7ee…), libcef.dll
+#     33bbbe35…; 0.18.0-0.25.5 shipped ...-nav (30f00b4c…, libcef 8e5cc766…).
+CEF_PATCHES="krunk-windowed-hidden.patch:86e46b0042bc18de8cd385124ce3623bbea1a18f7f9c8737c2000451d3c7f14b chromium-private-media.patch:1316748dc6ffb7d76d16aa02b3c8d4de7e9f4c102dd2565f42332c04e52452d6 chromium-clone-navigation.patch:e70936d42a179a5f7ad56f378a11c838284f73d708e066833f3e7b63e477d5a0 chromium-sockets-per-host.patch:1b6061d9d90a43c466f51aabe8ca06b396bfb98ac05c561b98b8983e68aa811c chromium-preconnect-blocked-hosts.patch:9a118b67fded7b220409c7c360868f493ce51c9013ebe7819db3eb90c8785ea4 krunk-preconnect-pref.patch:b88a7d85d705eec876bb22ddaca4d1ba8ed9e29998ccf3727dc28e80e999edca"

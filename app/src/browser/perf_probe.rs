@@ -6,7 +6,8 @@
 //! filter takes the page's address per use, as in 0.25.5) and `preload` (network prediction off,
 //! as with the setting off) and `login-defer` (login.js watches the DOM from the document's
 //! start again, as in 0.25.5) and `defer-writes` (the history visit is written at load end, as in
-//! 0.25.5) and `cosmetic-sync` (cosmetic filters made inside on_before_browse, as in 0.25.5).
+//! 0.25.5) and `cosmetic-sync` (cosmetic filters made inside on_before_browse, as in 0.25.5) and `address-capture` (keys typed after Ctrl+L before the shell has the keyboard
+//! go to the page, as in 0.25.5).
 
 use crate::ffi::cef::Scripts;
 

@@ -34,12 +34,15 @@ export KRUNK_BASE_ENV=$(envjson "$ALL")
 export KRUNK_PRE_ENV=$(envjson "$(off preload)")
 export KRUNK_OMNI_ENV=$(envjson "$(keep preload,omnibox-preconnect)")
 export KRUNK_BLOCK_ENV=$(envjson "$(keep preload,omnibox-preconnect,preconnect-block)")
+# F-keys (address-capture) stays on everywhere (else half the cold typed cells are lost, the
+# 0.25.5 baseline); only krunk-nokeys turns it off, for the lost-key A/B in pass B.
+export KRUNK_NOKEYS_APP=$app KRUNK_NOKEYS_ENV=$(envjson "$ALL,address-capture")
 export KRUNK_FILTER_ENV=$(envjson "$(off filter-fast)")
 export KRUNK_SCRIPTS_ENV=$(envjson "$(off login-defer)")
 export KRUNK_WRITES_ENV=$(envjson "$(off defer-writes)")
 export KRUNK_COSMETIC_ENV=$(envjson "$(off cosmetic-sync)")
 python3 scripts/perf/load/mkconfig.py replay "$runs" krunk-base,krunk-pre,krunk-omni,krunk-block typed,link > /tmp/p1a.json
-python3 scripts/perf/load/mkconfig.py replay "$runs" krunk-base,krunk-filter,krunk-scripts,krunk-writes,krunk-cosmetic typed > /tmp/p1b.json
+python3 scripts/perf/load/mkconfig.py replay "$runs" krunk-base,krunk-filter,krunk-scripts,krunk-writes,krunk-cosmetic,krunk-nokeys typed > /tmp/p1b.json
 #   PASS=a|b   run only that pass (default both)
 if [ -z "${SKIP_RUN:-}" ]; then
   [ "${PASS:-a}" = a ] && { OUT=$E/p1/ab-a scripts/perf/load-run.sh p1-ab-a /tmp/p1a.json || echo "pass A reported a problem"; }
@@ -47,7 +50,8 @@ if [ -z "${SKIP_RUN:-}" ]; then
 fi
 B=(--band "$E/baseline/numbers.json")
 [ -f "$E/p1/ab-a/results.jsonl" ] && python3 scripts/perf/load-summary.py "$E/p1/ab-a" --ab krunk-base=krunk-pre --ab krunk-pre=krunk-omni --ab krunk-omni=krunk-block "${B[@]}" > "$E/p1/ab-a/summary.md"
-[ -f "$E/p1/ab-b/results.jsonl" ] && python3 scripts/perf/load-summary.py "$E/p1/ab-b" --ab krunk-base=krunk-filter --ab krunk-base=krunk-scripts --ab krunk-base=krunk-writes --ab krunk-base=krunk-cosmetic "${B[@]}" > "$E/p1/ab-b/summary.md"
+[ -f "$E/p1/ab-b/results.jsonl" ] && python3 scripts/perf/load-summary.py "$E/p1/ab-b" --ab krunk-base=krunk-filter --ab krunk-base=krunk-scripts --ab krunk-base=krunk-writes --ab krunk-base=krunk-cosmetic --ab krunk-nokeys=krunk-base "${B[@]}" > "$E/p1/ab-b/summary.md"
+[ -f "$E/p1/ab-b/results.jsonl" ] && python3 scripts/perf/lost-keys.py "$E/p1/ab-b" > "$E/p1/ab-b/lost-keys.md"
 cat "$E"/p1/ab-*/collect/krunk-base-*perf.log > /tmp/p1-base-perf.log 2>/dev/null || true
 python3 scripts/perf/load-trace-summary.py /tmp/p1-base-perf.log > "$E/p1/load-trace.md" || echo "no krunk-base perf.log"
 echo "summaries: $E/p1/ab-a/summary.md $E/p1/ab-b/summary.md $E/p1/load-trace.md"

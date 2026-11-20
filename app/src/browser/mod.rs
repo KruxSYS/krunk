@@ -15,8 +15,8 @@ use lb_core::keys::{self, Command};
 use lb_core::layout;
 use lb_core::pages::{self, Page};
 use lb_core::protocol::{
-    self, AddressEdit, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request, Sender,
-    Source, TabAction, UnlockPurpose, ZoomAction,
+    self, AddressEdit, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request,
+    Sender, Source, TabAction, UnlockPurpose, ZoomAction,
 };
 use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
@@ -2217,6 +2217,11 @@ impl Browser {
     fn address_capture_key(&self, key: KeyPress) -> bool {
         const CAPTURE: std::time::Duration = std::time::Duration::from_millis(1000);
         let Some((win, since)) = self.address_capture.get() else { return false };
+        // Measurement builds: KRUNK_PERF_OFF=address-capture (0.26.0 F-keys A/B).
+        #[cfg(feature = "perf-probe")]
+        if perf_probe::off("address-capture") {
+            return false;
+        }
         let shell = self.frame(win).and_then(|f| f.shell.try_borrow().ok()?.clone());
         let Some(shell) = shell.filter(|s| !s.has_focus() && since.elapsed() < CAPTURE && self.cur_id() == Some(win))
         else {
