@@ -28,7 +28,9 @@ devtools-port = []
 # 0.26.0 page-load harness (scripts/perf/load/, scripts/build-dist.sh --harness only, never in a
 # release): the DevTools port as above, plus KRUNK_HOST_RULES=<rules>, which is added after
 # Krunk's own --host-resolver-rules so the harness can send every host to its replay server.
-perf-harness = ["devtools-port"]
+# 0.26.0: with perf-probe, so one harness build can switch each fix off (KRUNK_PERF_OFF) for the
+# A/B measurements; without KRUNK_PERF_OFF nothing changes.
+perf-harness = ["devtools-port", "perf-probe"]
 
 [dependencies]
 lb_core = { path = "../core", package = "core" }

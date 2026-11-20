@@ -686,7 +686,13 @@ impl Browser {
     pub(super) fn push_preconnect_block(&self) {
         static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let gen = GENERATION.fetch_add(1, Relaxed) + 1;
-        if !self.settings.borrow().adblock_enabled {
+        // Measurement builds: KRUNK_PERF_OFF=preconnect-block hands the engine an empty set
+        // (0.26.0 A/B of its cost).
+        #[cfg(feature = "perf-probe")]
+        let off = super::perf_probe::off("preconnect-block");
+        #[cfg(not(feature = "perf-probe"))]
+        let off = false;
+        if off || !self.settings.borrow().adblock_enabled {
             engine::set_blocked_hosts(&[]);
             return;
         }

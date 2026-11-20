@@ -104,6 +104,11 @@ impl Browser {
         if !(url.starts_with("https://") || url.starts_with("http://")) {
             return;
         }
+        // Measurement builds: KRUNK_PERF_OFF=omnibox-preconnect (0.26.0 A/B).
+        #[cfg(feature = "perf-probe")]
+        if super::perf_probe::off("omnibox-preconnect") {
+            return;
+        }
         let Some(origin) = url::Url::parse(url).ok().map(|u| u.origin().ascii_serialization()) else { return };
         {
             let last = self.omnibox.preconnected.borrow();
