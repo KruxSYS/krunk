@@ -275,11 +275,15 @@ impl Browser {
             self.record_visit(id);
             return;
         }
+        // The address now: a tab closed or gone elsewhere within the second keeps this visit.
+        let Some((url, title, private)) = self.tab(id).map(|t| (t.url.clone(), t.title.clone(), t.private)) else {
+            return;
+        };
         let weak = self.me.clone();
         crate::ffi::cef::post_ui_delayed(1000, move || {
-            if let Some(b) = weak.upgrade() {
-                b.record_visit(id);
-            }
+            let Some(b) = weak.upgrade() else { return };
+            let title = b.tab(id).filter(|t| t.url == url).map_or(title, |t| t.title.clone());
+            b.write_visit(id, &url, &title, private);
         });
     }
 
@@ -288,16 +292,20 @@ impl Browser {
             let Some(t) = self.tab(id) else { return };
             (t.url.clone(), t.title.clone(), t.private)
         };
-        if let Some(clean) = history::visit_url(&url, private) {
+        self.write_visit(id, &url, &title, private);
+    }
+
+    fn write_visit(&self, id: TabId, url: &str, title: &str, private: bool) {
+        if let Some(clean) = history::visit_url(url, private) {
             if let Ok(store) = self.store.try_borrow() {
                 // On the UI thread: the load trace shows what the write costs a navigation.
                 let _s = crate::perf::LoadSpan::step(id, "history_visit");
-                if let Err(e) = store.record_visit(&clean, &title, now_ms()) {
+                if let Err(e) = store.record_visit(&clean, title, now_ms()) {
                     warning!("history: {e}");
                 }
             }
             let _s = crate::perf::LoadSpan::step(id, "sessionlog_visit");
-            self.sessionlog_visit(id, &clean, &title);
+            self.sessionlog_visit(id, &clean, title);
         }
     }
 
