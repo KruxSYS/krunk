@@ -2,6 +2,10 @@
 //! tab change in `perf.log`, read by `scripts/perf/trace-summary.py`: where the time between the
 //! input and the new tab on top goes (the tab model, the shell messages, layout, the wait for the
 //! new page's frame). Times are QPC ticks; the log's first line gives their frequency.
+//!
+//! 0.26.0: also one `load` line per top-level navigation of a tab ([`Load`]): when each of
+//! Krunk's own steps happened, from the input (or the engine's start, for a link) to the end
+//! of loading, the UI-thread work done for it, and what request filtering cost.
 
 use crate::tabs::TabId;
 
@@ -88,6 +92,131 @@ impl Rec {
     }
 }
 
+/// The steps of a navigation, in the order they normally happen (also the order in the line).
+pub const LOAD_MARKS: [&str; 9] = [
+    "input",
+    "load_url",
+    "before_browse",
+    "main_request",
+    "load_start",
+    "commit",
+    "painted",
+    "load_end",
+    "loading_done",
+];
+
+/// Request filtering during one navigation, from the IO thread's counters.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LoadNet {
+    /// Requests that went through the policy (`check` + `started`) and how many it stopped
+    /// (blocked or answered with a stand-in).
+    pub requests: u32,
+    pub blocked: u32,
+    pub filter_us: f64,
+    pub filter_max_us: f64,
+    /// Cookie access filter calls (send and save).
+    pub cookies: u32,
+    pub cookie_us: f64,
+    pub cookie_max_us: f64,
+}
+
+/// One top-level navigation of a tab, filled in as it happens and written once loading ends
+/// (or when the next navigation replaces it).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Load {
+    pub tab: TabId,
+    /// What started it: `omnibox`, `suggest`, `ntp`, `open_url`, `back`, `forward`, `reload`
+    /// (an input), `host` (Krunk loaded it without an input seen: a restore, a rewrite), `link`
+    /// (the engine started it: a link, a script, a redirect of the page).
+    pub kind: &'static str,
+    /// QPC of each of [`LOAD_MARKS`], when seen.
+    pub marks: [Option<i64>; 9],
+    /// Server redirects of the main request.
+    pub redirects: u32,
+    /// The main frame's HTTP status at its load end.
+    pub status: Option<i32>,
+    /// UI-thread time in Krunk's handlers of the engine's events (no nesting counted twice).
+    pub ui_ms: f64,
+    /// Named UI-thread steps: name, count, total ms (handlers and steps inside them).
+    pub ui: Vec<(&'static str, u32, f64)>,
+    pub net: LoadNet,
+}
+
+impl Load {
+    pub fn new(tab: TabId, kind: &'static str) -> Load {
+        Load {
+            tab,
+            kind,
+            marks: [None; 9],
+            redirects: 0,
+            status: None,
+            ui_ms: 0.0,
+            ui: Vec::new(),
+            net: LoadNet::default(),
+        }
+    }
+
+    /// The index of a mark in [`LOAD_MARKS`].
+    pub fn index(mark: &str) -> Option<usize> {
+        LOAD_MARKS.iter().position(|m| *m == mark)
+    }
+
+    /// Sets a mark unless it was seen already (the first one counts).
+    pub fn mark(&mut self, i: usize, qpc: i64) {
+        if let Some(m) = self.marks.get_mut(i) {
+            m.get_or_insert(qpc);
+        }
+    }
+
+    pub fn has(&self, mark: &str) -> bool {
+        Load::index(mark).is_some_and(|i| self.marks[i].is_some())
+    }
+
+    /// Adds `ms` of the UI-thread step `name`.
+    pub fn add_ui(&mut self, name: &'static str, ms: f64) {
+        match self.ui.iter_mut().find(|u| u.0 == name) {
+            Some(u) => {
+                u.1 += 1;
+                u.2 += ms;
+            }
+            None => self.ui.push((name, 1, ms)),
+        }
+    }
+
+    /// The first mark seen: the times in the line are relative to it.
+    pub fn start(&self) -> Option<i64> {
+        self.marks.iter().flatten().min().copied()
+    }
+
+    /// `end`: `done` (loading ended) or `replaced` (another navigation began first).
+    pub fn line(&self, qpf: i64, end: &str) -> String {
+        let start = self.start().unwrap_or(0);
+        let ms = |q: i64| (q - start) as f64 * 1000.0 / qpf.max(1) as f64;
+        let mut l = format!("load tab={} kind={} end={} qpc0={start}", self.tab, self.kind, sanitize(end));
+        for (name, m) in LOAD_MARKS.iter().zip(self.marks) {
+            match m {
+                Some(q) => l.push_str(&format!(" {name}={:.2}", ms(q))),
+                None => l.push_str(&format!(" {name}=-")),
+            }
+        }
+        let status = self.status.map(|s| s.to_string()).unwrap_or_else(|| "-".into());
+        l.push_str(&format!(" redirects={} status={status} ui_ms={:.2} ui=", self.redirects, self.ui_ms));
+        if self.ui.is_empty() {
+            l.push('-');
+        }
+        for (i, (name, n, total)) in self.ui.iter().enumerate() {
+            let sep = if i == 0 { "" } else { "," };
+            l.push_str(&format!("{sep}{}:{n}:{total:.2}", sanitize(name).replace([',', ':'], "_")));
+        }
+        let n = &self.net;
+        l.push_str(&format!(
+            " req={} blocked={} filter_us={:.0} filter_max_us={:.0} cookie={} cookie_us={:.0} cookie_max_us={:.0}",
+            n.requests, n.blocked, n.filter_us, n.filter_max_us, n.cookies, n.cookie_us, n.cookie_max_us
+        ));
+        l
+    }
+}
+
 /// A UI-thread task or message that ran longer than [`STALL_MS`].
 pub const STALL_MS: f64 = 16.0;
 
@@ -150,5 +279,50 @@ mod tests {
         assert_eq!(variant_name("VaultReveal { id: \"1\", password: x }"), "VaultReveal");
         assert_eq!(variant_name("Ready"), "Ready");
         assert_eq!(stall_line(5, "req:a b=c", 20.0, 1), "stall qpc=5 kind=req:a_b_c ms=20.0 depth=1");
+    }
+
+    #[test]
+    fn a_load_line_has_every_mark_relative_to_the_first() {
+        // 10 MHz: 10 000 ticks a millisecond.
+        let mut l = Load::new(3, "omnibox");
+        l.mark(Load::index("before_browse").unwrap(), 1_005_000);
+        l.mark(Load::index("input").unwrap(), 1_000_000);
+        l.mark(Load::index("load_end").unwrap(), 4_000_000);
+        // The first one counts.
+        l.mark(Load::index("load_end").unwrap(), 5_000_000);
+        assert!(l.has("input") && !l.has("commit"));
+        l.add_ui("address", 0.25);
+        l.add_ui("address", 0.5);
+        l.add_ui("title", 1.0);
+        l.ui_ms = 1.75;
+        l.status = Some(200);
+        l.net = LoadNet {
+            requests: 12,
+            blocked: 2,
+            filter_us: 340.4,
+            filter_max_us: 90.0,
+            cookies: 3,
+            cookie_us: 5.0,
+            cookie_max_us: 2.0,
+        };
+        let line = l.line(10_000_000, "done");
+        assert_eq!(
+            line,
+            "load tab=3 kind=omnibox end=done qpc0=1000000 input=0.00 load_url=- before_browse=0.50 main_request=- \
+             load_start=- commit=- painted=- load_end=300.00 loading_done=- redirects=0 status=200 ui_ms=1.75 \
+             ui=address:2:0.75,title:1:1.00 req=12 blocked=2 filter_us=340 filter_max_us=90 cookie=3 cookie_us=5 \
+             cookie_max_us=2"
+        );
+    }
+
+    #[test]
+    fn an_empty_load_line_still_has_every_key() {
+        let line = Load::new(1, "link").line(0, "replaced");
+        assert!(line.starts_with("load tab=1 kind=link end=replaced qpc0=0 input=- "), "{line}");
+        assert!(line.contains(" status=- ui_ms=0.00 ui=- req=0 "), "{line}");
+        assert!(!line.contains('\n'));
+        for m in LOAD_MARKS {
+            assert!(line.contains(&format!(" {m}=")), "{m}");
+        }
     }
 }

@@ -10,7 +10,8 @@ record kind:
                     wait_ms= swap_qpc= capture_ms=
   stall qpc= kind= ms=        a UI-thread message/task that ran > 16 ms
   move  qpc= ms=              one drag move's handling time
-Missing keys and unknown records are tolerated.
+Missing keys and unknown records are tolerated. `load` lines (0.26.0, one per navigation) are
+for load-trace-summary.py.
 
 Printed (Markdown): per record kind and reveal path the count and median/p95/max of every phase,
 input -> swap, the wait's end reasons; UI-thread stalls > 16 ms by kind; drag moves. With the

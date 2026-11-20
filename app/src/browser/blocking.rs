@@ -321,6 +321,8 @@ struct TabShared {
     /// The tab's id (0 until the view belongs to a tab) and whether it is private.
     id: AtomicU32,
     private: AtomicBool,
+    /// The load trace's filtering cost of the navigation under way (0.26.0).
+    cost: crate::perf::NetCost,
 }
 
 /// The network policy of one tab (runs on the IO thread).
@@ -466,6 +468,10 @@ impl RequestPolicy for TabPolicy {
         !self.net.trackers().is_some_and(|t| t.is_tracker(&host))
     }
 
+    fn perf_cost(&self) -> Option<&crate::perf::NetCost> {
+        Some(&self.tab.cost)
+    }
+
     fn redirected(&self, resource_type: i32, from_url: &str, new_url: &str) {
         if resource_type != 0 {
             return;
@@ -553,6 +559,11 @@ impl TabNet {
 
     pub fn blocked(&self) -> u32 {
         self.io.blocked.load(Relaxed)
+    }
+
+    /// The load trace's counters of this tab's requests (0.26.0).
+    pub fn perf_cost(&self) -> &crate::perf::NetCost {
+        &self.io.cost
     }
 
     /// The view belongs to tab `id` now (its requests are counted for it, 0.18.0).
@@ -875,10 +886,12 @@ impl Browser {
 
     /// Cosmetic filtering for a new tab view (request blocking and the
     /// privacy scripts are part of the view's options).
-    pub(super) fn hook_blocking(&self, c: &View, net: Rc<TabNet>) {
+    pub(super) fn hook_blocking(&self, id: TabId, c: &View, net: Rc<TabNet>) {
         let weak = self.me.clone();
         let c2 = c.clone();
         c.on_load_start(move || {
+            crate::perf::load_mark(id, crate::perf::Mark::LoadStart);
+            let _s = crate::perf::LoadSpan::handler(id, "load_start");
             let Some(b) = weak.upgrade() else { return };
             b.apply_default_zoom(&c2);
             if !b.net.enabled() || net.allowed() {
@@ -1218,6 +1231,7 @@ impl Browser {
             v.view.clone()
         });
         if let Some(view) = view {
+            crate::perf::load_url(id);
             view.navigate(url);
         }
     }

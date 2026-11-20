@@ -853,6 +853,18 @@ impl Browser {
     }
 }
 
+/// `get_userscript` / `get_macro`: a JSON line (id, name, … and the source's length in characters),
+/// then the source, paged like `get_text` (the paging line follows when it is cut).
+fn script_source(mut head: Value, source: &str, a: &args::GetScript, summary: String) -> ToolOutcome {
+    let max = a.max_chars.unwrap_or(RESULT_CAP).clamp(1, RESULT_CAP_MAX);
+    let page = redact::cap(source, a.offset, max);
+    head["chars"] = json!(page.total);
+    if a.offset > 0 {
+        head["offset"] = json!(a.offset);
+    }
+    ToolOutcome::ok(format!("{head}\n{}", page.into_result()), summary)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -870,16 +882,4 @@ mod tests {
         assert_eq!(agent_url("krunk://settings#privacy").unwrap(), Page::Settings.url_with_section(Some("privacy")));
         assert_eq!(agent_url("https://example.com").unwrap(), "https://example.com/");
     }
-}
-
-/// `get_userscript` / `get_macro`: a JSON line (id, name, … and the source's length in characters),
-/// then the source, paged like `get_text` (the paging line follows when it is cut).
-fn script_source(mut head: Value, source: &str, a: &args::GetScript, summary: String) -> ToolOutcome {
-    let max = a.max_chars.unwrap_or(RESULT_CAP).clamp(1, RESULT_CAP_MAX);
-    let page = redact::cap(source, a.offset, max);
-    head["chars"] = json!(page.total);
-    if a.offset > 0 {
-        head["offset"] = json!(a.offset);
-    }
-    ToolOutcome::ok(format!("{head}\n{}", page.into_result()), summary)
 }

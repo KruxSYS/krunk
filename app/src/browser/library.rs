@@ -273,10 +273,13 @@ impl Browser {
         };
         if let Some(clean) = history::visit_url(&url, private) {
             if let Ok(store) = self.store.try_borrow() {
+                // On the UI thread: the load trace shows what the write costs a navigation.
+                let _s = crate::perf::LoadSpan::step(id, "history_visit");
                 if let Err(e) = store.record_visit(&clean, &title, now_ms()) {
                     warning!("history: {e}");
                 }
             }
+            let _s = crate::perf::LoadSpan::step(id, "sessionlog_visit");
             self.sessionlog_visit(id, &clean, &title);
         }
     }
@@ -285,6 +288,7 @@ impl Browser {
     /// written every 2 s on a worker (0.10.0): pages that count something in their title
     /// ("(3) Inbox") wrote to the database on the UI thread with every change.
     pub(super) fn record_title(&self, id: TabId) {
+        let _s = crate::perf::LoadSpan::step(id, "history_title");
         let (url, title, private) = {
             let Some(t) = self.tab(id) else { return };
             (t.url.clone(), t.title.clone(), t.private)
