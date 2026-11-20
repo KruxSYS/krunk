@@ -223,6 +223,7 @@ impl Browser {
         };
         self.vpn.offline.set(!installed);
         self.net.set_offline(!installed, self.vpn_private_only());
+        engine::set_preload_offline(!installed && !self.vpn_private_only());
         self.vpn_route_changed();
         let server = self.vpn.status.borrow().server.clone();
         *self.vpn.status.borrow_mut() = VpnStatus {
@@ -641,6 +642,7 @@ impl Browser {
         }
         self.vpn.offline.set(false);
         self.net.set_offline(false, false);
+        engine::set_preload_offline(false);
         self.vpn_route_changed();
         info!("vpn: started a {} profile; Krunk's traffic goes through the local proxy {addr}", row.kind.as_str());
         if self.settings.borrow().vpn.active_profile != id {
@@ -699,6 +701,7 @@ impl Browser {
         }
         self.vpn.offline.set(false);
         self.net.set_offline(false, false);
+        engine::set_preload_offline(false);
         *self.vpn.status.borrow_mut() = VpnStatus { since_ms: now_ms(), ..VpnStatus::default() };
         if engaged {
             self.vpn_route_changed();
@@ -746,6 +749,7 @@ impl Browser {
             info!("vpn: {}", if private_only { "for private tabs only" } else { "for every tab" });
             if self.vpn.offline.get() {
                 self.net.set_offline(true, private_only);
+                engine::set_preload_offline(!private_only);
             }
             if self.vpn_engaged() {
                 // Krunk's own requests and the DNS settings follow normal tabs.

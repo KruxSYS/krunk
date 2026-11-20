@@ -188,8 +188,45 @@ pub(super) fn context_handler() -> RequestContextHandler {
     LbContextHandler::new()
 }
 
+/// 0.26.0 "Preload pages for faster browsing" (`Settings::preload_pages`), as of now.
+static PRELOAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// `net.network_prediction_options` for a context: 0 (standard: the page's preconnect and
+/// DNS-prefetch hints, preconnect on link press, the site's usual hosts, speculation-rules
+/// prefetch) in the default profile with the setting on; 2 (none) otherwise, and always in the
+/// private profile. Every early connection uses the profile's proxy (the VPN's when it runs).
+fn prediction_value(global: bool) -> i32 {
+    use std::sync::atomic::Ordering::Relaxed;
+    if global && PRELOAD.load(Relaxed) && !PRELOAD_OFFLINE.load(Relaxed) {
+        0
+    } else {
+        2
+    }
+}
+
+/// The VPN could not even put its stand-in proxy in place and Krunk is offline for normal tabs
+/// (only its request filter refuses pages): no early connections then, they would go direct.
+static PRELOAD_OFFLINE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub(super) fn set_preload_offline(offline: bool, ctx: Option<&mut RequestContext>) -> bool {
+    PRELOAD_OFFLINE.store(offline, std::sync::atomic::Ordering::Relaxed);
+    match ctx {
+        Some(ctx) => set_pref(ctx, "net.network_prediction_options", Pref::Int(prediction_value(ctx.is_global() != 0))),
+        None => true,
+    }
+}
+
+/// Changes the setting; applied to `ctx` (the default profile) at once when given.
+pub(super) fn set_preload(on: bool, ctx: Option<&mut RequestContext>) -> bool {
+    PRELOAD.store(on, std::sync::atomic::Ordering::Relaxed);
+    match ctx {
+        Some(ctx) => set_pref(ctx, "net.network_prediction_options", Pref::Int(prediction_value(ctx.is_global() != 0))),
+        None => true,
+    }
+}
+
 /// Profile preferences of every request context: no password manager or
-/// autofill (Krunk has its own vault), no network prediction and no
+/// autofill (Krunk has its own vault), network prediction only as `prediction_value` says, no
 /// local IP addresses in WebRTC. False when the VPN runs and the context did not take its
 /// proxy (its pages must not load).
 pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) -> bool {
@@ -199,8 +236,9 @@ pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) -> bool {
         ("profile.password_manager_leak_detection", Pref::Bool(false)),
         ("autofill.profile_enabled", Pref::Bool(false)),
         ("autofill.credit_card_enabled", Pref::Bool(false)),
-        // 2 = never predict (no DNS prefetch or preconnect to link targets).
-        ("net.network_prediction_options", Pref::Int(2)),
+        // 0.26.0: "Preload pages" (0 = standard) in the default profile, never in private tabs
+        // (2 = no preconnect, DNS prefetch or prefetch at all).
+        ("net.network_prediction_options", Pref::Int(prediction_value(ctx.is_global() != 0))),
         // WebRTC uses only the default public interface: no local IP
         // addresses are gathered, so no mDNS responder listens on the LAN
         // (which also triggered a Windows Firewall prompt).
@@ -338,6 +376,27 @@ fn set_pref(ctx: &mut RequestContext, name: &str, pref: Pref) -> bool {
         warning!("engine preference {name} was not kept");
     }
     kept
+}
+
+/// 0.26.0: the engine's `krunk.*` pseudo-preferences (patches/krunk-preconnect-pref.patch): never
+/// stored, nothing to read back. False (with a warning, once per name) on an engine without them.
+pub(super) fn set_krunk_pref(ctx: &mut RequestContext, name: &str, mut value: Value) -> bool {
+    let n = CefString::from(name);
+    let mut error = CefString::from("");
+    let ok = ctx.can_set_preference(Some(&n)) != 0 && ctx.set_preference(Some(&n), Some(&mut value), Some(&mut error)) != 0;
+    if !ok {
+        thread_local! {
+            static WARNED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        }
+        WARNED.with(|w| {
+            let mut w = w.borrow_mut();
+            if !w.iter().any(|x| x == name) {
+                warning!("engine preference {name}: not supported by this engine {error}");
+                w.push(name.to_string());
+            }
+        });
+    }
+    ok
 }
 
 /// Resets a preference to its default (0.14.0: the `proxy` dictionary, back to the system's

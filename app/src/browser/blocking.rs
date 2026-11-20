@@ -7,7 +7,7 @@
 //! database.
 
 use super::Browser;
-use crate::ffi::cef::{NetRequest, NetVerdict, RequestPolicy, View};
+use crate::ffi::cef::{self as engine, NetRequest, NetVerdict, RequestPolicy, View};
 use crate::ffi::http::{self, ProxyMode};
 use crate::ffi::window::AppNotifier;
 use crate::log::{info, warning};
@@ -625,6 +625,7 @@ impl Browser {
             self.store.borrow().kv_get(filterlists::USER_FILTERS_KEY).ok().flatten().unwrap_or_default();
         if !enabled {
             info!("ad blocking is off");
+            self.push_preconnect_block();
             return;
         }
         let state = std::fs::read_to_string(self.dirs.filters().join("state.json"))
@@ -648,6 +649,7 @@ impl Browser {
                 );
                 self.net.set_engine(engine);
                 self.set_scriptlet_engine(Some(scriptlets));
+                self.push_preconnect_block();
             }
             (cached, _) => {
                 info!("filter engine cache missing or stale; compiling");
@@ -674,6 +676,34 @@ impl Browser {
         if due && self.net.enabled() && !self.filters.busy.get() {
             info!("filter lists: {note}; updating");
             self.update_filter_lists(None);
+        }
+    }
+
+    /// 0.26.0: hands the engine the hosts it must never preconnect to or pre-resolve
+    /// (`lb_core::preconnect_block`): from the lists in use, made on a worker (the lists are
+    /// large); empty at once when ad blocking is off. Called whenever the lists or the switch
+    /// change. A newer call wins over a slower older one.
+    pub(super) fn push_preconnect_block(&self) {
+        static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let gen = GENERATION.fetch_add(1, Relaxed) + 1;
+        if !self.settings.borrow().adblock_enabled {
+            engine::set_blocked_hosts(&[]);
+            return;
+        }
+        let dir = self.dirs.filters();
+        let sources = self.filter_sources();
+        let state = self.filters.update.borrow().clone();
+        let spawned = std::thread::Builder::new().name("preconnect-block".into()).spawn(move || {
+            let texts = filterlists::current_texts(&dir, &sources.sources(), &state);
+            let hosts = lb_core::preconnect_block::blocked_hosts(texts.iter().map(|(_, t)| t.as_str()));
+            engine::post_ui_from_any(move || {
+                if GENERATION.load(Relaxed) == gen {
+                    engine::set_blocked_hosts(&hosts);
+                }
+            });
+        });
+        if spawned.is_err() {
+            warning!("preconnect: could not start the blocked-host worker");
         }
     }
 
@@ -792,6 +822,7 @@ impl Browser {
             info!("filter engine rebuilt; scriptlet engine {} KB", r.scriptlets.as_ref().map_or(0, |s| s.len() / 1024));
             self.net.set_engine(engine);
             self.set_scriptlet_engine(r.scriptlets);
+            self.push_preconnect_block();
         }
         let checked = r.state.last_check_ms != f.update.borrow().last_check_ms;
         if let Some(e) = &r.state.last_error {

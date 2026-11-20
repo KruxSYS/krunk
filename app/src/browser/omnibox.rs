@@ -45,7 +45,13 @@ pub(super) struct OmniboxHost {
     /// The suggest request in flight.
     suggest_job: Cell<Option<JobId>>,
     suggest_cache: RefCell<VecDeque<(String, Vec<String>)>>,
+    /// 0.26.0: the origin last preconnected for the top row, and when.
+    preconnected: RefCell<Option<(String, std::time::Instant)>>,
 }
+
+/// The same origin is not asked again within this time (the engine keeps an idle socket
+/// open for about this long).
+const PRECONNECT_AGAIN_MS: u128 = 10_000;
 
 /// The context menu's size in shell CSS px (an upper bound; the popup fits itself).
 const ADDRESS_MENU_W: f64 = 230.0;
@@ -69,6 +75,11 @@ impl Browser {
             info!("address bar: suggestions took {ms} ms to find");
         }
         let selected = inline.as_ref().map(|i| i.index);
+        // 0.26.0: the row Enter would open (the inline completion, else the first row) gets an
+        // early connection, as in Chrome.
+        if let Some(url) = inline.as_ref().map(|i| i.url.clone()).or_else(|| entries.first().map(|e| e.url.clone())) {
+            self.omnibox_preconnect(&url);
+        }
         self.post_shell(&Event::AddressSuggestions { text: text.clone(), entries: entries.clone(), inline });
         if entries.is_empty() {
             self.address_suggest_close();
@@ -82,6 +93,26 @@ impl Browser {
         self.omnibox.selected.set(selected);
         self.show_popup(PopupContent::AddressSuggest { entries, selected }, Some(popup_rect));
         self.search_suggest_schedule(&text);
+    }
+
+    /// 0.26.0: an early connection to where the top row goes ("Preload pages", never for a
+    /// private tab; the engine skips blocked hosts and uses the profile's proxy / VPN).
+    fn omnibox_preconnect(&self, url: &str) {
+        if !self.settings.borrow().preload_pages || self.active_tab().is_none_or(|t| t.private) {
+            return;
+        }
+        if !(url.starts_with("https://") || url.starts_with("http://")) {
+            return;
+        }
+        let Some(origin) = url::Url::parse(url).ok().map(|u| u.origin().ascii_serialization()) else { return };
+        {
+            let last = self.omnibox.preconnected.borrow();
+            if last.as_ref().is_some_and(|(o, t)| *o == origin && t.elapsed().as_millis() < PRECONNECT_AGAIN_MS) {
+                return;
+            }
+        }
+        *self.omnibox.preconnected.borrow_mut() = Some((origin, std::time::Instant::now()));
+        crate::ffi::cef::preconnect(url);
     }
 
     /// 0.15.0: asks the search engine about `text` after a pause, if allowed: the setting is

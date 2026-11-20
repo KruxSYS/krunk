@@ -51,6 +51,7 @@ pub mod passgen;
 pub mod perftrace;
 pub mod permissions;
 pub mod pointer_lock;
+pub mod preconnect_block;
 pub mod preprocess;
 pub mod protection;
 pub mod protocol;

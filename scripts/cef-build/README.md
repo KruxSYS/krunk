@@ -76,7 +76,8 @@ Steps (`cross-build.sh` does them; every step is idempotent, all paths under `/w
    plus `snapshot_blob.bin` copied into `Release/` (CEF's file list does not know it), then
    `tar.bz2` named like the Spotify archive with the suffix `_krunk-codecs` (0.5.2–0.9.0) or,
    with the patches, `_krunk-codecs-hidden` (0.10.0–0.12.0) and `_krunk-codecs-hidden-brand`
-   (0.12.1–0.12.2) and `_krunk-codecs-hidden-brand-private` (`CEF_FLAVOR`, since 0.12.3).
+   (0.12.1–0.12.2), `_krunk-codecs-hidden-brand-private` (0.12.3) and
+   `_krunk-codecs-hidden-brand-private-nav-preconnect` (`CEF_FLAVOR`, since 0.26.0).
 6. Re-pin in Krunk (and record each patch's SHA-256 in `cef.lock`, `CEF_PATCHES`): copy the archive into the CEF cache (`~/.cache/krunk-cef/downloads/`), set
    `CEF_SOURCE=self-built`, `CEF_ARCHIVE`, `CEF_SHA256` and `CEF_ARTIFACT` in `cef.lock`
    (`scripts/fetch-cef.sh` then skips CEF's index and checks the SHA-256 only), run
@@ -115,6 +116,26 @@ outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `
   WebSockets keep 255, a proxy 128). Six requests that never finish no longer block every tab's
   loads from that host; sixteen still do (`docs/NETWORK.md`). Not yet built: it applies cleanly
   to the 156.0.8078.80 sources (`patch -p1 --dry-run`).
+- `chromium-preconnect-blocked-hosts.patch` (0.26.0, Chromium checkout): a process-wide
+  blocked-host set (`content::PreconnectManager::SetKrunkBlockedHosts` / `IsKrunkBlocked`, a
+  locked hash set with a suffix walk). No preconnect or DNS pre-resolve starts for such a host or
+  its subdomains: the `PreconnectManagerImpl` entry points (a page's `<link rel=preconnect|
+  dns-prefetch>`, the predictor, pointer-down preconnect, the omnibox hint), Early Hints
+  preconnects (`NavigationEarlyHintsManager::MaybePreconnect`) and the main navigation's own
+  preconnect (`NavigationRequest`). Those connections are socket-level and never reach Krunk's
+  request filter, so without the set a blocked tracker would still see DNS, TCP and TLS (SNI)
+  from the user. Krunk hands over the plain `||host^` rules of its active lists
+  (`core::preconnect_block`).
+- `krunk-preconnect-pref.patch` (0.26.0, CEF checkout): three pseudo-preferences in
+  `CefRequestContextImpl::CanSetPreference` / `SetPreference`. They are never registered or
+  stored and reach the engine through the existing API, so the C API is unchanged:
+  - `krunk.preconnect` (a URL): what Chrome's omnibox does for its top match
+    (`LoadingPredictor::PrepareForPageLoad`, `HintOrigin::OMNIBOX`). It does nothing in private
+    (off-the-record) profiles, which have no predictor, or with `net.network_prediction_options`
+    = 2, and it uses the profile's network context and so its proxy (the VPN).
+  - `krunk.blocked_hosts` (a list): the set above.
+  - `krunk.predictor_clear`: forgets what the loading predictor learned (Krunk sends it when
+    history is cleared).
 - `krunk-windowed-hidden.patch`: `CefBrowserHost::WasHidden` works for windowed (Alloy)
   browsers. The native Aura delegate hides or shows the WebContents' own aura window; the
   occlusion tracker then reports it HIDDEN and `WebContentsViewAura` calls `WasHidden()` itself,

@@ -1,0 +1,182 @@
+--- a/content/public/browser/preconnect_manager.h
++++ b/content/public/browser/preconnect_manager.h
+@@ -6,6 +6,8 @@
+ #define CONTENT_PUBLIC_BROWSER_PRECONNECT_MANAGER_H_
+ 
+ #include <memory>
++#include <string>
++#include <vector>
+ 
+ #include "base/memory/weak_ptr.h"
+ #include "base/time/time.h"
+@@ -166,6 +168,13 @@
+   static std::unique_ptr<PreconnectManager> Create(
+       base::WeakPtr<PreconnectManager::Delegate> delegate,
+       BrowserContext* browser_context);
++
++  // Krunk: hosts its ad blocker blocks (plain `||host^` rules), set by the
++  // embedder. A preconnect or DNS pre-resolve never starts for such a host or
++  // any of its subdomains: those are socket-level and never reach the
++  // embedder's request filter. Profile-wide; any thread.
++  static void SetKrunkBlockedHosts(std::vector<std::string> hosts);
++  static bool IsKrunkBlocked(const GURL& url);
+ };
+ 
+ }  // namespace content
+--- a/content/browser/preloading/preconnect/preconnect_manager_impl.cc
++++ b/content/browser/preloading/preconnect/preconnect_manager_impl.cc
+@@ -4,12 +4,17 @@
+ 
+ #include "content/browser/preloading/preconnect/preconnect_manager_impl.h"
+ 
++#include <string>
++#include <unordered_set>
+ #include <utility>
+ 
+ #include "base/containers/adapters.h"
+ #include "base/feature_list.h"
+ #include "base/functional/bind.h"
+ #include "base/metrics/histogram_macros.h"
++#include "base/no_destructor.h"
++#include "base/strings/string_util.h"
++#include "base/synchronization/lock.h"
+ #include "base/not_fatal_until.h"
+ #include "base/trace_event/trace_event.h"
+ #include "base/types/optional_util.h"
+@@ -27,6 +32,54 @@
+ 
+ namespace content {
+ 
++// Krunk: the blocked-host set (PreconnectManager::SetKrunkBlockedHosts).
++namespace {
++struct KrunkBlocked {
++  base::Lock lock;
++  std::unordered_set<std::string> hosts;
++};
++KrunkBlocked& GetKrunkBlocked() {
++  static base::NoDestructor<KrunkBlocked> blocked;
++  return *blocked;
++}
++}  // namespace
++
++// static
++void PreconnectManager::SetKrunkBlockedHosts(std::vector<std::string> hosts) {
++  KrunkBlocked& b = GetKrunkBlocked();
++  base::AutoLock guard(b.lock);
++  b.hosts.clear();
++  for (auto& h : hosts) {
++    b.hosts.insert(base::ToLowerASCII(h));
++  }
++}
++
++// static
++bool PreconnectManager::IsKrunkBlocked(const GURL& url) {
++  if (!url.has_host()) {
++    return false;
++  }
++  KrunkBlocked& b = GetKrunkBlocked();
++  base::AutoLock guard(b.lock);
++  if (b.hosts.empty()) {
++    return false;
++  }
++  // a.b.tracker.com, b.tracker.com, tracker.com, com.
++  std::string host = base::ToLowerASCII(url.host());
++  std::string_view h(host);
++  while (!h.empty()) {
++    if (b.hosts.contains(std::string(h))) {
++      return true;
++    }
++    size_t dot = h.find('.');
++    if (dot == std::string_view::npos) {
++      break;
++    }
++    h.remove_prefix(dot + 1);
++  }
++  return false;
++}
++
+ const bool kAllowCredentialsOnPreconnectByDefault = true;
+ 
+ std::unique_ptr<PreconnectManager> PreconnectManager::Create(
+@@ -141,6 +194,12 @@
+   if (!url.SchemeIsHTTPOrHTTPS()) {
+     return;
+   }
++  std::erase_if(requests, [](const content::PreconnectRequest& r) {
++    return PreconnectManager::IsKrunkBlocked(r.origin.GetURL());
++  });
++  if (requests.empty()) {
++    return;
++  }
+   PreresolveInfo* info;
+   if (preresolve_info_.find(url) == preresolve_info_.end()) {
+     auto iterator_and_whether_inserted = preresolve_info_.emplace(
+@@ -172,7 +231,7 @@
+   if (!delegate_ || !delegate_->IsPreconnectEnabled()) {
+     return;
+   }
+-  if (!url.SchemeIsHTTPOrHTTPS()) {
++  if (!url.SchemeIsHTTPOrHTTPS() || IsKrunkBlocked(url)) {
+     return;
+   }
+   PreresolveJobId job_id = preresolve_jobs_.Add(std::make_unique<PreresolveJob>(
+@@ -198,7 +257,7 @@
+   }
+   // Push jobs in front of the queue due to higher priority.
+   for (const GURL& url : base::Reversed(urls)) {
+-    if (!url.SchemeIsHTTPOrHTTPS()) {
++    if (!url.SchemeIsHTTPOrHTTPS() || IsKrunkBlocked(url)) {
+       continue;
+     }
+     PreresolveJobId job_id =
+@@ -229,7 +288,7 @@
+   if (!delegate_ || !delegate_->IsPreconnectEnabled()) {
+     return;
+   }
+-  if (!url.SchemeIsHTTPOrHTTPS()) {
++  if (!url.SchemeIsHTTPOrHTTPS() || IsKrunkBlocked(url)) {
+     return;
+   }
+ 
+--- a/content/browser/loader/navigation_early_hints_manager.cc
++++ b/content/browser/loader/navigation_early_hints_manager.cc
+@@ -9,6 +9,7 @@
+ #include "base/task/single_thread_task_runner.h"
+ #include "content/browser/connection_allowlist_utils.h"
+ #include "content/public/browser/browser_context.h"
++#include "content/public/browser/preconnect_manager.h"
+ #include "content/public/browser/global_request_id.h"
+ #include "content/public/browser/storage_partition.h"
+ #include "content/public/browser/url_loader_throttles.h"
+@@ -516,6 +517,10 @@
+   if (preconnect_entries_.contains(entry)) {
+     return;
+   }
++  // Krunk: no early connection to a host its ad blocker blocks.
++  if (PreconnectManager::IsKrunkBlocked(link->href)) {
++    return;
++  }
+ 
+   network::mojom::NetworkContext* network_context = GetNetworkContext();
+   if (!network_context) {
+--- a/content/browser/renderer_host/navigation_request.cc
++++ b/content/browser/renderer_host/navigation_request.cc
+@@ -124,6 +124,7 @@
+ #include "content/common/features.h"
+ #include "content/common/navigation_params_utils.h"
+ #include "content/public/browser/browser_context.h"
++#include "content/public/browser/preconnect_manager.h"
+ #include "content/public/browser/browser_task_traits.h"
+ #include "content/public/browser/browser_thread.h"
+ #include "content/public/browser/child_process_host.h"
+@@ -2156,7 +2157,9 @@
+   if (NeedsUrlLoader() && common_params_->url.SchemeIsHTTPOrHTTPS()) {
+     if (GetContentClient()->browser()->ShouldPreconnectNavigation(
+             frame_tree_node_->current_frame_host()) &&
+-        IsAllowedByConnectionAllowlist(/*is_redirect=*/false)) {
++        IsAllowedByConnectionAllowlist(/*is_redirect=*/false) &&
++        // Krunk: not to a host its ad blocker blocks.
++        !PreconnectManager::IsKrunkBlocked(common_params_->url)) {
+       auto* storage_partition =
+           frame_tree_node_->current_frame_host()->GetStoragePartition();
+ 

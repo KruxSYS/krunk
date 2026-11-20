@@ -79,6 +79,26 @@ const hostRules = () =>
       ? 'MAP *:80 127.0.0.1:8080, MAP *:443 127.0.0.1:8081, EXCLUDE localhost'
       : 'MAP *:80 127.0.0.1:18080, MAP *:443 127.0.0.1:18443, EXCLUDE localhost';
 
+// Files a session leaves in its profile (cfg.collect: paths relative to the profile, e.g.
+// "Krunk\\perf.log", "trace.json") are kept as OUT\collect\<session>-<name> before the next
+// session wipes the profile.
+let lastSession = null;
+function collect() {
+  if (!lastSession || !cfg.collect) return;
+  fs.mkdirSync(path.join(OUT, 'collect'), { recursive: true });
+  for (const rel of cfg.collect) {
+    const from = path.join(lastSession.profile, rel);
+    if (fs.existsSync(from)) {
+      try {
+        fs.copyFileSync(from, path.join(OUT, 'collect', `${lastSession.tag}-${path.basename(rel)}`));
+      } catch (e) {
+        log('collect', from, String(e));
+      }
+    }
+  }
+  lastSession = null;
+}
+
 function launch(name, profile) {
   rmrf(profile);
   if (name === 'krunk' || name.startsWith('krunk')) {
@@ -99,6 +119,7 @@ function launch(name, profile) {
     '--start-maximized',
     '--disable-quic',
     `--remote-debugging-port=${PORT}`,
+    ...(cfg.browserArgs || []).map((a) => a.replaceAll('{profile}', profile)),
     BLANK,
   ];
   const rules = hostRules();
@@ -191,19 +212,33 @@ function kinput(...steps) {
   return { epoch: Number(last[1]), qpc: Number(last[2]) };
 }
 
-const READ = `JSON.stringify((() => {
+const READ = `(async () => {
   const lp = window.__lp || {};
   const n = performance.getEntriesByType('navigation')[0];
   const wall = lp.now ? lp.now() : Date.now();
-  return { url: location.href, ready: document.readyState, to: performance.timeOrigin,
+  // A document the observer missed (a session attached after it started): the buffered entries.
+  let fcp = lp.fcp, lcp = lp.lcp, lcpWhat = lp.lcpWhat;
+  if (!window.__lp) {
+    const p = performance.getEntriesByName('first-contentful-paint')[0];
+    fcp = p ? p.startTime : null;
+    const e = await new Promise((r) => {
+      try {
+        new PerformanceObserver((l) => r(l.getEntries().at(-1))).observe({ type: 'largest-contentful-paint', buffered: true });
+      } catch { r(null); }
+      setTimeout(() => r(null), 300);
+    });
+    lcp = e ? e.startTime : null;
+    lcpWhat = e ? (e.url || (e.element && e.element.tagName) || '') : '';
+  }
+  return JSON.stringify({ url: location.href, ready: document.readyState, to: performance.timeOrigin,
     skew: wall - (performance.timeOrigin + performance.now()),
     nav: n && { type: n.type, act: n.activationStart || 0, req: n.requestStart, ttfb: n.responseStart,
       dcl: n.domContentLoadedEventEnd, load: n.loadEventEnd, proto: n.nextHopProtocol },
-    fcp: lp.fcp, lcp: lp.lcp, lcpSize: lp.lcpSize, lcpWhat: lp.lcpWhat, shows: lp.shows || [],
-    res: performance.getEntriesByType('resource').length, observed: !!window.__lp };
-})())`;
+    fcp, lcp, lcpSize: lp.lcpSize, lcpWhat, shows: lp.shows || [],
+    res: performance.getEntriesByType('resource').length, observed: !!window.__lp });
+})()`;
 async function read(s) {
-  const r = await s.send('Runtime.evaluate', { expression: READ, returnByValue: true });
+  const r = await s.send('Runtime.evaluate', { expression: READ, returnByValue: true, awaitPromise: true });
   try {
     return JSON.parse(r.result.result.value);
   } catch {
@@ -227,29 +262,43 @@ async function measure(s, before, expectHost, timeoutMs = 45000) {
   if (before) s.seen.add(before.to);
   const t0 = Date.now();
   let st = null;
+  let other = null;
   while (Date.now() - t0 < timeoutMs) {
     await sleep(200);
-    st = await read(s);
+    st = await read(other || s);
+    if (!other && Date.now() - t0 > 3000 && (!st || hostOf(st.url) !== expectHost)) {
+      // The load went to another browser of the engine (not the tab the session watches).
+      const t = (await targets()).find((x) => hostOf(x.url) === expectHost);
+      if (t) {
+        log('measure: the load is in another target', t.url, '; watched', st?.url);
+        other = await session(t);
+        continue;
+      }
+    }
     if (!st || hostOf(st.url) !== expectHost) continue;
     if (!s.seen.has(st.to)) {
       if (st.nav && st.nav.load > 0) {
         await sleep(settle);
         st = (await read(s)) || st;
         s.seen.add(st.to);
-        return { kind: 'load', st };
+        other?.close();
+        return { kind: 'load', st, followed: !!other };
       }
     } else if (st.shows.length > (st.to === before?.to ? before.shows.length : 0) || (st.to !== before?.to && st.shows.length)) {
       await sleep(300);
       return { kind: 'bfcache', st: (await read(s)) || st };
     }
   }
+  try {
+    log('measure: timeout; targets:', (await targets()).map((x) => x.url.slice(0, 80)).join(' | '));
+  } catch {}
   return { kind: 'timeout', st };
 }
 
 function row(base, inputEpoch, m) {
   const st = m.st || {};
   const rel = (v) => (v == null || !(v > 0) ? null : +(st.to + v + (st.skew || 0) - inputEpoch).toFixed(1));
-  const o = { ...base, kind: m.kind, url: st.url, res: st.res, observed: st.observed };
+  const o = { ...base, kind: m.kind, url: st.url, res: st.res, observed: st.observed, followed: m.followed || undefined };
   if (m.kind === 'load') {
     const n = st.nav || {};
     Object.assign(o, {
@@ -301,9 +350,11 @@ function bfReasons(s) {
   return out;
 }
 
-async function startBrowser(b, profile) {
+async function startBrowser(b, profile, tag) {
   killAll();
   await sleep(1500);
+  collect();
+  lastSession = { profile, tag: tag || b };
   launch(b, profile);
   if (!(await ready())) throw new Error(`${b}: no DevTools port`);
   await sleep(cfg.startIdleMs ?? 8000);
@@ -318,7 +369,7 @@ async function startBrowser(b, profile) {
 
 async function typed(b, page, run) {
   const profile = path.join(cfg.profiles || 'C:\\pipeline\\krunk\\lp', `${b}`);
-  const s = await startBrowser(b, profile);
+  const s = await startBrowser(b, profile, `${b}-${page.id}-${run}-typed`);
   const host = hostOf(page.url);
   for (const scen of ['cold', 'warm']) {
     const before = await read(s);
@@ -337,7 +388,7 @@ async function typed(b, page, run) {
 
 async function link(b, page, run) {
   const profile = path.join(cfg.profiles || 'C:\\pipeline\\krunk\\lp', `${b}`);
-  const s = await startBrowser(b, profile);
+  const s = await startBrowser(b, profile, `${b}-${page.id}-${run}-link`);
   const host = hostOf(page.url);
   await cdpGo(s, `http://127.0.0.1:${AUX}/link?to=${encodeURIComponent(page.url)}`);
   const [cx, cy] = cfg.clickAt || [640, 500];
@@ -450,6 +501,8 @@ async function main() {
     }
   }
   killAll();
+  await sleep(1500);
+  collect();
   await stopServers();
   log('done');
   fs.writeFileSync(path.join(OUT, 'done'), 'ok');

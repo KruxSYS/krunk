@@ -59,6 +59,11 @@ while :; do
 done
 echo "== $tag: $st after $(( ($(date +%s) - start) / 60 )) min"
 for f in results.jsonl run.log wpr.log lshim.log; do vm get "$L/out/$tag/$f" "$out/$f" 2>/dev/null || true; done
+# Files kept from the sessions (config "collect": perf.log, traces).
+if vm sh "Test-Path $L/out/$tag/collect" | grep -q True; then
+  vm sh "Compress-Archive -Force -Path $L/out/$tag/collect/* -DestinationPath $L/out/$tag/collect.zip" >/dev/null
+  vm get "$L/out/$tag/collect.zip" "$out/collect.zip" && (mkdir -p "$out/collect" && cd "$out/collect" && unzip -oq ../collect.zip && rm ../collect.zip)
+fi
 cp "$conf" "$out/config.json"
 python3 scripts/perf/load-summary.py "$out" > "$out/summary.md" || echo "load-summary failed"
 [ "$st" = ok ]

@@ -363,6 +363,9 @@ impl Browser {
             if let Err(e) = r {
                 warning!("clear history: {e}");
             }
+            // 0.26.0: what the engine's loading predictor learned from the visits goes too
+            // (all of it, also for a time range).
+            crate::ffi::cef::clear_predictor();
             if data.since.is_none() {
                 let _ = self.store.borrow().vacuum();
             }

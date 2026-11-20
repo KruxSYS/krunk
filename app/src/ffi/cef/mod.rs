@@ -268,6 +268,69 @@ fn browser_closed(browser: &Browser, private: bool) {
 }
 
 /// The in-memory request context shared by private tabs (created on demand).
+/// 0.26.0 "Preload pages for faster browsing": the default profile's network prediction, at once
+/// once the engine runs (before that, the value its context starts with). Private tabs never.
+pub fn set_preload(on: bool) -> bool {
+    let mut global = request_context_get_global_context();
+    let ok = app::set_preload(on, global.as_mut());
+    info!("preload pages: {}{}", if on { "on" } else { "off" }, if ok { "" } else { " (not applied)" });
+    ok
+}
+
+/// 0.26.0: hosts the engine must never preconnect to or pre-resolve (the ad blocker's plain host
+/// rules, `lb_core::preconnect_block`); empty when blocking is off. Process-wide.
+pub fn set_blocked_hosts(hosts: &[String]) -> bool {
+    let (Some(mut global), Some(mut value), Some(mut list)) =
+        (request_context_get_global_context(), value_create(), list_value_create())
+    else {
+        return false;
+    };
+    list.set_size(hosts.len());
+    for (i, h) in hosts.iter().enumerate() {
+        list.set_string(i, Some(&CefString::from(h.as_str())));
+    }
+    value.set_list(Some(&mut list));
+    let ok = app::set_krunk_pref(&mut global, "krunk.blocked_hosts", value);
+    if ok {
+        info!("preconnect: {} blocked host(s) handed to the engine", hosts.len());
+    }
+    ok
+}
+
+/// 0.26.0: what Chrome's omnibox does for its top match: the engine connects early to the site
+/// (and to the hosts it usually needs) in the default profile. A no-op when "Preload pages" is off
+/// (the engine checks its prediction preference) and for blocked hosts. Never call it for
+/// private tabs.
+pub fn preconnect(url: &str) -> bool {
+    let (Some(mut global), Some(mut value)) = (request_context_get_global_context(), value_create()) else {
+        return false;
+    };
+    value.set_string(Some(&CefString::from(url)));
+    app::set_krunk_pref(&mut global, "krunk.preconnect", value)
+}
+
+/// 0.26.0: forgets what the engine's loading predictor learned (the hosts each site needs),
+/// with the history.
+pub fn clear_predictor() -> bool {
+    let (Some(mut global), Some(mut value)) = (request_context_get_global_context(), value_create()) else {
+        return false;
+    };
+    value.set_bool(1);
+    app::set_krunk_pref(&mut global, "krunk.predictor_clear", value)
+}
+
+/// 0.26.0: Krunk is offline for normal tabs (the VPN's stand-in could not be put in place): no
+/// network prediction meanwhile.
+pub fn set_preload_offline(offline: bool) {
+    let mut global = request_context_get_global_context();
+    app::set_preload_offline(offline, global.as_mut());
+}
+
+/// The setting the default profile starts with (before the engine runs: no CEF call).
+pub fn init_preload(on: bool) {
+    app::set_preload(on, None);
+}
+
 /// See `app::set_doh`.
 pub fn set_doh(mode: &str, templates: &str) -> bool {
     app::set_doh(mode, templates)

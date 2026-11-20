@@ -322,6 +322,9 @@ impl Browser {
         if old.dns != new.dns {
             self.apply_dns();
         }
+        if old.preload_pages != new.preload_pages {
+            engine::set_preload(new.preload_pages);
+        }
         let lists_changed =
             old.effective_filter_lists() != new.effective_filter_lists() || old.custom_lists != new.custom_lists;
         if old.adblock_enabled != new.adblock_enabled || lists_changed {
@@ -335,6 +338,8 @@ impl Browser {
                 }
             }
             self.set_scriptlet_engine(None);
+            // A list change pushes it again with the rebuilt engine.
+            self.push_preconnect_block();
             info!("ad blocking {}", if new.adblock_enabled { "on" } else { "off" });
         }
         // Everything else (search engine, startup, HTTPS-only, tracking
@@ -543,6 +548,7 @@ impl Browser {
         let origins = self.origins_to_clear(clear.cookies, None);
         if clear.history {
             let _ = self.store.borrow_mut().clear_history();
+            engine::clear_predictor();
         }
         if clear.downloads {
             self.downloads.borrow_mut().clear_finished();

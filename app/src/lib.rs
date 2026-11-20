@@ -108,6 +108,8 @@ fn run() -> Result<i32, String> {
         background: browser::engine_background(&settings),
     };
     info!("Krunk's switches: {}", settings.browser_arguments());
+    // The default profile's network prediction starts as the setting says (0.26.0).
+    ffi::cef::init_preload(settings.preload_pages);
     // Before the engine launches any renderer: they get the state on their command line.
     ffi::cef::set_no_hints(!settings.headers.send_client_hints);
     let window = ffi::window::Window::create_main("Krunk")?;

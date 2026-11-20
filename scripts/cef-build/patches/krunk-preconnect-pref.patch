@@ -1,0 +1,117 @@
+--- a/libcef/browser/request_context_impl.cc
++++ b/libcef/browser/request_context_impl.cc
+@@ -17,6 +17,9 @@
+ #include "cef/libcef/common/task_runner_impl.h"
+ #include "cef/libcef/common/values_impl.h"
+ #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
++#include "chrome/browser/predictors/loading_predictor.h"
++#include "chrome/browser/predictors/loading_predictor_factory.h"
++#include "chrome/browser/predictors/resource_prefetch_predictor.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/themes/theme_service.h"
+ #include "chrome/browser/themes/theme_service_factory.h"
+@@ -24,10 +27,12 @@
+ #include "components/prefs/pref_service.h"
+ #include "content/public/browser/browser_task_traits.h"
+ #include "content/public/browser/child_process_host.h"
++#include "content/public/browser/preconnect_manager.h"
+ #include "content/public/browser/ssl_host_state_delegate.h"
+ #include "mojo/public/cpp/bindings/receiver.h"
+ #include "mojo/public/cpp/bindings/remote.h"
+ #include "net/dns/host_resolver.h"
++#include "services/network/public/cpp/constants.h"
+ #include "services/network/public/cpp/resolve_host_client_base.h"
+ #include "services/network/public/mojom/clear_data_filter.mojom.h"
+ #include "services/network/public/mojom/network_context.mojom.h"
+@@ -442,11 +447,80 @@
+   return pref_helper::GetAllPreferences(pref_service, include_defaults);
+ }
+ 
++namespace {
++
++// Krunk: pseudo-preferences, never registered or stored. They reach the engine
++// through the existing SetPreference API (no C API change).
++//   krunk.preconnect      string URL: what Chrome's omnibox does for its top
++//                         match (LoadingPredictor, HintOrigin::OMNIBOX). A no-op
++//                         in off-the-record profiles (no predictor) and with
++//                         net.network_prediction_options = 2; uses the
++//                         profile's network context, so its proxy.
++//   krunk.blocked_hosts   list of host strings: content::PreconnectManager's
++//                         blocked-host set (no preconnect / DNS pre-resolve).
++//   krunk.predictor_clear any value: forgets what the predictor learned.
++constexpr char kKrunkPreconnect[] = "krunk.preconnect";
++constexpr char kKrunkBlockedHosts[] = "krunk.blocked_hosts";
++constexpr char kKrunkPredictorClear[] = "krunk.predictor_clear";
++
++bool IsKrunkPref(const std::string& name) {
++  return name == kKrunkPreconnect || name == kKrunkBlockedHosts ||
++         name == kKrunkPredictorClear;
++}
++
++bool SetKrunkPref(Profile* profile,
++                  const std::string& name,
++                  CefRefPtr<CefValue> value,
++                  CefString& error) {
++  auto* predictor =
++      profile ? predictors::LoadingPredictorFactory::GetForProfile(profile)
++              : nullptr;
++  if (name == kKrunkBlockedHosts) {
++    std::vector<std::string> hosts;
++    if (value && value->GetType() == VTYPE_LIST) {
++      CefRefPtr<CefListValue> list = value->GetList();
++      hosts.reserve(list->GetSize());
++      for (size_t i = 0; i < list->GetSize(); ++i) {
++        hosts.push_back(list->GetString(i).ToString());
++      }
++    }
++    content::PreconnectManager::SetKrunkBlockedHosts(std::move(hosts));
++    return true;
++  }
++  if (name == kKrunkPredictorClear) {
++    if (predictor && predictor->resource_prefetch_predictor()) {
++      predictor->resource_prefetch_predictor()->DeleteAllUrls();
++    }
++    return true;
++  }
++  if (!value || value->GetType() != VTYPE_STRING) {
++    error = "krunk.preconnect needs a URL";
++    return false;
++  }
++  GURL url(value->GetString().ToString());
++  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
++    error = "krunk.preconnect needs an http(s) URL";
++    return false;
++  }
++  if (predictor) {
++    predictor->PrepareForPageLoad(std::nullopt, url,
++                                  predictors::HintOrigin::OMNIBOX,
++                                  network::GetNoOpNetworkRestrictionsId(),
++                                  /*preconnectable=*/true);
++  }
++  return true;
++}
++
++}  // namespace
++
+ bool CefRequestContextImpl::CanSetPreference(const CefString& name) {
+   if (!VerifyBrowserContext()) {
+     return false;
+   }
+ 
++  if (IsKrunkPref(name.ToString())) {
++    return true;
++  }
+   PrefService* pref_service = browser_context()->AsProfile()->GetPrefs();
+   return pref_helper::CanSetPreference(pref_service, name);
+ }
+@@ -458,6 +532,10 @@
+     return false;
+   }
+ 
++  if (IsKrunkPref(name.ToString())) {
++    return SetKrunkPref(browser_context()->AsProfile(), name.ToString(), value,
++                        error);
++  }
+   PrefService* pref_service = browser_context()->AsProfile()->GetPrefs();
+   return pref_helper::SetPreference(pref_service, name, value, error);
+ }
