@@ -98,7 +98,7 @@ impl Browser {
     /// 0.26.0: an early connection to where the top row goes ("Preload pages", never for a
     /// private tab; the engine skips blocked hosts and uses the profile's proxy / VPN).
     fn omnibox_preconnect(&self, url: &str) {
-        if !self.settings.borrow().preload_pages || self.active_tab().is_none_or(|t| t.private) {
+        if !super::preload_effective(&self.settings.borrow()) || self.active_tab().is_none_or(|t| t.private) {
             return;
         }
         if !(url.starts_with("https://") || url.starts_with("http://")) {

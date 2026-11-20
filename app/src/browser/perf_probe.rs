@@ -3,7 +3,8 @@
 //! DevTools domains), so a benchmark can show what each costs (R24, `speedometer-0.7.0.md`).
 //! 0.26.0 adds `omnibox-preconnect` (no early connection for the address bar's top row) and
 //! `preconnect-block` (the engine gets an empty blocked-host set) and `filter-fast` (the request
-//! filter takes the page's address per use, as in 0.25.5).
+//! filter takes the page's address per use, as in 0.25.5) and `preload` (network prediction off,
+//! as with the setting off).
 
 use crate::ffi::cef::Scripts;
 

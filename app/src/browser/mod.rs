@@ -78,6 +78,16 @@ mod navmenu;
 mod omnibox;
 #[cfg(feature = "perf-probe")]
 mod perf_probe;
+
+/// 0.26.0: "Preload pages for faster browsing" as the engine gets it. Measurement builds:
+/// `KRUNK_PERF_OFF=preload` turns it off whatever the setting says (the F-pre A/B).
+pub fn preload_effective(s: &Settings) -> bool {
+    #[cfg(feature = "perf-probe")]
+    if perf_probe::off("preload") {
+        return false;
+    }
+    s.preload_pages
+}
 mod permissions;
 mod pip;
 mod pointer;

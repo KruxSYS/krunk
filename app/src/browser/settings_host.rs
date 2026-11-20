@@ -323,7 +323,7 @@ impl Browser {
             self.apply_dns();
         }
         if old.preload_pages != new.preload_pages {
-            engine::set_preload(new.preload_pages);
+            engine::set_preload(super::preload_effective(new));
         }
         let lists_changed =
             old.effective_filter_lists() != new.effective_filter_lists() || old.custom_lists != new.custom_lists;

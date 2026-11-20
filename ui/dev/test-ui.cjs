@@ -3528,6 +3528,15 @@ async function testSettings(browser) {
   check((await lastSent(page, 'saveSettings')).settings.autoPip === true, 'automatic Picture-in-Picture can be switched on');
   await page.click('#autoPip');
   await page.waitForTimeout(60);
+  // 0.26.0: "Preload pages for faster browsing", on by default (like Chrome), under Tabs and memory.
+  check(await page.isChecked('#preloadPages'), 'defaults: preload pages on');
+  await page.click('#preloadPages');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.preloadPages === false, 'preload pages can be switched off');
+  await page.click('#preloadPages');
+  await page.waitForTimeout(60);
+  check((await lastSent(page, 'saveSettings')).settings.preloadPages === true, 'and on again');
+  check((await page.textContent('label[for=preloadPages] ~ .desc')).includes('private tabs'), 'its description: never in private tabs');
   check((await page.locator('#trackingPrevention, [data-key=smartscreen]').count()) === 0, 'no Edge-only settings');
   check(!(await page.isChecked('[data-key=engineSecurityComponents]')), 'defaults: no engine downloads from Google');
   // 0.6.0: protected content (Widevine) off by default, needs a restart, shows the CDM status.
