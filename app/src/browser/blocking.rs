@@ -333,6 +333,20 @@ impl TabShared {
     }
 }
 
+/// Measurement builds: `KRUNK_PERF_OFF=cosmetic-sync` makes a page's cosmetic filters inside
+/// `on_before_browse`, as in 0.25.5 (the A side of the F-cosmetic A/B).
+#[inline]
+fn cosmetic_sync() -> bool {
+    #[cfg(feature = "perf-probe")]
+    {
+        super::perf_probe::off("cosmetic-sync")
+    }
+    #[cfg(not(feature = "perf-probe"))]
+    {
+        false
+    }
+}
+
 /// Measurement builds: `KRUNK_PERF_OFF=filter-fast` takes the page's address per use, as in
 /// 0.25.5 (the A side of the F-filter A/B). Always false in other builds.
 #[inline]
@@ -527,6 +541,9 @@ pub(super) struct TabNet {
     pub css: RefCell<String>,
     pub generichide: Cell<bool>,
     pub exceptions: RefCell<HashSet<String>>,
+    /// 0.26.0 (F-cosmetic): the page whose cosmetic filters are still to be made
+    /// (`Browser::ensure_cosmetic`).
+    cosmetic_pending: RefCell<Option<String>>,
     /// The address of the document the tab shows (the engine's last address change), not of
     /// a navigation that only started.
     pub committed: RefCell<String>,
@@ -567,6 +584,7 @@ impl TabNet {
             css: RefCell::new(String::new()),
             generichide: Cell::new(false),
             exceptions: RefCell::new(HashSet::new()),
+            cosmetic_pending: RefCell::new(None),
             committed: RefCell::new(String::new()),
             upgraded_from: RefCell::new(None),
             pending_upgrade: RefCell::new(None),
@@ -948,6 +966,23 @@ impl Browser {
 
     // ------------------------------------------------------------ per tab
 
+    /// Makes the cosmetic filters of the page `navigation_starting` recorded, if not made yet.
+    pub(super) fn ensure_cosmetic(&self, net: &TabNet) {
+        let Some(uri) = net.cosmetic_pending.borrow_mut().take() else { return };
+        let _s = crate::perf::LoadSpan::step(net.io.id.load(Relaxed), "cosmetic");
+        let allowed = net.io.allowed.load(Relaxed);
+        let (css, generichide, exceptions) = match self.net.engine() {
+            Some(e) if self.net.enabled() && !allowed && blocker::is_filterable(&uri) => {
+                let c = e.cosmetic(&uri);
+                (c.css, c.generichide, c.exceptions)
+            }
+            _ => (String::new(), true, HashSet::new()),
+        };
+        *net.css.borrow_mut() = css;
+        net.generichide.set(generichide);
+        *net.exceptions.borrow_mut() = exceptions;
+    }
+
     /// Cosmetic filtering for a new tab view (request blocking and the
     /// privacy scripts are part of the view's options).
     pub(super) fn hook_blocking(&self, id: TabId, c: &View, net: Rc<TabNet>) {
@@ -961,6 +996,7 @@ impl Browser {
             if !b.net.enabled() || net.allowed() {
                 return;
             }
+            b.ensure_cosmetic(&net);
             let css = net.css.borrow().clone();
             if !css.is_empty() {
                 c2.execute_script(&assets::style_injection_script(&css));
@@ -1024,16 +1060,22 @@ impl Browser {
         let host = urlclean::host_of(uri).unwrap_or_default();
         let allowed = !host.is_empty() && self.filters.allowlist.borrow().contains(&host);
         net.io.allowed.store(allowed, Relaxed);
-        let (css, generichide, exceptions) = match self.net.engine() {
-            Some(e) if self.net.enabled() && !allowed && blocker::is_filterable(uri) => {
-                let c = e.cosmetic(uri);
-                (c.css, c.generichide, c.exceptions)
-            }
-            _ => (String::new(), true, HashSet::new()),
-        };
-        *net.css.borrow_mut() = css;
-        net.generichide.set(generichide);
-        *net.exceptions.borrow_mut() = exceptions;
+        // 0.26.0 (F-cosmetic): the page's cosmetic filters are first needed at load start (the CSS)
+        // or when the page reports its tokens, not before the navigation goes on: they are made
+        // right after this handler returns, while the request is under way, or on first use.
+        // Measurement builds: KRUNK_PERF_OFF=cosmetic-sync makes them here, as in 0.25.5.
+        *net.cosmetic_pending.borrow_mut() = Some(uri.to_string());
+        if cosmetic_sync() {
+            self.ensure_cosmetic(net);
+        } else {
+            let id = net.io.id.load(Relaxed);
+            self.defer(move |b| {
+                let net = b.views.borrow().get(&id).map(|v| v.net.clone());
+                if let Some(net) = net {
+                    b.ensure_cosmetic(&net);
+                }
+            });
+        }
         None
     }
 
@@ -1066,6 +1108,7 @@ impl Browser {
         };
         // Only for the page currently loaded in this tab.
         let current = urlclean::origin_of(&net.top_url());
+        self.ensure_cosmetic(&net);
         if current.as_deref() != Some(origin) || !self.net.enabled() || net.allowed() || net.generichide.get() {
             return;
         }
