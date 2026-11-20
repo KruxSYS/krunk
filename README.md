@@ -794,6 +794,52 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   4-core test VM with 30 busy tabs: 90 % → 1.2 % CPU; Speedometer with 29 busy background tabs
   1.5 → 27.5 (27.9 with one tab).
 
+#### Page loading (0.26.0)
+_Draft: the numbers come from the 0.26.0 measurements (`.pipeline/evidence-0.26.0/`) and are
+filled in when the release is measured._
+- **What Krunk does to load pages faster:**
+  - **"Preload pages for faster browsing"** (Settings › General › Tabs and memory; on by default,
+    like Chrome). In normal tabs the engine's network prediction is on:
+    - it follows the page's own `<link rel=preconnect>` and `dns-prefetch` hints;
+    - it connects when a link is pressed;
+    - it connects to the hosts a site usually needs on the next visit (the loading predictor; what
+      it learned is cleared with the history);
+    - it allows speculation-rules prefetch.
+
+    Krunk also connects early to where the address bar's top suggestion goes.
+  - **Never in private tabs:** their profile keeps prediction off, and Krunk's own preconnect isn't
+    used there. Prediction is also off while Krunk is offline because the VPN couldn't start.
+  - **The same blocking and the same route:**
+    - early connections never go to a host the ad blocker blocks: the engine gets the lists'
+      plain host rules (engine patch `chromium-preconnect-blocked-hosts.patch`);
+    - they use the VPN when it runs, with the kill switch's refusing stand-in when it is down;
+    - a page fetched ahead (speculation rules) goes through the ad blocker and tracking
+      protection like any other request;
+    - `<link rel=prerender>` fetches nothing (`NoStatePrefetchHoldback`): the engine ran those in a
+      hidden page that Krunk's filter never saw;
+    - the engine's own prerendering (Prerender2) is off in CEF.
+  - **Request filtering:** the ad blocker's check runs on the network thread, without a round
+    trip to the UI thread; since 0.26.0 it takes the page's address once per request. TODO:
+    measured cost per request and per page.
+  - **Back/forward cache:** on, as in Chrome. Krunk's page scripts don't block it; pages with their
+    own `unload` listener or a `no-store` document load again, as in Chrome.
+  - **Spare renderer:** the engine keeps one renderer process ready, as in Chrome. A private tab in
+    between uses it up, so the next normal page starts its own.
+- **What to expect** (Windows test VM, 4 vCPU, no GPU; 9 recorded pages behind a 40 ms round-trip
+  shim; ms from the input, median over pages):
+
+  | | Krunk 0.25.5 | Krunk 0.26.0 | Chrome 157 | Edge 156 |
+  |---|---|---|---|---|
+  | typed URL, LCP | TODO | TODO | TODO | TODO |
+  | link click, LCP | TODO | TODO | TODO | TODO |
+  | back/forward (cached), first frame | TODO | TODO | TODO | TODO |
+
+  On a real network the early connections save one round trip or more per new host. A replay
+  with a fixed RTT shows that only partly, and DNS not at all (the replay maps every host, so
+  there is no lookup to save).
+- **Not done (and why):** TODO, e.g. the V8 context snapshot (engine cross-build limit), and
+  Prerender2 (off in CEF).
+
 ### Windows and views
 - **Windows:** any number of top-level Win32 frames. Every view is a CEF browser (Alloy style)
   hosted as a child window of a frame. A hidden app window takes the timers, cross-thread
