@@ -20,6 +20,9 @@
       }
     }).observe({ type: 'largest-contentful-paint', buffered: true });
   } catch {}
+  // Keys that reach the page (the harness types into the address bar: any here were lost on the
+  // way there).
+  addEventListener('keydown', () => (lp.keys = (lp.keys || 0) + 1), true);
   // A back/forward-cache restore runs no new document: its time is the pageshow and the first
   // frame after it.
   addEventListener('pageshow', (e) => {

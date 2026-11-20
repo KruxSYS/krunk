@@ -291,8 +291,29 @@ async function measure(s, before, expectHost, timeoutMs = 45000) {
     }
   }
   try {
-    log('measure: timeout; targets:', (await targets()).map((x) => x.url.slice(0, 80)).join(' | '));
-  } catch {}
+    const all = await targets();
+    log('measure: timeout; targets:', all.map((x) => x.url.slice(0, 80)).join(' | '));
+    // Krunk: what its address bar holds and where the keyboard is (did the typed text reach it?).
+    for (const t of all.filter((x) => /\/\/shell\.krunk\.invalid\/shell\.html/.test(x.url))) {
+      const sh = await session(t);
+      const r = await sh.send('Runtime.evaluate', {
+        expression:
+          "JSON.stringify({ value: (document.getElementById('address') || {}).value, active: document.activeElement && (document.activeElement.id || document.activeElement.tagName), focus: document.hasFocus() })",
+        returnByValue: true,
+      });
+      sh.close();
+      log('measure: shell', r.result?.result?.value ?? JSON.stringify(r.error || r.result));
+    }
+    // And the watched page: did keys land there?
+    const pg = await s.send('Runtime.evaluate', {
+      expression:
+        "JSON.stringify({ focus: document.hasFocus(), active: document.activeElement && document.activeElement.tagName, keys: (window.__lp || {}).keys || 0 })",
+      returnByValue: true,
+    });
+    log('measure: watched page', pg.result?.result?.value ?? '?');
+  } catch (e) {
+    log('measure: timeout diagnostics failed', String(e));
+  }
   return { kind: 'timeout', st };
 }
 
