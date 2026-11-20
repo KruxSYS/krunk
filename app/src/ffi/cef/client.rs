@@ -460,6 +460,27 @@ pub(super) fn binary_bytes(bin: &BinaryValue) -> Vec<u8> {
     unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
 }
 
+/// The printable character key `vk` types with the current keyboard layout and state, if one
+/// (0.26.0, F-keys: keys typed after Ctrl+L before the address bar has the keyboard). Flag 4:
+/// the call leaves the keyboard state alone (dead keys stay pending for the page).
+fn typed_char(vk: u32, msg: &sys::MSG) -> Option<char> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardState, ToUnicode};
+    let mut state = [0u8; 256];
+    let mut buf = [0u16; 4];
+    let scan = ((msg.lParam as usize >> 16) & 0xff) as u32;
+    // SAFETY: plain queries into local buffers on the UI thread.
+    let n = unsafe {
+        if GetKeyboardState(&mut state).is_err() {
+            return None;
+        }
+        ToUnicode(vk, scan, Some(&state), &mut buf, 4)
+    };
+    if n != 1 {
+        return None;
+    }
+    char::from_u32(u32::from(buf[0])).filter(|c| !c.is_control())
+}
+
 wrap_keyboard_handler! {
     struct Keys {
         key: u64,
@@ -477,14 +498,10 @@ wrap_keyboard_handler! {
                 return 0;
             }
             // Bit 30 of a WM_KEYDOWN lParam: the key was already down.
-            let repeat = os_event.is_some_and(|m| (m.lParam & (1 << 30)) != 0);
-            let press = KeyPress {
-                vk: e.windows_key_code as u32,
-                ctrl: e.modifiers & 4 != 0,
-                shift: e.modifiers & 2 != 0,
-                alt: e.modifiers & 8 != 0,
-                repeat,
-            };
+            let repeat = os_event.as_ref().is_some_and(|m| (m.lParam & (1 << 30)) != 0);
+            let (ctrl, alt) = (e.modifiers & 4 != 0, e.modifiers & 8 != 0);
+            let text = if ctrl || alt { None } else { os_event.as_ref().and_then(|m| typed_char(e.windows_key_code as u32, m)) };
+            let press = KeyPress { vk: e.windows_key_code as u32, ctrl, shift: e.modifiers & 2 != 0, alt, repeat, text };
             let handled = lookup(self.key).and_then(|v| v.ev.key.with(|f| f(press))).unwrap_or(false);
             c_int::from(handled)
         }
@@ -1249,6 +1266,7 @@ wrap_keyboard_handler! {
                 shift: e.modifiers & 2 != 0,
                 alt: e.modifiers & 8 != 0,
                 repeat: os_event.is_some_and(|m| (m.lParam & (1 << 30)) != 0),
+                text: None,
             };
             if lb_core::keys::devtools_keeps(press.vk, press.ctrl, press.shift, press.alt) {
                 return 0;

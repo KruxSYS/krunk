@@ -647,6 +647,23 @@ async function testShell(browser) {
   await page.waitForTimeout(30);
   selRange = await page.evaluate(() => { const a = document.getElementById('address'); return [a.selectionStart, a.selectionEnd]; });
   check(selRange[0] === 0 && selRange[1] === 5, 'addressEdit selectAll selects everything');
+  // 0.26.0 (F-keys): keys typed after Ctrl+L before the shell had the keyboard arrive as
+  // edits after focusAddressBar: they replace the selection, Backspace deletes, Enter opens.
+  await page.evaluate(() => document.getElementById('address').blur());
+  await emit(page, { event: 'focusAddressBar' });
+  for (const ch of 'exx') await emit(page, { event: 'addressEdit', edit: { insert: { text: ch } } });
+  await emit(page, { event: 'addressEdit', edit: 'backspace' });
+  for (const ch of '.com') await emit(page, { event: 'addressEdit', edit: { insert: { text: ch } } });
+  await page.waitForTimeout(30);
+  check(await page.locator('#address').inputValue().then((v) => v.startsWith('ex.com')), 'captured keys replace the selected address and Backspace deletes');
+  await page.evaluate(() => { const a = document.getElementById('address'); a.value = 'ex.com'; });
+  await emit(page, { event: 'addressEdit', edit: 'submit' });
+  await page.waitForTimeout(30);
+  check((await lastSent(page, 'navigate') || {}).input === 'ex.com', 'a captured Enter opens what the address bar holds');
+  await page.click('#address');
+  await page.keyboard.press('Control+A');
+  await page.keyboard.type('hello world');
+  await page.evaluate(() => { const a = document.getElementById('address'); a.setSelectionRange(0, 5); });
   await rightClick();
   await page.waitForTimeout(30);
   const beforeEsc = (await sent(page)).length;

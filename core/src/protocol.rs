@@ -642,6 +642,11 @@ pub enum AddressEdit {
         text: String,
     },
     SelectAll,
+    /// 0.26.0 (F-keys): Backspace typed after Ctrl+L before the shell had the keyboard.
+    Backspace,
+    /// 0.26.0 (F-keys): Enter typed after Ctrl+L before the shell had the keyboard: open what
+    /// the address bar holds, as its own Enter does.
+    Submit,
 }
 
 /// One row of the address-bar suggestions.
@@ -5640,6 +5645,8 @@ mod tests {
             Event::DownloadsChanged { active: 1 },
             Event::Theme { theme: Theme::Light, accent: String::new(), ui_font_px: 0, colors: Default::default() },
             Event::FocusAddressBar,
+            Event::AddressEdit { edit: AddressEdit::Submit },
+            Event::AddressEdit { edit: AddressEdit::Backspace },
             Event::BlurAddressBar,
             Event::AddressNavigated,
             Event::ShowFind,

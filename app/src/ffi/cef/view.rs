@@ -130,6 +130,9 @@ pub struct KeyPress {
     pub shift: bool,
     pub alt: bool,
     pub repeat: bool,
+    /// The character the key types (no Ctrl/Alt; tab views only, from the keyboard layout),
+    /// for keys typed after Ctrl+L before the address bar has the keyboard (0.26.0, F-keys).
+    pub text: Option<char>,
 }
 
 /// A top-level navigation about to start.
