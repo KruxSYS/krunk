@@ -4,7 +4,8 @@
   mkconfig.py MODE RUNS BROWSERS SCENARIOS [PAGES] > config.json
     MODE       replay | live | record
     BROWSERS   comma list: krunk, krunk-a, krunk-b, krunk-new, chrome, edge (krunk* names take
-               KRUNK_<NAME>_APP / _BASE from the environment, default app260h / lp-base)
+               <NAME>_APP / _BASE / _ENV from the environment, NAME = the browser name upper-cased with - as _ (krunk-off: KRUNK_OFF_APP), default app260h / lp-base /
+               {}; e.g. KRUNK_OFF_ENV='{"KRUNK_PERF_OFF":"filter-fast"}')
     SCENARIOS  comma list: typed, link
     PAGES      comma list of page ids (default: all, or the live set in live mode)
 Environment: RTT (default 40), ARCHIVE (default C:\\pipeline\\krunk\\load\\corpus.wprgo),
@@ -47,6 +48,7 @@ for b in browsers:
         cfg[b] = {
             "app": "C:\\pipeline\\krunk\\" + os.environ.get(f"{key}_APP", "app260h"),
             "base": "C:\\pipeline\\krunk\\" + os.environ.get(f"{key}_BASE", "lp-base"),
-            "env": env,
+            # KRUNK_<NAME>_ENV adds to KRUNK_ENV for that browser only (A/B passes of one build).
+            "env": {**env, **json.loads(os.environ.get(f"{key}_ENV", "{}"))},
         }
 print(json.dumps(cfg, indent=1))

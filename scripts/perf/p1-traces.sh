@@ -24,7 +24,7 @@ vm sh "Remove-Item -Recurse -Force $K/lp-trace -ErrorAction SilentlyContinue; Co
 printf '{"extraFlags": "%s"}' "${flags//\\/\\\\}" > /tmp/p1-trace-flags.json
 vm put /tmp/p1-trace-flags.json "$K/p1-trace-flags.json"
 vm sh "python $K/setkv.py $K/lp-trace '@$K/p1-trace-flags.json'"
-KRUNK_KRUNK_TR_APP=app260h KRUNK_KRUNK_TR_BASE=lp-trace COLLECT='trace.json' \
+KRUNK_TR_APP=app260h KRUNK_TR_BASE=lp-trace COLLECT='trace.json' \
 BROWSER_ARGS="[\"--trace-startup=$CATS\",\"--trace-startup-file={profile}\\\\trace.json\",\"--trace-startup-duration=$DUR\"]" \
   python3 scripts/perf/load/mkconfig.py replay "$runs" krunk-tr,chrome typed "$pages" > /tmp/p1-traces.json
 OUT=$out scripts/perf/load-run.sh p1-traces /tmp/p1-traces.json || echo "p1-traces: the pass reported a problem (see $out/run.log)"
