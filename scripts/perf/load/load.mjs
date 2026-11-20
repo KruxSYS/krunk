@@ -290,8 +290,10 @@ async function measure(s, before, expectHost, timeoutMs = 45000) {
       return { kind: 'bfcache', st: (await read(s)) || st };
     }
   }
+  const diag = {};
   try {
     const all = await targets();
+    diag.targets = all.map((x) => x.url.slice(0, 80));
     log('measure: timeout; targets:', all.map((x) => x.url.slice(0, 80)).join(' | '));
     // Krunk: what its address bar holds and where the keyboard is (did the typed text reach it?).
     for (const t of all.filter((x) => /\/\/shell\.krunk\.invalid\/shell\.html/.test(x.url))) {
@@ -302,6 +304,9 @@ async function measure(s, before, expectHost, timeoutMs = 45000) {
         returnByValue: true,
       });
       sh.close();
+      try {
+        diag.shell = JSON.parse(r.result?.result?.value);
+      } catch {}
       log('measure: shell', r.result?.result?.value ?? JSON.stringify(r.error || r.result));
     }
     // And the watched page: did keys land there?
@@ -310,17 +315,20 @@ async function measure(s, before, expectHost, timeoutMs = 45000) {
         "JSON.stringify({ focus: document.hasFocus(), active: document.activeElement && document.activeElement.tagName, keys: (window.__lp || {}).keys || 0 })",
       returnByValue: true,
     });
+    try {
+      diag.page = JSON.parse(pg.result?.result?.value);
+    } catch {}
     log('measure: watched page', pg.result?.result?.value ?? '?');
   } catch (e) {
     log('measure: timeout diagnostics failed', String(e));
   }
-  return { kind: 'timeout', st };
+  return { kind: 'timeout', st, diag };
 }
 
 function row(base, inputEpoch, m) {
   const st = m.st || {};
   const rel = (v) => (v == null || !(v > 0) ? null : +(st.to + v + (st.skew || 0) - inputEpoch).toFixed(1));
-  const o = { ...base, kind: m.kind, url: st.url, res: st.res, observed: st.observed, followed: m.followed || undefined };
+  const o = { ...base, kind: m.kind, url: st.url, res: st.res, observed: st.observed, followed: m.followed || undefined, diag: m.diag };
   if (m.kind === 'load') {
     const n = st.nav || {};
     Object.assign(o, {
@@ -389,6 +397,24 @@ async function startBrowser(b, profile, tag) {
   return s;
 }
 
+async function waitShellFocus(maxMs) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    for (const t of (await targets()).filter((x) => /\/\/shell\.krunk\.invalid\/shell\.html/.test(x.url))) {
+      const sh = await session(t);
+      const r = await sh.send('Runtime.evaluate', {
+        expression: "document.hasFocus() && document.activeElement && document.activeElement.id === 'address'",
+        returnByValue: true,
+      });
+      sh.close();
+      if (r.result?.result?.value === true) return true;
+    }
+    await sleep(25);
+  }
+  log('waitShellFocus: the address bar never got the focus within', maxMs, 'ms');
+  return false;
+}
+
 async function typed(b, page, run) {
   const profile = path.join(cfg.profiles || 'C:\\pipeline\\krunk\\lp', `${b}`);
   const s = await startBrowser(b, profile, `${b}-${page.id}-${run}-typed`);
@@ -398,9 +424,24 @@ async function typed(b, page, run) {
     s.events.splice(0);
     const [cx, cy] = cfg.clickAt || [640, 500];
     kinput(`click:${cx},${cy}`, 'sleep:300');
-    const inp = kinput('key:ctrl+l', 'sleep:150', `text:${page.url}`, 'sleep:400', 'key:enter');
+    let inp;
+    let focusWaitMs = null;
+    if (cfg.waitFocus) {
+      // 0.26.0 fallback pass (director-approved): type only once the address bar has the
+      // keyboard, so the load is measured without Krunk's Ctrl+L focus race (F-keys), the same
+      // way for every browser (Chrome/Edge: a fixed pause, their omnibox takes keys at once).
+      const t0 = Date.now();
+      kinput('key:ctrl+l');
+      if (b.startsWith('krunk')) await waitShellFocus(3000);
+      else await sleep(1000);
+      focusWaitMs = Date.now() - t0;
+      inp = kinput(`text:${page.url}`, 'sleep:400', 'key:enter');
+    } else {
+      inp = kinput('key:ctrl+l', 'sleep:150', `text:${page.url}`, 'sleep:400', 'key:enter');
+    }
     const m = await measure(s, before, host);
     const r = row({ browser: b, page: page.id, run, scenario: scen, inputQpc: inp.qpc }, inp.epoch, m);
+    if (focusWaitMs !== null) r.focusWaitMs = focusWaitMs;
     result(r);
     log(b, page.id, run, scen, m.kind, `fcp ${r.fcp} lcp ${r.lcp} load ${r.load}`);
     if (scen === 'cold') await cdpGo(s, BLANK);
