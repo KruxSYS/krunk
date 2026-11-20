@@ -3,6 +3,28 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.26.0 — DRAFT, not released (entries stay only if measured and kept; TODO numbers)
+
+- **Pages load faster** (TODO: the measured headline, e.g. "LCP X % lower on the test corpus").
+  New setting: Settings → General → **Preload pages for faster browsing**, on by default, as in
+  Chrome. In normal tabs Krunk now:
+  - follows a page's own hints to connect early to the hosts it will need;
+  - connects when you press a link, before you release it;
+  - connects to the hosts a site usually needs as soon as you start going there;
+  - connects to where the address bar's top suggestion goes while you type.
+
+  It never does this in private tabs. Early connections never go to hosts the ad blocker blocks,
+  and they always use the VPN when it runs. Pages that a site asks to fetch ahead go through the
+  ad blocker like any other request. Clearing your history also clears what Krunk learned about
+  the hosts each site needs. (Only if F-pre and F-omni are kept.)
+- **A blocking hole closed.** A page could ask for another page to be fetched in the background
+  (`<link rel=prerender>`). The engine did that in a hidden page that Krunk's ad blocker and
+  tracking protection never saw. Krunk now turns that fetch off. (F-nsp, kept as a blocking fix.)
+- TODO: F-filter (cheaper ad-block checks per request), F-scripts (the login detector no longer
+  watches the page while it is being built), F-keys (typing right after Ctrl+L), each only if
+  measured and kept.
+- TODO, only if kept: F-writes (history write after the load), F-cosmetic (ad-block page styles made after the navigation starts).
+
 ## 0.25.5 — 2026-11-19
 
 - **Faster address-bar suggestions.** The list now opens right after the first letter you

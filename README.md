@@ -2439,6 +2439,17 @@ Page-load harness (0.26.0; details and every option in
   (Chrome, real network, about 7 minutes).
 
 ## Known limitations
+<!-- 0.26.0 DRAFT: trimmed to the measured facts at release -->
+- **Page loading (0.26.0):** Krunk's engine runs page JavaScript and layout slower than Chrome on the
+  same machine (the 0.7.0 finding; TODO: P1's numbers). The cross-built engine has no V8 context
+  snapshot (TODO: measured cost per frame; F-snap done / not done). Chrome's own prerendering
+  (Prerender2) is off in CEF, so pages a site asks to prerender are not made ahead; speculation-rules
+  prefetch works.
+- **Preload pages (0.26.0):** early connections to hosts the ad blocker blocks are skipped only for
+  plain host rules (`||host^`); a host blocked by a narrower rule (path, options) can still get a
+  connection (no request is sent). The per-site allowlist doesn't apply to early connections.
+- **Typing right after Ctrl+L (TODO: only if F-keys is not fixed):** on a busy start the first
+  characters can land in the page before the address bar has the keyboard.
 - **Theme colour of open tabs (0.15.0):** after switching between light and dark, tabs that were
   already open keep the previous background colour for the moment before one of their pages
   paints (a reload, a slow page). Krunk's tabs are windowed engine views whose pre-paint colour is
