@@ -447,6 +447,12 @@ pub struct Settings {
     pub auto_pip: bool,
     /// Minutes in the background before a tab's browser view is unloaded.
     pub tab_discard_minutes: u32,
+    /// 0.26.0 "Preload pages for faster browsing" (on by default, like Chrome): the engine's
+    /// network prediction in normal tabs (the page's own preconnect / DNS-prefetch hints,
+    /// preconnect when a link is pressed, the site's usual hosts on a new visit, speculation-rules
+    /// prefetch) and Krunk's preconnect from the address bar. Never in private tabs. Every early
+    /// connection goes through the same proxy / VPN; prefetched pages through the same blocking.
+    pub preload_pages: bool,
 
     // Privacy
     pub adblock_enabled: bool,
@@ -934,6 +940,7 @@ impl Default for Settings {
             hardware_acceleration: true,
             tab_sleep_minutes: 5,
             keep_media_tabs_awake: true,
+            preload_pages: true,
             tab_discard_enabled: false,
             auto_pip: false,
             tab_discard_minutes: 30,
