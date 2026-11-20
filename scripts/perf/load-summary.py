@@ -48,11 +48,20 @@ def load(dirs):
 def main():
     args = sys.argv[1:]
     jout = None
+    pools = []
+    while "--pool" in args:
+        i = args.index("--pool")
+        name, members = args[i + 1].split("=", 1)
+        pools.append((name, members.split(",")))
+        del args[i : i + 2]
     if "--json" in args:
         i = args.index("--json")
         jout = args[i + 1]
         del args[i : i + 2]
     rows = load(args)
+    # --pool krunk=krunk-a,krunk-b: the same build twice also counts as one browser with all runs.
+    for name, members in pools:
+        rows += [dict(r, browser=name) for r in rows if r["browser"] in members]
     browsers = list(dict.fromkeys(r["browser"] for r in rows))
     pages = list(dict.fromkeys(r["page"] for r in rows))
     scen = [s for s in SCEN_ORDER if any(r.get("scenario") == s for r in rows)]
@@ -70,9 +79,49 @@ def main():
         for why in r.get("bfcacheNotUsed") or []:
             reasons[(r["browser"], r.get("scenario"))][why] += 1
 
-    out = {"pages": pages, "browsers": browsers, "corpus": {}, "perpage": {}}
+    out = {"pages": pages, "browsers": browsers, "corpus": {}, "perpage": {}, "headline": {}}
     print("# Page-load pass: " + ", ".join(args))
     print()
+    # The plan's headline: per page, the median (and p90) of every cold and warm typed load
+    # pooled; then the median over the pages.
+    typed = [s for s in ("cold", "warm") if s in scen]
+    if typed:
+        print("## Headline: corpus median (p90) over cold + warm typed loads\n")
+        print("Per page: median and p90 of the cold and warm loads together; corpus: the median over the pages. ms from the input.\n")
+        hm = ["ttfb", "fcp", "lcp", "dcl", "load", "nav"]
+        print("| browser | " + " | ".join(hm) + " | pages |")
+        print("|---|" + "---|" * (len(hm) + 1))
+        for b in browsers:
+            cells = []
+            for m in hm:
+                meds, p90s, n = [], [], 0
+                for p in pages:
+                    v = [x for sc in typed for x in vals[(b, sc, p)][m]]
+                    if v:
+                        meds.append(statistics.median(v))
+                        p90s.append(p90(v))
+                        n += 1
+                if meds:
+                    cm, cp = statistics.median(meds), statistics.median(p90s)
+                    out["headline"].setdefault(b, {})[m] = [cm, cp, n]
+                    cells.append(f"{cm:.0f} ({cp:.0f})")
+                else:
+                    cells.append("–")
+            print(f"| {b} | " + " | ".join(cells) + f" | {out['headline'].get(b, {}).get('lcp', [0, 0, 0])[2]} |")
+        ref = [r for r in ("chrome", "edge") if r in out["headline"]]
+        if ref:
+            print()
+            for b in browsers:
+                if b in ref or "lcp" not in out["headline"].get(b, {}):
+                    continue
+                parts = []
+                for r in ref:
+                    for m in ("fcp", "lcp", "load"):
+                        x, y = out["headline"][b].get(m), out["headline"][r].get(m)
+                        if x and y:
+                            parts.append(f"{m} {100 * (x[0] - y[0]) / y[0]:+.1f} % vs {r}")
+                print(f"- {b}: " + ", ".join(parts))
+        print()
     print("Times in ms from the input (median / p90 over the runs). Corpus = median over pages of the per-page median (p90: of the per-page p90).")
     for s in scen:
         ms = BF + ["fcp", "lcp", "load"] if s in ("back", "forward") else METRICS
