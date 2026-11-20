@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>preconnect test</title>
+<!-- Krunk 0.26.0 F-block / F-nsp proof (scripts/vm-0260-netlog.ps1, scripts/perf/netlog-hosts.py).
+     A normal host and a host on the ad-block list, each hinted with preconnect and dns-prefetch.
+     Expected: example.org gets a DNS job / socket (preload on), doubleclick.net gets none.
+     The rel=prerender to example.net must start nothing (NoStatePrefetchHoldback). -->
+<link rel="preconnect" href="https://example.org">
+<link rel="dns-prefetch" href="https://example.org">
+<link rel="preconnect" href="https://stats.g.doubleclick.net">
+<link rel="dns-prefetch" href="https://ad.doubleclick.net">
+<link rel="prerender" href="https://example.net/">
+<body style="font:15px sans-serif"><h2>Preconnect hints</h2>
+<p>example.org (normal), stats.g.doubleclick.net / ad.doubleclick.net (blocked), example.net (rel=prerender).</p>
+</body>
