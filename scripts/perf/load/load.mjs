@@ -420,7 +420,18 @@ async function main() {
   if (cfg.mode === 'record') {
     await record();
   } else {
-    for (let run = 1; run <= cfg.runs; run++) {
+    // A fill pass: only the listed cells ({browser, page, scenario, run}), in the given order.
+    for (const c of cfg.cells || []) {
+      const page = cfg.pages.find((p) => p.id === c.page);
+      try {
+        if (c.scenario === 'typed') await typed(c.browser, page, c.run);
+        else await link(c.browser, page, c.run);
+      } catch (e) {
+        log('ERROR', c.browser, c.page, c.run, c.scenario, String(e?.stack || e));
+        result({ browser: c.browser, page: c.page, run: c.run, scenario: c.scenario, kind: 'error', error: String(e) });
+      }
+    }
+    for (let run = 1; run <= (cfg.cells ? 0 : cfg.runs); run++) {
       for (const page of cfg.pages) {
         // Interleaved, with the browser order rotated every run.
         const order = cfg.browsers.map((_, i) => cfg.browsers[(i + run - 1) % cfg.browsers.length]);

@@ -3,6 +3,8 @@
 #   scripts/perf/load-run.sh TAG CONFIG.json
 #     CONFIG   load.mjs's config (see its header); "out" is set here to C:\pipeline\krunk\load\out\TAG
 #   OUT=DIR    where results go (default ../.pipeline/evidence-0.26.0/runs/TAG)
+#   ATTACH=1   don't push or start: wait for a pass already running on the VM, then pull (after
+#              the host side was interrupted)
 #   TOOLS=DIR  wpr.exe, lshim.exe, kinput.exe, node.exe, the replay CA (default ../.pipeline/loadtools)
 # Pushes the driver and the tools (once), trusts the replay CA on the VM for the pass and removes
 # it afterwards, waits for the pass, pulls results.jsonl/run.log and writes OUT/summary.md
@@ -17,10 +19,17 @@ vm() { scripts/vm.sh "$@" </dev/null; }
 mkdir -p "$out"
 touch /tmp/krunk-vm-busy
 cleanup() {
-  vm sh "Get-ChildItem Cert:\\LocalMachine\\Root | Where-Object Subject -match 'Krunk page-load replay CA' | Remove-Item" >/dev/null 2>&1 || true
-  rm -f /tmp/krunk-vm-busy
+  # The CA goes only when the VM pass is over: an interrupted host side must not pull it from
+  # under a pass that keeps running (the 0.26.0 baseline lost a cell that way).
+  if vm sh "Test-Path $L/out/$tag/done" 2>/dev/null | grep -q True; then
+    vm sh "Get-ChildItem Cert:\\LocalMachine\\Root | Where-Object Subject -match 'Krunk page-load replay CA' | Remove-Item" >/dev/null 2>&1 || true
+    rm -f /tmp/krunk-vm-busy
+  else
+    echo "load-run: the VM pass $tag still runs: CA and /tmp/krunk-vm-busy left in place (ATTACH=1 to wait for it)" >&2
+  fi
 }
 trap cleanup EXIT
+if [ -z "${ATTACH:-}" ]; then
 vm sh "New-Item -ItemType Directory -Force $L, $L/out | Out-Null"
 for f in wpr.exe lshim.exe kinput.exe node.exe deterministic.js krunk-replay-ca.pem krunk-replay-ca.key; do
   size=$(stat -c %s "$tools/$f")
@@ -39,6 +48,7 @@ vm put /tmp/krunk-load-config.json "$L/config.json"
 vm sh "Remove-Item -Recurse -Force $L/out/$tag -ErrorAction SilentlyContinue" >/dev/null || true
 vm sh "Import-Certificate -FilePath $L/krunk-replay-ca.pem -CertStoreLocation Cert:\\LocalMachine\\Root | Out-Null"
 vm ps1 scripts/vm-0260-load.ps1
+fi
 start=$(date +%s)
 while :; do
   sleep 30
