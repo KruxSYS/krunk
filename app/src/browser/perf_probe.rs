@@ -4,7 +4,8 @@
 //! 0.26.0 adds `omnibox-preconnect` (no early connection for the address bar's top row) and
 //! `preconnect-block` (the engine gets an empty blocked-host set) and `filter-fast` (the request
 //! filter takes the page's address per use, as in 0.25.5) and `preload` (network prediction off,
-//! as with the setting off).
+//! as with the setting off) and `login-defer` (login.js watches the DOM from the document's
+//! start again, as in 0.25.5).
 
 use crate::ffi::cef::Scripts;
 
@@ -30,4 +31,6 @@ pub(super) fn apply(s: &mut Scripts) {
     s.pointer_lock &= !off("pointer");
     s.notify &= !off("notify");
     s.media &= !off("media");
+    // 0.26.0 F-scripts A/B: login.js watches the DOM from the document's start again.
+    s.login_watch_early = off("login-defer");
 }

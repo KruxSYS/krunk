@@ -345,6 +345,9 @@ wrap_render_process_handler! {
 /// "Send client hints" off: `navigator.userAgentData` goes in every frame.
 const NO_USER_AGENT_DATA: &str = "(function(){try{delete Navigator.prototype.userAgentData}catch(e){}})()";
 
+/// `login.js`'s switch for watching the DOM from the document's start (`Scripts::login_watch_early`).
+const LOGIN_EARLY_MARK: &str = "/*KRUNK_LOGIN_EARLY*/false";
+
 fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context) {
     let main = frame.is_main() == 1;
     // Navigator properties matching the privacy headers: every frame.
@@ -383,7 +386,13 @@ fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context)
         return;
     }
     if scripts.login {
-        eval_with_bridge(context, assets::inject_script("login.js"), host.as_ref());
+        let login = assets::inject_script("login.js");
+        if scripts.login_watch_early {
+            // The A side of the F-scripts A/B (measurement builds): the 0.25.5 timing.
+            eval_with_bridge(context, &login.replace(LOGIN_EARLY_MARK, "true"), host.as_ref());
+        } else {
+            eval_with_bridge(context, login, host.as_ref());
+        }
     }
     if !main {
         return;

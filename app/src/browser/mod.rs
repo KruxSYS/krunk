@@ -1217,6 +1217,7 @@ impl Browser {
                 pointer_lock: true,
                 notify: true,
                 media: true,
+                login_watch_early: false,
             };
             #[cfg(feature = "perf-probe")]
             perf_probe::apply(&mut scripts);
