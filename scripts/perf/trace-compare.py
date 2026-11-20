@@ -16,15 +16,23 @@ import sys
 from collections import defaultdict
 
 KEY_EVENTS = [
-    # Context creation (the V8 context snapshot question).
+    # Context creation (the V8 context snapshot question): Initialize contains CreateContext
+    # (from the snapshot, or a fresh context from the global template), the prototype chain,
+    # the conditional features and ContextCreatedNotification, which is where CEF's
+    # OnContextCreated runs Krunk's scriptlets and page scripts (local_window_proxy.cc:244-454).
     "V8.NewContext",
     "LocalWindowProxy::Initialize",
     "LocalWindowProxy::CreateContext",
+    "LocalWindowProxy::SetupWindowPrototypeChain",
+    "InstallConditionalFeatures",
+    "ContextCreatedNotification",
+    "LocalWindowProxy::UpdateDocumentProperty",
     "V8ContextSnapshot::CreateContextFromSnapshot",
     "WindowProxy::InitializeIfNeeded",
     "V8PerContextData::Create",
     # Loading and parsing.
     "NavigationRequest",
+    "NavigationRequest::CommitNavigation",
     "NavigationURLLoaderImpl::StartNavigation",
     "RenderFrameHostImpl::CommitNavigation",
     "HTMLDocumentParser::PumpTokenizer",
@@ -52,6 +60,7 @@ KEY_EVENTS = [
     "ProxyMain::BeginMainFrame",
     "ThreadProxy::BeginMainFrame",
     # Renderer start.
+    "ChildProcessLauncher",
     "RenderProcessHostImpl::Init",
     "ChildProcessLauncher::Launch",
     "RenderThreadImpl::Init",
