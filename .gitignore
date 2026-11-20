@@ -54,3 +54,6 @@ android/.kotlin/
 *.apk
 *.aab
 *.hprof
+
+# The page-load harness tools are sources (scripts/perf/load/kinput).
+!scripts/perf/load/kinput/src/bin/

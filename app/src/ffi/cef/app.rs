@@ -85,6 +85,18 @@ wrap_app! {
                 );
                 cl.append_switch_with_value(Some(&CefString::from("remote-allow-origins")), Some(&CefString::from("*")));
             }
+            // Page-load harness builds only (`--features perf-harness`, build-dist.sh --harness):
+            // KRUNK_HOST_RULES (e.g. "MAP *:443 127.0.0.1:8443, EXCLUDE localhost") goes after
+            // Krunk's own rules, which keep matching first (internal hosts never resolve).
+            #[cfg(feature = "perf-harness")]
+            if let Some(extra) = std::env::var("KRUNK_HOST_RULES").ok().filter(|r| !r.trim().is_empty()) {
+                let key = CefString::from("host-resolver-rules");
+                let own = CefString::from(&cl.switch_value(Some(&key))).to_string();
+                let rules = if own.is_empty() { extra } else { format!("{own}, {extra}") };
+                warning!("TEST BUILD: host resolver rules {rules}");
+                cl.remove_switch(Some(&key));
+                cl.append_switch_with_value(Some(&key), Some(&CefString::from(rules.as_str())));
+            }
         }
 
         fn browser_process_handler(&self) -> Option<BrowserProcessHandler> {

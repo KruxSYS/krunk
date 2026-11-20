@@ -10,6 +10,8 @@
 #                                    switches page scripts off, for benchmarks) -> target/probe-dist/
 #   scripts/build-dist.sh --fast     quick test build (profile "fast": no LTO, incremental, all
 #                                    cores) -> target/fast-dist/, folder and zip only, never dist/
+#   scripts/build-dist.sh --harness  release build with the perf-harness feature (DevTools port and
+#                                    KRUNK_HOST_RULES for the page-load harness) -> target/harness-dist/
 #
 # UPDATE_BASE_URL (default https://krunk.209.wf, the live server) is where the update check looks
 # and what the installer names as the homepage, and
@@ -30,9 +32,10 @@ case "${1:-}" in
   --debug) profile=debug ;;
   --dev) dist="$root/target/dev-dist"; features=(--features dev-updates) ;;
   --probe) dist="$root/target/probe-dist"; features=(--features perf-probe) ;;
+  --harness) dist="$root/target/harness-dist"; features=(--features perf-harness) ;;
   --fast) profile=fast; dist="$root/target/fast-dist"; features=(--features devtools-port) ;;
   "") ;;
-  *) echo "usage: $0 [--debug | --dev | --probe | --fast]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--debug | --dev | --probe | --harness | --fast]" >&2; exit 2 ;;
 esac
 
 # The update server, also passed to build.rs (app/build.rs has the same default).

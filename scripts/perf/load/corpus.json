@@ -1,0 +1,18 @@
+{
+  "pages": [
+    {"id": "news", "kind": "news front page", "url": "https://www.theguardian.com/international"},
+    {"id": "spa", "kind": "heavy JS single-page app", "url": "https://react.dev/learn"},
+    {"id": "search", "kind": "search results", "url": "https://www.bing.com/search?q=web+browser+performance"},
+    {"id": "shop", "kind": "shopping product page", "url": "https://www.ikea.com/us/en/p/billy-bookcase-black-oak-effect-00477337/"},
+    {"id": "youtube", "kind": "YouTube watch page", "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"},
+    {"id": "wiki", "kind": "Wikipedia article", "url": "https://en.wikipedia.org/wiki/Web_browser"},
+    {"id": "ads", "kind": "ad/tracker-heavy recipe site", "url": "https://www.allrecipes.com/recipe/10813/best-chocolate-chip-cookies/"},
+    {"id": "docs", "kind": "docs page", "url": "https://developer.mozilla.org/en-US/docs/Web/API/Performance_API"},
+    {"id": "hn", "kind": "light link hub", "url": "https://news.ycombinator.com/"}
+  ],
+  "live": [
+    {"id": "live-wiki", "url": "https://en.wikipedia.org/wiki/Rust_(programming_language)"},
+    {"id": "live-news", "url": "https://www.bbc.com/news"},
+    {"id": "live-youtube", "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ"}
+  ]
+}

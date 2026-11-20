@@ -1,0 +1,12 @@
+[package]
+name = "kinput"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A stand-alone tool of the page-load harness (not a workspace member, no dependencies).
+[workspace]
+
+[profile.release]
+opt-level = "s"
+strip = true
