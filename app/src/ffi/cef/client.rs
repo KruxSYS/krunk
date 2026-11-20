@@ -125,6 +125,14 @@ wrap_client! {
                 }
                 return 1;
             }
+            if name == super::renderer::PERF_CTX_TO_BROWSER {
+                let args = message.argument_list();
+                let get = |i: usize| args.as_ref().map_or(0, |a| a.int(i).max(0) as u32);
+                if let Some(view) = lookup(self.key) {
+                    view.ev.perf_ctx.with(|f| f(get(0), get(1)));
+                }
+                return 1;
+            }
             if name == DEBUG_TO_BROWSER {
                 let text = message.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
                 crate::log::info!("renderer: {text}");

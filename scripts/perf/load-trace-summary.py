@@ -9,6 +9,7 @@ One `load` line per top-level navigation of a tab (lb_core::perftrace::Load):
        loading_done=   (ms after qpc0, the first step seen; `-` = not seen)
        redirects= status= ui_ms= ui=name:count:ms,...
        req= blocked= filter_us= filter_max_us= cookie= cookie_us= cookie_max_us=
+       filter_hist=a/b/c/d/e ctx= scriptlet_us= script_us=   (0.26.0)
 Other records (switch, stall, span ...) are skipped; trace-summary.py reads those.
 
 Printed (Markdown): every navigation (with --all; else the last 40) with its steps and the
@@ -166,6 +167,25 @@ def main():
         ck, c_us / 1000.0, c_us / ck if ck else 0, c_max,
         fmt(stats([(num(r.get("cookie_us")) or 0) / 1000.0 for r in loads]))))
     print("\n_IO thread; requests after a navigation's loading ended count for the next one._")
+    # 0.26.0: the filter-time histogram and Krunk's scripts per page context.
+    hist = [0] * 5
+    for r in loads:
+        parts = (r.get("filter_hist") or "").split("/")
+        if len(parts) == 5:
+            hist = [h + int(p) for h, p in zip(hist, parts)]
+    if sum(hist):
+        out["filter"]["hist"] = hist
+        print("\nFilter time per request: <10 µs %d, <50 µs %d, <200 µs %d, <1 ms %d, ≥1 ms %d" % tuple(hist))
+    ctx = [int(num(r.get("ctx")) or 0) for r in loads]
+    if sum(ctx):
+        sl = [(num(r.get("scriptlet_us")) or 0) / 1000.0 for r in loads]
+        sc = [(num(r.get("script_us")) or 0) / 1000.0 for r in loads]
+        out["scripts"] = {"contexts": sum(ctx), "scriptlets_ms": stats(sl), "page_scripts_ms": stats(sc)}
+        print("\n### Krunk's scripts at each page context's start (renderer)\n")
+        print("| | ms per navigation (median / p95 / max) | total ms |\n|---|---|---|")
+        print("| contexts per navigation | %s | %d contexts |" % (fmt(stats([float(c) for c in ctx])), sum(ctx)))
+        print("| uBO scriptlets | %s | %.1f |" % (fmt(out["scripts"]["scriptlets_ms"]), sum(sl)))
+        print("| page scripts | %s | %.1f |" % (fmt(out["scripts"]["page_scripts_ms"]), sum(sc)))
 
     if a.json:
         with open(a.json, "w") as f:

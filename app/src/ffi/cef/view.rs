@@ -323,6 +323,8 @@ pub(super) struct Events {
     pub media: Slot<dyn FnMut(bool)>,
     /// A frame's pointer-lock message: (frame identifier, JSON).
     pub pointer: Slot<dyn FnMut(String, String)>,
+    /// 0.26.0 load trace: a page context's start cost (µs scriptlets, µs page scripts).
+    pub perf_ctx: Slot<dyn FnMut(u32, u32)>,
     pub fullscreen: Slot<dyn FnMut(bool)>,
     /// "Inspect" in the page's context menu, at this point of the page (DIP).
     pub inspect: Slot<dyn FnMut(InspectAt)>,
@@ -1678,6 +1680,12 @@ impl View {
     /// The same browser view.
     pub fn same(&self, other: &View) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
+    }
+
+    /// 0.26.0 load trace: a renderer reported a page context's start cost (µs in uBO's
+    /// scriptlets, µs in Krunk's page scripts).
+    pub fn on_perf_context(&self, f: impl FnMut(u32, u32) + 'static) {
+        self.0.ev.perf_ctx.set(Box::new(f));
     }
 
     /// A frame sent a pointer-lock message: `(frame identifier, JSON)`.

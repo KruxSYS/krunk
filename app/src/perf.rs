@@ -284,6 +284,21 @@ pub fn load_end(tab: TabId, status: i32) {
     });
 }
 
+/// 0.26.0: a renderer made a page context for tab `tab` (its main frame or an iframe) and spent
+/// `scriptlet_us` in uBO's scriptlets and `script_us` in Krunk's page scripts at its start.
+pub fn load_scripts(tab: TabId, scriptlet_us: u32, script_us: u32) {
+    if !on() {
+        return;
+    }
+    with_load(tab, |r| {
+        if let Some(r) = r {
+            r.contexts += 1;
+            r.scriptlet_us += f64::from(scriptlet_us);
+            r.script_us += f64::from(script_us);
+        }
+    });
+}
+
 /// Tab `tab`'s handlers of the end of loading have run: its line is written.
 pub fn load_done(tab: TabId, net: &NetCost) {
     if !on() {
@@ -352,6 +367,8 @@ pub struct NetCost {
     cookies: AtomicU32,
     cookie: AtomicI64,
     cookie_max: AtomicI64,
+    /// Requests per filter-time bucket (`perftrace::FILTER_HIST_US`).
+    hist: [AtomicU32; 5],
 }
 
 impl NetCost {
@@ -370,6 +387,8 @@ impl NetCost {
         }
         self.filter.fetch_add(d, Ordering::Relaxed);
         self.filter_max.fetch_max(d, Ordering::Relaxed);
+        let us = d as f64 * 1_000_000.0 / QPF.load(Ordering::Relaxed).max(1) as f64;
+        self.hist[perftrace::filter_bucket(us)].fetch_add(1, Ordering::Relaxed);
     }
 
     /// A cookie access check ran from `start` (a [`now`]) until now.
@@ -395,6 +414,7 @@ impl NetCost {
             cookies: self.cookies.swap(0, Ordering::Relaxed),
             cookie_us: us(self.cookie.swap(0, Ordering::Relaxed)),
             cookie_max_us: us(self.cookie_max.swap(0, Ordering::Relaxed)),
+            filter_hist: std::array::from_fn(|i| self.hist[i].swap(0, Ordering::Relaxed)),
         };
         ((main != 0).then_some(main), net)
     }

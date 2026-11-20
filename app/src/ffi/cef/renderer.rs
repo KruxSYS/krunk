@@ -28,6 +28,28 @@ pub(super) const AUDIO_TO_BROWSER: &str = "lb.audio";
 pub(super) const PID_TO_BROWSER: &str = "lb.pid";
 /// Renderer-side diagnostics for the host's log (a line of text).
 pub(super) const DEBUG_TO_BROWSER: &str = "lb.rdebug";
+/// 0.26.0 load trace: a page context's start cost (µs in uBO's scriptlets, µs in Krunk's page
+/// scripts). Sent only by renderers started with [`PERF_SWITCH`] (the browser's
+/// `KRUNK_PERF_TRACE` is on).
+pub(super) const PERF_CTX_TO_BROWSER: &str = "lb.perfctx";
+pub(super) const PERF_SWITCH: &str = "krunk-perf-trace";
+
+/// Whether this renderer was started with [`PERF_SWITCH`] (read once).
+fn perf_trace() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        command_line_get_global().is_some_and(|cl| cl.has_switch(Some(&CefString::from(PERF_SWITCH))) != 0)
+    })
+}
+
+fn report_context_cost(frame: &mut Frame, scriptlet_us: u128, script_us: u128) {
+    let Some(mut message) = process_message_create(Some(&CefString::from(PERF_CTX_TO_BROWSER))) else { return };
+    if let Some(args) = message.argument_list() {
+        args.set_int(0, i32::try_from(scriptlet_us).unwrap_or(i32::MAX));
+        args.set_int(1, i32::try_from(script_us).unwrap_or(i32::MAX));
+    }
+    frame.send_process_message(ProcessId::BROWSER, Some(&mut message));
+}
 
 fn rdebug(frame: &mut Frame, text: &str) {
     let Some(mut message) = process_message_create(Some(&CefString::from(DEBUG_TO_BROWSER))) else { return };
@@ -245,10 +267,15 @@ wrap_render_process_handler! {
             if frame.is_main() == 1 {
                 report_pid(browser, frame);
             }
+            let timed = perf_trace().then(std::time::Instant::now);
             // First, before anything of the page runs: uBO's scriptlets.
             run_scriptlets(browser, frame, context);
+            let after_scriptlets = timed.map(|_| std::time::Instant::now());
             let scripts = SCRIPTS.with(|s| s.borrow().get(&browser.identifier()).map(|e| e.0)).unwrap_or_default();
             context_created(scripts, frame, context);
+            if let (Some(t0), Some(t1)) = (timed, after_scriptlets) {
+                report_context_cost(frame, (t1 - t0).as_micros(), t1.elapsed().as_micros());
+            }
         }
 
         fn on_context_released(

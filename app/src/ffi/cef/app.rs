@@ -155,6 +155,10 @@ wrap_browser_process_handler! {
                 cl.remove_switch(Some(&CefString::from(STACK_PROFILER_SWITCH)));
                 // "Send client hints" off as of now (0.7.1).
                 super::hints::add_to_child(cl);
+                // 0.26.0: the load trace is on; renderers time Krunk's scripts per page context.
+                if crate::perf::on() {
+                    cl.append_switch(Some(&CefString::from(super::renderer::PERF_SWITCH)));
+                }
             }
         }
     }

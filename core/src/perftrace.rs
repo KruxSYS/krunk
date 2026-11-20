@@ -118,6 +118,16 @@ pub struct LoadNet {
     pub cookies: u32,
     pub cookie_us: f64,
     pub cookie_max_us: f64,
+    /// Requests by their filter time: below each of [`FILTER_HIST_US`], and the rest (0.26.0).
+    pub filter_hist: [u32; 5],
+}
+
+/// The upper bounds (µs) of the filter-time buckets in a load line's `filter_hist`.
+pub const FILTER_HIST_US: [f64; 4] = [10.0, 50.0, 200.0, 1000.0];
+
+/// The bucket of a filter time.
+pub fn filter_bucket(us: f64) -> usize {
+    FILTER_HIST_US.iter().position(|b| us < *b).unwrap_or(FILTER_HIST_US.len())
 }
 
 /// One top-level navigation of a tab, filled in as it happens and written once loading ends
@@ -140,6 +150,12 @@ pub struct Load {
     /// Named UI-thread steps: name, count, total ms (handlers and steps inside them).
     pub ui: Vec<(&'static str, u32, f64)>,
     pub net: LoadNet,
+    /// 0.26.0: the page contexts the renderer made for the navigation's documents (main frame
+    /// and iframes) and the time it spent in Krunk's scripts at their start: uBO's scriptlets
+    /// and Krunk's page scripts (`renderer::context_created`). Renderer-side clock, µs.
+    pub contexts: u32,
+    pub scriptlet_us: f64,
+    pub script_us: f64,
 }
 
 impl Load {
@@ -153,6 +169,9 @@ impl Load {
             ui_ms: 0.0,
             ui: Vec::new(),
             net: LoadNet::default(),
+            contexts: 0,
+            scriptlet_us: 0.0,
+            script_us: 0.0,
         }
     }
 
@@ -212,6 +231,11 @@ impl Load {
         l.push_str(&format!(
             " req={} blocked={} filter_us={:.0} filter_max_us={:.0} cookie={} cookie_us={:.0} cookie_max_us={:.0}",
             n.requests, n.blocked, n.filter_us, n.filter_max_us, n.cookies, n.cookie_us, n.cookie_max_us
+        ));
+        let h = n.filter_hist;
+        l.push_str(&format!(
+            " filter_hist={}/{}/{}/{}/{} ctx={} scriptlet_us={:.0} script_us={:.0}",
+            h[0], h[1], h[2], h[3], h[4], self.contexts, self.scriptlet_us, self.script_us
         ));
         l
     }
@@ -304,15 +328,29 @@ mod tests {
             cookies: 3,
             cookie_us: 5.0,
             cookie_max_us: 2.0,
+            filter_hist: [9, 2, 1, 0, 0],
         };
+        l.contexts = 4;
+        l.scriptlet_us = 812.4;
+        l.script_us = 1530.0;
         let line = l.line(10_000_000, "done");
         assert_eq!(
             line,
             "load tab=3 kind=omnibox end=done qpc0=1000000 input=0.00 load_url=- before_browse=0.50 main_request=- \
              load_start=- commit=- painted=- load_end=300.00 loading_done=- redirects=0 status=200 ui_ms=1.75 \
              ui=address:2:0.75,title:1:1.00 req=12 blocked=2 filter_us=340 filter_max_us=90 cookie=3 cookie_us=5 \
-             cookie_max_us=2"
+             cookie_max_us=2 filter_hist=9/2/1/0/0 ctx=4 scriptlet_us=812 script_us=1530"
         );
+    }
+
+    #[test]
+    fn filter_times_fall_in_their_bucket() {
+        assert_eq!(filter_bucket(0.0), 0);
+        assert_eq!(filter_bucket(9.9), 0);
+        assert_eq!(filter_bucket(10.0), 1);
+        assert_eq!(filter_bucket(199.0), 2);
+        assert_eq!(filter_bucket(999.0), 3);
+        assert_eq!(filter_bucket(5000.0), 4);
     }
 
     #[test]

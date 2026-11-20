@@ -1407,6 +1407,8 @@ impl Browser {
             crate::perf::load_before_browse(id, t, nav.redirected, host, net_start.perf_cost());
             true
         });
+        // 0.26.0 load trace: the renderer's cost of Krunk's scripts per page context.
+        c.on_perf_context(move |scriptlet_us, script_us| crate::perf::load_scripts(id, scriptlet_us, script_us));
         let weak = self.me.clone();
         let net_cert = net.clone();
         c.on_cert_error(move |seen| weak.upgrade().is_some_and(|b| b.cert_error_seen(id, &net_cert, seen)));
