@@ -1742,6 +1742,9 @@ Built by `core::settings::Settings::browser_switches` and added in
 - `--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled`
   turns off autofill crowdsourcing, Cast discovery, optimization hints, feed suggestions,
   secure-time queries and the "AI mode" eligibility request.
+- `--enable-features=NoStatePrefetchHoldback` (0.26.0): a page's `<link rel=prerender>` fetches
+  nothing. The engine ran those prefetches in a hidden page with no Krunk tab, so their requests
+  bypassed the ad blocker and tracking protection.
 
 Conditional:
 - `--disable-component-update`, and `MAP update.googleapis.com ~NOTFOUND` in the host rules,

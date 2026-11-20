@@ -1066,6 +1066,12 @@ pub const DISABLED_FEATURES: &[&str] = &[
     "AimServerRequestOnStartupEnabled",
 ];
 
+/// Engine features Krunk always turns on (`--enable-features`, merged with the user's).
+/// 0.26.0: `NoStatePrefetchHoldback` makes every `<link rel=prerender>` NoStatePrefetch a
+/// holdback (nothing is fetched). Those prefetches ran in a hidden WebContents with no CEF
+/// browser, so their requests never reached Krunk's ad blocker and tracking protection.
+pub const ENABLED_FEATURES: &[&str] = &["NoStatePrefetchHoldback"];
+
 /// Switches whose value is a comma-separated list. Chromium keeps only the last occurrence of a
 /// switch (`base::CommandLine`), so every source (the engine's own start-up switches, Krunk's,
 /// the user's extra flags) is merged into one value instead of appended again (0.7.0: CEF's
@@ -1596,7 +1602,7 @@ impl Settings {
             args.push(format!("--proxy-bypass-list={}", unreachable.join(";")));
         }
         // The list switches, in LIST_SWITCHES order; the user's lists are merged into ours.
-        let mut lists: Vec<String> = vec![DISABLED_FEATURES.join(","), String::new(), String::new(), String::new()];
+        let mut lists: Vec<String> = vec![DISABLED_FEATURES.join(","), ENABLED_FEATURES.join(","), String::new(), String::new()];
         for flag in self.extra_flags.split_whitespace() {
             let (name, value) = flag.trim_start_matches('-').split_once('=').unwrap_or((flag, ""));
             match LIST_SWITCHES.iter().position(|l| l.eq_ignore_ascii_case(name)) {
@@ -2387,7 +2393,7 @@ mod tests {
         assert_eq!(disabled.matches("MediaRouter").count(), 1);
         assert_eq!(disabled.matches("Foo").count(), 1);
         let enabled = a.iter().find(|f| f.starts_with("--enable-features=")).unwrap();
-        assert_eq!(enabled, "--enable-features=Bar", "Foo stays disabled");
+        assert_eq!(enabled, "--enable-features=NoStatePrefetchHoldback,Bar", "Foo stays disabled");
     }
 
     #[test]
@@ -2548,7 +2554,7 @@ mod tests {
         assert!(a.contains("--force-dark-mode"));
         assert_eq!(a.matches("--disable-features=").count(), 1);
         assert!(a.contains(",Foo"));
-        assert!(a.contains("--enable-features=Bar"));
+        assert!(a.contains("--enable-features=NoStatePrefetchHoldback,Bar"));
     }
 
     #[test]
@@ -2590,7 +2596,7 @@ mod tests {
         assert!(sw.contains(&"--disable-blink-features=Foo,Bar".to_string()), "{sw:?}");
         assert!(sw.contains(&format!("--disable-features={},Y", DISABLED_FEATURES.join(","))), "{sw:?}");
         // MediaRouter is disabled by Krunk: enabling it is ignored.
-        assert!(sw.contains(&"--enable-features=X".to_string()), "{sw:?}");
+        assert!(sw.contains(&"--enable-features=NoStatePrefetchHoldback,X".to_string()), "{sw:?}");
     }
 
     #[test]
