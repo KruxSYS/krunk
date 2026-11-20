@@ -1,0 +1,52 @@
+--- a/tools/v8_context_snapshot/BUILD.gn
++++ b/tools/v8_context_snapshot/BUILD.gn
+@@ -18,11 +18,23 @@
+   import("//build/config/android/rules.gni")
+ }
+ 
++declare_args() {
++  # Krunk (scripts/cef-build/v8-snapshot/README.md): a Windows build on a Linux host can't run
++  # the generator. With this, the generator is built for the target (Windows) toolchain and not
++  # run; v8-snapshot.sh runs it on a Windows machine and puts v8_context_snapshot.bin next to
++  # libcef.dll before the distribution is packed.
++  krunk_external_v8_context_snapshot = false
++}
++
+ group("v8_context_snapshot") {
+   if (use_v8_context_snapshot) {
+-    public_deps = [ ":generate_v8_context_snapshot" ]
+-    if (!is_android) {
+-      data = [ "$root_out_dir/$v8_context_snapshot_filename" ]
++    if (krunk_external_v8_context_snapshot) {
++      public_deps = [ ":v8_context_snapshot_generator" ]
++    } else {
++      public_deps = [ ":generate_v8_context_snapshot" ]
++      if (!is_android) {
++        data = [ "$root_out_dir/$v8_context_snapshot_filename" ]
++      }
+     }
+   }
+ }
+@@ -38,7 +50,7 @@
+   ]
+ }
+ 
+-if (use_v8_context_snapshot) {
++if (use_v8_context_snapshot && !krunk_external_v8_context_snapshot) {
+   action("generate_v8_context_snapshot") {
+     script = "//build/gn_run_binary.py"
+ 
+@@ -90,8 +102,12 @@
+ 
+     outputs = [ output_file ]
+   }
++}
+ 
+-  if (v8_snapshot_toolchain == current_toolchain) {
++if (use_v8_context_snapshot) {
++  if (v8_snapshot_toolchain == current_toolchain ||
++      (krunk_external_v8_context_snapshot &&
++       current_toolchain == default_toolchain)) {
+     executable("v8_context_snapshot_generator") {
+       sources = [ "v8_context_snapshot_generator.cc" ]
+ 

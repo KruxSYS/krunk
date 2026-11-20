@@ -21,7 +21,7 @@ TOOLCHAIN_HASH_KEY=3bfcb536c8      # TOOLCHAIN_HASH in src/build/vs_toolchain.py
 # since 0.12.1 (Krunk's logo as the engine's product logo, see brand()); -private since 0.12.3
 # (patches/chromium-private-media.patch); -nav since 0.18.0; -preconnect since 0.26.0
 # (patches/chromium-preconnect-blocked-hosts.patch, krunk-preconnect-pref.patch).
-CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect
+CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect${CEF_FLAVOR_SUFFIX:-}
 PATCHES=$(cd "$(dirname "$0")" && pwd)/patches
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SRC=$ROOT/chromium_git/chromium/src
@@ -174,7 +174,9 @@ EOF2
     apply_patches
     brand
     cd "$SRC"
-    autoninja -C out/Release_GN_x64 cefsimple bootstrap bootstrapc
+    # KRUNK_EXTRA_TARGETS: more ninja targets (v8-snapshot/v8-snapshot.sh adds the generator).
+    # shellcheck disable=SC2086
+    autoninja -C out/Release_GN_x64 cefsimple bootstrap bootstrapc ${KRUNK_EXTRA_TARGETS:-}
     ls -la out/Release_GN_x64/libcef.dll out/Release_GN_x64/bootstrap.exe
     ;;
   distrib)
