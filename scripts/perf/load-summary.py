@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Krunk 0.26.0 page-load harness: tables from one or more passes (results.jsonl).
 
-  load-summary.py DIR [DIR...]          markdown to stdout
+  load-summary.py DIR [DIR...]          markdown to stdout (later DIRs' sessions replace earlier ones)
   load-summary.py DIR... --json OUT     also the numbers as JSON
 
 Per browser and scenario: per page median / p90 (nearest rank) of the times from the input
@@ -26,14 +26,22 @@ def p90(v):
     return s[max(0, math.ceil(0.9 * len(s)) - 1)]
 
 
+GROUP = {"cold": "typed", "warm": "typed", "link": "link", "back": "link", "forward": "link"}
+
+
+def session_key(r):
+    return (r["browser"], r["page"], r.get("run"), GROUP.get(r.get("scenario"), r.get("scenario")))
+
+
 def load(dirs):
+    """Rows of every pass; a session (browser start) in a later pass (a fill pass,
+    load-fill.py) replaces the same session's rows from the earlier ones."""
     rows = []
     for d in dirs:
         with open(f"{d}/results.jsonl", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    rows.append(json.loads(line))
+            new = [json.loads(line) for line in f if line.strip()]
+        replaced = {session_key(r) for r in new}
+        rows = [r for r in rows if session_key(r) not in replaced] + new
     return rows
 
 
