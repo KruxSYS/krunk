@@ -95,6 +95,8 @@ fn run() -> Result<i32, String> {
     }
     // Custom DNS: the engine trusts the loopback stub's key (made now, for this run only).
     let mut switches = settings.browser_switches();
+    // User agent "Default": the latest Chrome, in the user agent and the client hints (0.27.0).
+    switches.extend(lb_core::useragents::engine_switches(&settings.user_agent));
     match dns::engine_switch() {
         Some(sw) => switches.push(sw),
         None => log::write("WARN", "dns: no stub identity; custom DNS will stay off"),

@@ -1,16 +1,69 @@
-//! The user-agent presets of Settings → Advanced (Krunk 0.5.0). Version numbers are current
-//! as of 6 November 2026 (sources in `SOURCES`); they are strings the user chooses, not
-//! anything Krunk relies on, so an older number only makes a site think the browser is older.
+//! The user-agent presets of Settings → Advanced (Krunk 0.5.0), and the identity Krunk presents
+//! when the setting is "Default" (0.27.0): the latest stable Chrome, on Windows and Android. Bot
+//! defences (DataDome and the like) rejected the engine's own "Chromium 156" identity, a brand no
+//! ordinary visitor sends. Version numbers are current as of 21 November 2026 (sources in
+//! `SOURCES`); bump [`CHROME_VERSION`] (and the `chrome_major!` macro) with each Chrome stable.
 
 use serde::Serialize;
 
 /// Where the versions came from, for the next update of this table.
 pub const SOURCES: [&str; 4] = [
-    "Chrome 157 stable, 3 Nov 2026: https://chromereleases.googleblog.com/2026/11/stable-channel-update-for-desktop.html",
-    "Edge 157 stable, 5 Nov 2026: https://learn.microsoft.com/en-us/microsoft-edge/web-platform/release-notes/157",
+    "Chrome 158 stable (158.0.8127.37 Windows, 12 Nov 2026; the stable channel's own update on 21 Nov): https://chromiumdash.appspot.com/releases?platform=Windows",
+    "Edge 158 follows Chrome 158: https://learn.microsoft.com/en-us/microsoft-edge/web-platform/release-notes/158",
     "Firefox 159.0.1, 3 Nov 2026: https://www.firefox.com/en-US/firefox/159.0.1/releasenotes/",
     "Safari 27.0, 17 Sep 2026 (frozen OS tokens): https://webkit.org/blog/18325/webkit-features-for-safari-27-0/",
 ];
+
+/// The latest stable Chrome's major version, as a literal for `concat!`.
+macro_rules! chrome_major {
+    () => {
+        "158"
+    };
+}
+
+/// The latest stable Chrome's full version: the default identity's client hints carry it.
+pub const CHROME_VERSION: &str = "158.0.8127.37";
+/// The brand real Chrome lists next to "Chromium" in its client hints.
+pub const CHROME_BRAND: &str = "Google Chrome";
+/// Chrome on 64-bit Windows: the default user agent of Krunk for Windows.
+pub const CHROME_WINDOWS: &str = concat!(
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/",
+    chrome_major!(),
+    ".0.0.0 Safari/537.36"
+);
+/// Chrome on an Android phone (reduced, as Chrome sends it): Krunk for Android's default.
+pub const CHROME_ANDROID: &str = concat!(
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/",
+    chrome_major!(),
+    ".0.0.0 Mobile Safari/537.36"
+);
+
+/// The user agent a tab uses for the user-agent setting `setting` ("" = Default): the setting
+/// itself, else Chrome. `desktop`: the desktop identity (Windows, or an Android tab asking for
+/// the desktop site).
+pub fn effective(setting: &str, desktop: bool) -> &str {
+    match setting.trim() {
+        "" if desktop => CHROME_WINDOWS,
+        "" => CHROME_ANDROID,
+        s => s,
+    }
+}
+
+/// The engine switches that make Krunk for Windows present itself as Chrome when the
+/// user-agent setting is Default: the user agent's product token, and the brand and version
+/// the client hints carry (`navigator.userAgentData`, `Sec-CH-UA*`; Krunk's engine patch
+/// chromium-ua-brand.patch). A chosen user agent goes through the engine's `user_agent` setting
+/// instead and leaves these out.
+pub fn engine_switches(setting: &str) -> Vec<String> {
+    if !setting.trim().is_empty() {
+        return Vec::new();
+    }
+    vec![
+        concat!("--user-agent-product=Chrome/", chrome_major!(), ".0.0.0").to_string(),
+        format!("--krunk-ua-brand={CHROME_BRAND}"),
+        format!("--krunk-ua-version={CHROME_VERSION}"),
+    ]
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,28 +77,42 @@ pub struct Preset {
 pub const PRESETS: [Preset; 10] = [
     Preset {
         id: "chrome-windows",
-        label: "Chrome 157 on Windows",
-        user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        label: concat!("Chrome ", chrome_major!(), " on Windows"),
+        user_agent: CHROME_WINDOWS,
     },
     Preset {
         id: "chrome-macos",
-        label: "Chrome 157 on macOS",
-        user_agent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        label: concat!("Chrome ", chrome_major!(), " on macOS"),
+        user_agent: concat!(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/",
+            chrome_major!(),
+            ".0.0.0 Safari/537.36"
+        ),
     },
     Preset {
         id: "chrome-linux",
-        label: "Chrome 157 on Linux",
-        user_agent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36",
+        label: concat!("Chrome ", chrome_major!(), " on Linux"),
+        user_agent: concat!(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/",
+            chrome_major!(),
+            ".0.0.0 Safari/537.36"
+        ),
     },
     Preset {
         id: "chrome-android",
-        label: "Chrome 157 on Android (phone)",
-        user_agent: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Mobile Safari/537.36",
+        label: concat!("Chrome ", chrome_major!(), " on Android (phone)"),
+        user_agent: CHROME_ANDROID,
     },
     Preset {
         id: "edge-windows",
-        label: "Edge 157 on Windows",
-        user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36 Edg/157.0.0.0",
+        label: concat!("Edge ", chrome_major!(), " on Windows"),
+        user_agent: concat!(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/",
+            chrome_major!(),
+            ".0.0.0 Safari/537.36 Edg/",
+            chrome_major!(),
+            ".0.0.0"
+        ),
     },
     Preset {
         id: "firefox-windows",
@@ -86,7 +153,7 @@ mod tests {
     use crate::settings::Settings;
     use std::collections::HashSet;
 
-    const CHROME: &str = "Chrome/157.0.0.0";
+    const CHROME: &str = concat!("Chrome/", chrome_major!(), ".0.0.0");
     const WEBKIT: &str = "AppleWebKit/537.36 (KHTML, like Gecko)";
 
     #[test]
@@ -103,9 +170,29 @@ mod tests {
         assert!(PRESETS.iter().filter(|p| p.id.starts_with("chrome")).all(|p| p.user_agent.contains(WEBKIT)));
         assert_eq!(PRESETS.iter().filter(|p| p.user_agent.contains("Firefox/159.0")).count(), 3);
         assert_eq!(PRESETS.iter().filter(|p| p.user_agent.contains("Version/27.0")).count(), 2);
-        assert!(PRESETS.iter().any(|p| p.user_agent.contains("Edg/157.0.0.0")));
+        assert!(PRESETS.iter().any(|p| p.user_agent.contains(concat!("Edg/", chrome_major!(), ".0.0.0"))));
         assert!(PRESETS.iter().any(|p| p.user_agent.contains("Android") && p.user_agent.contains("Mobile Safari")));
         assert!(PRESETS.iter().any(|p| p.user_agent.contains("iPhone") && p.user_agent.contains("Mobile/15E148")));
+    }
+
+    #[test]
+    fn default_identity_is_the_latest_chrome() {
+        assert!(CHROME_VERSION.starts_with(concat!(chrome_major!(), ".")));
+        assert_eq!(CHROME_VERSION.split('.').count(), 4);
+        assert_eq!(effective("", true), CHROME_WINDOWS);
+        assert_eq!(effective("  ", false), CHROME_ANDROID);
+        assert_eq!(effective("Custom/1", false), "Custom/1");
+        assert!(CHROME_WINDOWS.contains("Windows NT 10.0; Win64; x64") && CHROME_WINDOWS.contains("Chrome/158.0.0.0"));
+        assert!(CHROME_ANDROID.contains("Mobile Safari/537.36"));
+        assert_eq!(
+            engine_switches(""),
+            [
+                "--user-agent-product=Chrome/158.0.0.0",
+                "--krunk-ua-brand=Google Chrome",
+                "--krunk-ua-version=158.0.8127.37"
+            ]
+        );
+        assert!(engine_switches(PRESETS[5].user_agent).is_empty());
     }
 
     #[test]

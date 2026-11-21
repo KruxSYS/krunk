@@ -1,0 +1,77 @@
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -63,6 +63,34 @@
+ 
+ namespace {
+ 
++// Krunk: the browser identity it presents by default. --krunk-ua-brand names the
++// brand listed next to "Chromium" and the GREASE brand (the user agent itself
++// comes from --user-agent-product), --krunk-ua-version the full version every
++// brand list and the full-version hint carry. Without them: the engine's own.
++std::string KrunkUaSwitch(const char* name) {
++  const base::CommandLine* command_line =
++      base::CommandLine::ForCurrentProcess();
++  if (!command_line->HasSwitch(name)) {
++    return std::string();
++  }
++  std::string value = command_line->GetSwitchValueASCII(name);
++  return net::HttpUtil::IsValidHeaderValue(value) ? value : std::string();
++}
++
++std::string KrunkFullVersion() {
++  std::string full = KrunkUaSwitch("krunk-ua-version");
++  base::Version version(full);
++  if (!full.empty() && version.IsValid() && version.components().size() == 4) {
++    return full;
++  }
++  return std::string(version_info::GetVersionNumber());
++}
++
++std::string KrunkMajorVersion() {
++  std::string full = KrunkFullVersion();
++  return full.substr(0, full.find('.'));
++}
++
+ #if BUILDFLAG(IS_WIN)
+ 
+ // The registry key where the UniversalApiContract version value can be read
+@@ -171,6 +199,10 @@
+ #if !BUILDFLAG(CHROMIUM_BRANDING)
+   brand = version_info::GetProductName();
+ #endif
++  if (std::string krunk_brand = KrunkUaSwitch("krunk-ua-brand");
++      !krunk_brand.empty()) {
++    brand = krunk_brand;
++  }
+ 
+   std::string brand_version =
+       output_version_type == blink::UserAgentBrandVersionType::kFullVersion
+@@ -188,8 +220,7 @@
+ // GetVersionNumber()
+ const blink::UserAgentBrandList GetUserAgentBrandMajorVersionListInternal(
+     std::optional<blink::UserAgentBrandVersion> additional_brand_version) {
+-  return GetUserAgentBrandList(version_info::GetMajorVersionNumber(),
+-                               std::string(version_info::GetVersionNumber()),
++  return GetUserAgentBrandList(KrunkMajorVersion(), KrunkFullVersion(),
+                                blink::UserAgentBrandVersionType::kMajorVersion,
+                                additional_brand_version);
+ }
+@@ -210,8 +241,7 @@
+ // GetVersionNumber()
+ const blink::UserAgentBrandList GetUserAgentBrandFullVersionListInternal(
+     std::optional<blink::UserAgentBrandVersion> additional_brand_version) {
+-  return GetUserAgentBrandList(version_info::GetMajorVersionNumber(),
+-                               std::string(version_info::GetVersionNumber()),
++  return GetUserAgentBrandList(KrunkMajorVersion(), KrunkFullVersion(),
+                                blink::UserAgentBrandVersionType::kFullVersion,
+                                additional_brand_version);
+ }
+@@ -701,7 +731,7 @@
+   // High entropy client hints.
+   metadata.brand_full_version_list =
+       GetUserAgentBrandFullVersionListInternal(std::nullopt);
+-  metadata.full_version = std::string(version_info::GetVersionNumber());
++  metadata.full_version = KrunkFullVersion();
+   metadata.architecture = GetCpuArchitecture();
+   metadata.model = BuildModelInfo();
+   metadata.form_factors = GetFormFactorsClientHint(metadata, metadata.mobile);

@@ -17,6 +17,7 @@ import org.krunk.browser.engine.logins.LoginPolicy
 import org.krunk.browser.engine.logins.LoginVault
 import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.browser.vault.VaultFailure
+import org.krunk.ffi.effectiveUserAgent
 import org.krunk.ffi.internalPage
 import org.krunk.ffi.webOrigin
 import org.mozilla.geckoview.AllowOrDeny
@@ -114,9 +115,23 @@ class KrunkSession(
 ) {
     val gecko: GeckoSession = engine.createSession(private, desktopMode)
 
+    /** Settings > Advanced > User agent ("" = Default). */
+    private var userAgentSetting: String = ""
+
     /** The user-agent setting changed: it applies to this tab's next load. */
     fun setUserAgent(userAgent: String) {
-        gecko.settings.userAgentOverride = userAgent.trim().ifEmpty { null }
+        userAgentSetting = userAgent
+        applyUserAgent(current.desktopMode)
+    }
+
+    /**
+     * The setting, or for Default the latest Chrome (0.14.0): on Android, or on Windows when the
+     * tab asks for the desktop site. Gecko's own identity ("Firefox for Android") is turned away
+     * by bot defences that let Chrome in. The override also beats the engine's desktop mode, so
+     * the desktop identity has to come from here.
+     */
+    private fun applyUserAgent(desktop: Boolean) {
+        gecko.settings.userAgentOverride = effectiveUserAgent(userAgentSetting, desktop)
     }
     private val _state = MutableStateFlow(PageState(desktopMode = desktopMode))
     val state: StateFlow<PageState> = _state.asStateFlow()
@@ -190,6 +205,7 @@ class KrunkSession(
             if (desktop) GeckoSessionSettings.USER_AGENT_MODE_DESKTOP else GeckoSessionSettings.USER_AGENT_MODE_MOBILE
         gecko.settings.viewportMode =
             if (desktop) GeckoSessionSettings.VIEWPORT_MODE_DESKTOP else GeckoSessionSettings.VIEWPORT_MODE_MOBILE
+        applyUserAgent(desktop)
         set { it.copy(desktopMode = desktop) }
         gecko.reload()
     }

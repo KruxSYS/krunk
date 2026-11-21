@@ -12,6 +12,7 @@ import org.krunk.browser.engine.logins.LoginsHub
 import org.krunk.browser.engine.permissions.SitePermissions
 import org.krunk.ffi.AndroidSettings
 import org.krunk.ffi.ThemeMode
+import org.krunk.ffi.effectiveUserAgent
 import org.krunk.ffi.siteIsRegistrable
 import org.mozilla.geckoview.ContentBlocking
 import org.mozilla.geckoview.GeckoResult
@@ -152,7 +153,10 @@ class GeckoEngine(
         blocker.settingsChanged(settings)
     }
 
-    /** Settings > Advanced > User agent ("" = the engine's own); sessions are created with it. */
+    /**
+     * Settings > Advanced > User agent ("" = Default: the latest Chrome, see
+     * [effectiveUserAgent]); sessions are created with it.
+     */
     @Volatile
     private var userAgent: String = ""
 
@@ -169,7 +173,7 @@ class GeckoEngine(
             builder.userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
             builder.viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
         }
-        if (userAgent.isNotEmpty()) builder.userAgentOverride(userAgent)
+        builder.userAgentOverride(effectiveUserAgent(userAgent, desktop))
         return GeckoSession(builder.build())
     }
 

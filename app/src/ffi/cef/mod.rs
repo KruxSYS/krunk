@@ -575,12 +575,9 @@ pub fn command_line() -> String {
     command_line_get_global().map(|c| CefString::from(&c.command_line_string()).to_string()).unwrap_or_default()
 }
 
-/// The engine's default user agent (what Chromium sends without an
-/// override; reduced UA format).
+/// The user agent the engine presents for the setting "Default" (reduced UA format; the
+/// switches of `lb_core::useragents::engine_switches`).
 pub fn default_user_agent() -> String {
-    format!(
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{}.0.0.0 \
-         Safari/537.36",
-        versions().1.split('.').next().unwrap_or("0")
-    )
+    // What the engine presents for user agent "Default" (0.27.0): the latest Chrome.
+    lb_core::useragents::CHROME_WINDOWS.to_string()
 }

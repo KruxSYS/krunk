@@ -268,6 +268,13 @@ pub fn ua_presets() -> Vec<UaPreset> {
         .collect()
 }
 
+/// The user agent a tab sends for the user-agent setting `setting` ("" = Default: the latest
+/// Chrome on Android, or on Windows when the tab asks for the desktop site).
+#[uniffi::export]
+pub fn effective_user_agent(setting: String, desktop: bool) -> String {
+    lb_core::useragents::effective(&setting, desktop).to_string()
+}
+
 /// A built-in new-tab wallpaper (`ui/shared/wallpapers/{id}.webp`, copied into the APK's assets).
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct Wallpaper {
@@ -368,6 +375,9 @@ mod tests {
     fn presets_and_wallpapers() {
         assert_eq!(ua_presets().len(), 10);
         assert!(ua_presets().iter().any(|p| p.id == "chrome-android"));
+        assert!(effective_user_agent(String::new(), false).contains("Mobile Safari"));
+        assert!(effective_user_agent(String::new(), true).contains("Windows NT 10.0"));
+        assert_eq!(effective_user_agent("X/1".into(), true), "X/1");
         let w = wallpapers();
         assert_eq!(w.len(), 10);
         assert!(w.iter().all(|w| w.look == "dark" || w.look == "light"));

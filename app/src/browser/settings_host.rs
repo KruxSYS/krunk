@@ -382,7 +382,7 @@ impl Browser {
                 &ua,
                 &headers.accept_language_list(),
                 hints.as_ref(),
-                &engine::versions().1,
+                lb_core::useragents::CHROME_VERSION,
             )
         };
         let weak = self.me.clone();
