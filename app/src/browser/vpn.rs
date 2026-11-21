@@ -156,6 +156,15 @@ impl Browser {
     /// before the first navigation). False when tabs must not be restored: the VPN should run
     /// and not even the stand-in could be put in place (Krunk stays offline).
     pub(super) fn init_vpn(&self) -> bool {
+        // Measurement builds (0.26.0 smoke): KRUNK_VPN_IMPORT=<file> imports a VPN profile at start
+        // through the normal import, without the native file dialog (which blocks DevTools calls).
+        #[cfg(feature = "perf-harness")]
+        if let Some(path) = std::env::var_os("KRUNK_VPN_IMPORT").map(std::path::PathBuf::from) {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if let Err(e) = self.vpn_import_file(&path, &name) {
+                warning!("vpn: KRUNK_VPN_IMPORT failed: {e}");
+            }
+        }
         self.vpn_reload_profiles();
         *self.vpn.status.borrow_mut() = VpnStatus { since_ms: now_ms(), ..VpnStatus::default() };
         let (auto, id, kill) = {
@@ -223,7 +232,10 @@ impl Browser {
         };
         self.vpn.offline.set(!installed);
         self.net.set_offline(!installed, self.vpn_private_only());
-        engine::set_preload_offline(!installed && !self.vpn_private_only());
+        // 0.26.0: no early connections while the VPN should run and doesn't, whether the stand-in
+        // refuses them or Krunk is offline (smoke: preconnects reached the kill switch's stand-in).
+        // With the private-tabs-only scope, normal tabs go direct and keep them.
+        engine::set_preload_offline(!self.vpn_private_only());
         self.vpn_route_changed();
         let server = self.vpn.status.borrow().server.clone();
         *self.vpn.status.borrow_mut() = VpnStatus {

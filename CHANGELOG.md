@@ -18,8 +18,11 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
   - connects to the hosts a site usually needs as soon as you start going there;
   - connects to where the address bar's top suggestion goes.
 
-  Krunk never does this in private tabs, or while the VPN is offline.
-  - Early connections never go to hosts the ad blocker blocks: no DNS lookup and no connection.
+  Krunk never does this in private tabs, or while the VPN should run and isn't connected
+  (the kill switch is holding connections, or Krunk is offline).
+  - Early connections never go to hosts the ad blocker blocks outright (whole-host rules): no DNS
+    lookup and no connection. A host only some of whose addresses are blocked can still get one;
+    no request is sent.
   - They always use the VPN when it runs.
   - Pages a site asks to fetch ahead go through the ad blocker like any other request.
   - Clearing your history also clears what Krunk learned about the hosts each site needs.

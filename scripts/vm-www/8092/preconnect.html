@@ -5,9 +5,9 @@
      The rel=prerender to example.net must start nothing (NoStatePrefetchHoldback). -->
 <link rel="preconnect" href="https://example.org">
 <link rel="dns-prefetch" href="https://example.org">
-<link rel="preconnect" href="https://stats.g.doubleclick.net">
+<link rel="preconnect" href="https://ad.doubleclick.net">
 <link rel="dns-prefetch" href="https://ad.doubleclick.net">
 <link rel="prerender" href="https://example.net/">
 <body style="font:15px sans-serif"><h2>Preconnect hints</h2>
-<p>example.org (normal), stats.g.doubleclick.net / ad.doubleclick.net (blocked), example.net (rel=prerender).</p>
+<p>example.org (normal), ad.doubleclick.net (blocked: plain rule ||ad.doubleclick.net^), example.net (rel=prerender).</p>
 </body>

@@ -807,11 +807,12 @@ Measured for 0.26.0 (`docs/perf-0.26.0/`: `fixes.md`, `final/table.md`).
 
     Krunk also connects early to where the address bar's top suggestion goes.
   - **Never in private tabs:** their profile keeps prediction off, and Krunk's own preconnect isn't
-    used there. Prediction is also off while Krunk is offline because the VPN couldn't start.
+    used there. Prediction is also off while the VPN should run and isn't connected (the kill switch's
+    stand-in is in place, or Krunk is offline).
   - **The same blocking and the same route:**
     - early connections never go to a host the ad blocker blocks: the engine gets the lists'
       plain host rules (engine patch `chromium-preconnect-blocked-hosts.patch`);
-    - they use the VPN when it runs, with the kill switch's refusing stand-in when it is down;
+    - they use the VPN when it runs, and none are made while the kill switch holds connections;
     - a page fetched ahead (speculation rules) goes through the ad blocker and tracking
       protection like any other request;
     - `<link rel=prerender>` fetches nothing (`NoStatePrefetchHoldback`): the engine ran those in a
