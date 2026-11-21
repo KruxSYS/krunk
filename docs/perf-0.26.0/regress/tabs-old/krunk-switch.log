@@ -1,0 +1,60 @@
+1795246331 INFO Krunk 0.25.5 starting, data dir C:\pipeline\krunk\p0250\Krunk
+1795246331 INFO Krunk's switches: --no-pings --disable-domain-reliability --disable-background-networking --disable-chrome-login-prompt --disable-component-update --host-resolver-rules=MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND, MAP update.googleapis.com ~NOTFOUND --disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled
+1795246331 INFO engine preferences applied (default profile): 7/7
+1795246331 INFO engine command line: "C:\pipeline\krunk\app260h\Krunk.exe" --lang=en-US --log-file="C:\pipeline\krunk\p0250\Krunk\cef.log" --log-severity=warning --disable-signin-promo-on-avatar-pill-for-testing --no-pings --disable-domain-reliability --disable-background-networking --disable-chrome-login-prompt --disable-component-update --host-resolver-rules="MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND, MAP update.googleapis.com ~NOTFOUND" --disable-features=GlicActorUi,AutofillActorMode,LensOverlay,KillOnInvalidNavigationHeaders,AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled --ignore-certificate-errors-spki-list=AHsX+zgzY5FjJcdc4bkHLUXttsm79BTCxOseq8afr54= --flag-switches-begin --flag-switches-end
+1795246331 INFO tracking protection: 47492 known tracker hosts
+1795246331 INFO filter lists: last checked 328.3 h ago; update due
+1795246331 INFO filter engine loaded from cache in 16 ms; scriptlet engine 902 KB
+1795246331 INFO dns: the system resolver (engine mode automatic)
+1795246331 INFO session restored: 1 window(s)
+1795246331 INFO update check: https://krunk.209.wf/updates/win-x64/latest.json (portable)
+1795246331 INFO engine initialized: CEF 156.0.15, Chromium 156.0.8078.80
+1795246332 INFO engine client hints: "Not:A-Brand";v="8", "Chromium";v="156" on Windows 19.0.0
+1795246335 INFO tab 41: new tab page made ahead
+1795246339 INFO tab 3: media playing
+1795246339 INFO tab 3: media stopped
+1795246341 INFO tab 9: media playing
+1795246342 INFO tab 9: media stopped
+1795246342 INFO tab 12: media playing
+1795246343 INFO tab 12: media stopped
+1795246344 INFO tab 15: media playing
+1795246344 INFO tab 15: media stopped
+1795246345 INFO tab 18: media playing
+1795246346 INFO tab 18: media stopped
+1795246346 INFO tab 21: media playing
+1795246347 INFO tab 21: media stopped
+1795246347 INFO tab 24: media playing
+1795246348 INFO tab 24: media stopped
+1795246349 INFO tab 27: media playing
+1795246349 INFO tab 27: media stopped
+1795246350 INFO tab 30: media playing
+1795246351 INFO tab 30: media stopped
+1795246351 INFO tab 33: media playing
+1795246352 INFO tab 33: media stopped
+1795246352 INFO tab 36: media playing
+1795246353 INFO tab 36: media stopped
+1795246354 INFO tab 39: media playing
+1795246354 INFO engine files: 232 checked, libcef.dll 8e5cc7661c60e8a0 (this release's engine)
+1795246354 INFO tab 39: media stopped
+1795246370 INFO tab 3: media playing
+1795246372 INFO tab 3: media stopped
+1795246373 INFO tab 6: media playing
+1795246374 INFO tab 6: media stopped
+1795246375 INFO tab 9: media playing
+1795246377 INFO tab 9: media stopped
+1795246377 INFO tab 12: media playing
+1795246379 INFO tab 12: media stopped
+1795246380 INFO tab 15: media playing
+1795246381 INFO tab 15: media stopped
+1795246382 INFO tab 18: media playing
+1795246384 INFO tab 18: media stopped
+1795246384 INFO tab 21: media playing
+1795246386 INFO tab 21: media stopped
+1795246387 INFO tab 24: media playing
+1795246388 INFO tab 24: media stopped
+1795246389 INFO tab 27: media playing
+1795246391 INFO filter lists: last checked 328.3 h ago; update due; updating
+1795246392 INFO tab 27: media stopped
+1795246392 INFO window 1: close requested (1 open)
+1795246392 INFO window 1 destroyed
+1795246392 INFO shutting down
