@@ -280,7 +280,7 @@ pub fn set_preload(on: bool) -> bool {
 /// 0.26.0: hosts the engine must never preconnect to or pre-resolve (the ad blocker's plain host
 /// rules, `lb_core::preconnect_block`); empty when blocking is off. Process-wide.
 pub fn set_blocked_hosts(hosts: &[String]) -> bool {
-    let (Some(mut global), Some(mut value), Some(mut list)) =
+    let (Some(mut global), Some(value), Some(mut list)) =
         (request_context_get_global_context(), value_create(), list_value_create())
     else {
         return false;
@@ -302,7 +302,7 @@ pub fn set_blocked_hosts(hosts: &[String]) -> bool {
 /// (the engine checks its prediction preference) and for blocked hosts. Never call it for
 /// private tabs.
 pub fn preconnect(url: &str) -> bool {
-    let (Some(mut global), Some(mut value)) = (request_context_get_global_context(), value_create()) else {
+    let (Some(mut global), Some(value)) = (request_context_get_global_context(), value_create()) else {
         return false;
     };
     value.set_string(Some(&CefString::from(url)));
@@ -312,7 +312,7 @@ pub fn preconnect(url: &str) -> bool {
 /// 0.26.0: forgets what the engine's loading predictor learned (the hosts each site needs),
 /// with the history.
 pub fn clear_predictor() -> bool {
-    let (Some(mut global), Some(mut value)) = (request_context_get_global_context(), value_create()) else {
+    let (Some(mut global), Some(value)) = (request_context_get_global_context(), value_create()) else {
         return false;
     };
     value.set_bool(1);
