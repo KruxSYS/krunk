@@ -1,0 +1,2 @@
+connect [::1]:8092 2
+proxy [direct://] 11

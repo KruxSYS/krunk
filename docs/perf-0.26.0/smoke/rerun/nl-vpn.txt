@@ -1,0 +1,12 @@
+example.org: contacted
+  HTTP_STREAM_JOB_CONTROLLER 2
+  HTTP_TRANSACTION_SEND_REQUEST_HEADERS 1
+  HTTP_TRANSACTION_SEND_TUNNEL_HEADERS 1
+  SOCKET_POOL_CONNECT_JOB_CREATED 1
+  TCP_CLIENT_SOCKET_POOL_REQUESTED_SOCKETS 2
+pixel.quantserve.com: none
+example.net: none
+connect 127.0.0.1:51013 1
+connect [::1]:8092 2
+proxy [127.0.0.1:51013] 2
+proxy [direct://] 18

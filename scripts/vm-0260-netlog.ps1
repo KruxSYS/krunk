@@ -33,7 +33,9 @@ if ($Case -eq 'private') {
   Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App"
   for ($i = 0; $i -lt 60 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
   Start-Sleep 6
-  [void][U]::SetForegroundWindow((MainWindow)); Start-Sleep -Milliseconds 800
+  # The Alt tap lets a background task bring a window to the front (vm-windows.ps1 Focus).
+  [U]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [void][U]::SetForegroundWindow((MainWindow))
+  [U]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 800
   Log "[netlog private] foreground before Ctrl+Shift+N: '$(FgTitle)'"
   if ((FgTitle) -notlike '*Krunk*') { Log "[netlog private] ABORT: Krunk is not in front"; return }
   Keys '^+n' 2500

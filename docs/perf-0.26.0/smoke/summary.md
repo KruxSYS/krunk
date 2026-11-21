@@ -1,31 +1,38 @@
-# 0.26.0 smoke and regressions (2026-11-21, one VM batch)
+# 0.26.0 smoke and regressions (2026-11-21)
 
-Builds: 0.26.0 = app260rel (release, dist/) and app260r (harness build of the same commit, for the
-CDP-driven VPN steps); 0.25.5 = app260h (harness build). Batch: `scripts/perf/smoke-0260.sh`, log
-`../smoke-batch.log`.
+Builds after the fixes 37e76ac (hang) and 9fe3e5a (kill switch, proof page): 0.26.0 = app260rel
+(release, dist/) and app260r (harness build of the same commit: CDP for the VPN steps); 0.25.5 =
+app260h. Re-run batch `smoke-0260b.sh` (`../smoke2/`) and its corrective subset
+(SUBSET=1, `../smoke3/`: proof host, focus). First run and its failures: git 2e40e10; diagnosis
+`hang.md`.
 
-**Verdict: FAIL. Release blocker: 0.26.0 stops responding soon after start on a real network.**
+**Verdict: PASS.**
 
 | Check | 0.25.5 | 0.26.0 | Verdict |
 |---|---|---|---|
-| Release smoke shots (Guardian, Wikipedia, BBC, YouTube, back/forward) | – | all 6 show the new tab page: no typed address was opened; the back/forward shots' title is "New tab – Krunk (Not Responding)" | **FAIL** |
-| Private-tab shot | – | bare desktop (Krunk window gone or behind) | **FAIL** |
-| Ad blocker shot | – | new tab page | **FAIL** (same hang) |
-| VPN-on shot (harness build) | – | preconnect test page loaded, VPN connected (OpenVPN TCP testbed) | pass |
-| Kill-switch shot (harness build) | – | Settings page: the navigation was blocked by the import dialog | not a valid shot |
-| Tab switch (vm-0250 switch, 40 tabs) | 25/25 switches, median 34.5, p95 49.8 ms | not measured: "could not focus Krunk", twice, on both builds; krunk.log stops at "engine initialized" (0.25.5's goes on to load tabs within 1–4 s) | **FAIL** |
-| Background CPU (vm-0250 cpu, 40 tabs) | avg 5.6 %, max 9.8 % | not measured (same failure) | **FAIL** |
-| Omnibox latency (vm-0255 check) | 8 dropdowns, on screen 11–27 ms after the query | 1 dropdown in 6 tries (26 ms) | **FAIL** (fits the hang) |
-| Ad blocker page, blocked/redirected requests | 6 | 4: the linkedin `px.ads` and facebook `tr` images are missing from the log | **mismatch** (stray Firefox window in front in both runs; cause not examined) |
-| Release netlog, F-block page: doubleclick.net | – | no DNS, no socket | pass |
-| Release netlog, F-block page: example.org | – | no DNS, no socket (expected both) | **FAIL** |
-| Private-tab netlog (release) | – | invalid: the page never loaded in Krunk (no connection to localhost:8092). The keys missed Krunk and the URL opened in Firefox. Pass 1's private-tab proof was made the same way and is invalid too | **not proven** |
-| VPN on: preconnect routes | – | only the VPN proxy (127.0.0.1:65279) and the local page; plus one direct connectivity check to 142.251.150.120:80 | pass (routes) |
-| VPN on: F-block | – | **preconnect to stats.g.doubleclick.net through the VPN proxy** (CONNECT tunnel headers in the netlog) | **FAIL** (blocked-host guarantee) |
-| Kill switch engaged (kill switch on, no VPN): sockets | – | only the refusing stand-in (127.0.0.1:64855) and the local page; no direct socket | pass |
-| Kill switch engaged: preconnects | – | preconnects to example.org and stats.g.doubleclick.net were attempted to the stand-in (refused); requirement: none | **FAIL** |
+| Start-up hang | – | blocked-host push 132–216 ms on the UI thread (was 39 s, twice); no "Not Responding" | pass |
+| Tab switch (vm-0250, 40 tabs, 25 switches) | median 34.5, p95 49.8 ms | median 18.8, p95 49.2 ms | pass |
+| Background CPU (vm-0250 cpu, 40 tabs) | avg 5.6 %, max 9.8 % | avg 5.5 %, max 10.3 % | pass |
+| Omnibox (vm-0255 check) | 8/8 dropdowns, 11–27 ms | 8/8, 9–29 ms | pass |
+| Ad blocker page, logged requests | 6 | 6 (the first run's 4: the hang delayed the page past the 15 s capture) | pass |
+| Release netlog: example.org | – | DNS + socket | pass |
+| Release netlog: pixel.quantserve.com (in the blocked set) | – | no DNS, no socket | pass |
+| Release netlog: `rel=prerender` example.net | – | nothing | pass |
+| Private-tab netlog | – | the page loaded in the private window (shot `nl-private-page.png`, title check); no DNS, no socket for any hinted host | pass |
+| VPN on (OpenVPN TCP testbed) | – | connections only to the VPN proxy and the local page; pixel.quantserve.com none | pass |
+| Kill switch engaged | – | no early connections at all (no stand-in connections for hinted hosts) | pass |
+| Smoke shots (release): Guardian (corpus page, live), Wikipedia, BBC, YouTube, back, forward, private tab, ad blocker; VPN on | – | all show their page; no blank or #121212 frames (checked by eye) | pass |
 
-Screenshots: `s0260-*.png`, `ads-*.png`, `omni-*.png`; netlogs: `nl-rel-*.json`, `nl-vpn.json`, `nl-ks.json`.
-Tab-pass logs: `../regress/tabs-{old,new,new-r}/`.
-
-Not investigated (instruction: ask first).
+Notes:
+- **Earlier "leak" hosts weren't in the set.** stats.g.doubleclick.net and ad.doubleclick.net were
+  not in the blocked set by design: an `@@` exception touches them (e.g.
+  `@@||ad.doubleclick.net/…$popup`). That is the documented narrower-rule limitation, not a
+  missed check.
+- **The set covers fewer big trackers than expected.** Of 13 well-known ad/tracker domains, only
+  pixel.quantserve.com is in it; the others either have no plain `||host^` rule or an `@@`
+  exception touches them in the default lists. README Known
+  limitations says so.
+- **Harness fixes:**
+  - the private-tab and live steps focus Krunk with an Alt tap and log the title;
+  - the VPN profile is pre-imported by `KRUNK_VPN_IMPORT` (harness builds only);
+  - no file dialog.

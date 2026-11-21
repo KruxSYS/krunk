@@ -1,0 +1,5 @@
+example.org: none
+pixel.quantserve.com: none
+example.net: none
+connect [::1]:8092 2
+proxy [direct://] 11

@@ -26,7 +26,10 @@ switch ($Step) {
     Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App"
     for ($i = 0; $i -lt 80 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
     $A = MainWindow; [U]::MoveWindow($A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 6
-    [void][U]::SetForegroundWindow($A); Start-Sleep -Milliseconds 800
+    # The Alt tap lets a background task bring the window to the front (vm-windows.ps1 Focus).
+    [U]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero); [void][U]::SetForegroundWindow($A)
+    [U]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 800
+    Click 640 30 300   # the tab strip: the frame (not a page) has the keyboard
     Go 'https://www.theguardian.com/international' 9000; Shot 's0260-corpus-guardian'
     Go 'https://en.wikipedia.org/wiki/Rust_{(}programming_language{)}' 7000; Shot 's0260-live-wikipedia'
     Go 'https://www.bbc.com/news' 8000; Shot 's0260-live-bbc'

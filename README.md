@@ -2471,6 +2471,10 @@ Page-load harness (0.26.0; details and every option in
 - **Preload pages (0.26.0):** early connections to hosts the ad blocker blocks are skipped only
   for plain host rules (`||host^`). A host blocked by a narrower rule (path, options) can still get
   a connection, but no request is sent. The per-site allowlist doesn't apply to early connections.
+  A host is also left out when any `@@` exception in the lists touches it or a parent. With the
+  default lists that removes most big ad domains (of 13 well-known ad and tracker domains checked
+  on 2026-11-21, only pixel.quantserve.com is in the set). Their requests are still blocked as
+  before; only the early connection can happen.
 - **Page-load comparison runs:** Chrome and Edge must be pinned (auto-update off) on the test
   machine. In 0.26.0 they updated between sessions (Chrome 157 → 158, Edge 156 → 157), and the
   harness could no longer drive input into them. The Chrome/Edge figures come from the earlier
