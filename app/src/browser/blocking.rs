@@ -301,9 +301,8 @@ const SHIELD_RECENT: usize = 6;
 /// The part of a tab's network state the IO thread reads.
 #[derive(Default)]
 struct TabShared {
-    /// URL of the top-level navigation in progress or loaded. 0.26.0: an `Arc<str>`, so a
-    /// request takes it with one lock and no copy (`TabShared::top`).
-    top_url: Mutex<Arc<str>>,
+    /// URL of the top-level navigation in progress or loaded.
+    top_url: Mutex<String>,
     /// The address (without fragment) of a navigation the host itself started and allowed:
     /// the address bar, a tab the host opened, an extension's Options. Its document request
     /// may be for an extension's page whatever initiator the engine reports (0.17.0: it
@@ -326,27 +325,6 @@ struct TabShared {
     cost: crate::perf::NetCost,
 }
 
-impl TabShared {
-    /// The page's address: one lock, an `Arc` clone (0.26.0).
-    fn top(&self) -> Arc<str> {
-        self.top_url.lock().map(|t| t.clone()).unwrap_or_default()
-    }
-}
-
-/// Measurement builds: `KRUNK_PERF_OFF=filter-fast` takes the page's address per use, as in
-/// 0.25.5 (the A side of the F-filter A/B). Always false in other builds.
-#[inline]
-fn filter_slow() -> bool {
-    #[cfg(feature = "perf-probe")]
-    {
-        super::perf_probe::off("filter-fast")
-    }
-    #[cfg(not(feature = "perf-probe"))]
-    {
-        false
-    }
-}
-
 /// The network policy of one tab (runs on the IO thread).
 struct TabPolicy {
     net: Arc<NetShared>,
@@ -355,11 +333,6 @@ struct TabPolicy {
 
 impl RequestPolicy for TabPolicy {
     fn check(&self, req: &NetRequest<'_>) -> NetVerdict {
-        // 0.26.0 (F-filter): the page's address once per request. Measurement builds with
-        // KRUNK_PERF_OFF=filter-fast take it the 0.25.5 way (a locked copy at each use).
-        let slow = filter_slow();
-        let top: Arc<str> = if slow { Arc::default() } else { self.tab.top() };
-        let top_again = || if slow { Arc::from(self.tab.top().as_ref().to_owned()) } else { top.clone() };
         if req.resource_type == 0 {
             if let Ok(mut n) = self.tab.navigations.lock() {
                 if n.len() >= 8 {
@@ -380,7 +353,7 @@ impl RequestPolicy for TabPolicy {
         // An extension's files (0.17.0): its own documents load them, a web page only what the
         // manifest lists under `web_accessible_resources` for it.
         if req.url.contains(lb_core::ext::HOST_SUFFIX) {
-            let top = top_again();
+            let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
             let by_host = req.resource_type == 0
                 && self.tab.host_nav.lock().is_ok_and(|h| !h.is_empty() && *h == without_fragment(req.url));
             if !by_host && !self.net.ext_request_allowed(req.url, req.initiator, &top) {
@@ -403,7 +376,7 @@ impl RequestPolicy for TabPolicy {
         } else {
             protection::trim_referrer(req.referrer, req.url, referrer_from_code(self.net.referrer_policy.load(Relaxed)))
         };
-        let top_for_rules = top_again();
+        let top_for_rules = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
         let headers = NetVerdict::Allow {
             dnt: self.net.dnt.load(Relaxed),
             gpc: self.net.gpc.load(Relaxed),
@@ -415,7 +388,7 @@ impl RequestPolicy for TabPolicy {
         }
         let Some(kind) = ResourceKind::from_cef_resource_type(req.resource_type, req.url) else { return headers };
         let Some(engine) = self.net.engine() else { return headers };
-        let top = top_again();
+        let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
         let verdict = match engine.check(req.url, &top, kind) {
             Decision::Allow => return headers,
             Decision::Block => NetVerdict::Block,
@@ -434,7 +407,7 @@ impl RequestPolicy for TabPolicy {
             }
             log.push_back(lb_core::blocklog::Entry {
                 url: req.url.to_string(),
-                page: top.to_string(),
+                page: top.clone(),
                 kind,
                 redirected: matches!(verdict, NetVerdict::Respond { .. }),
             });
@@ -483,7 +456,7 @@ impl RequestPolicy for TabPolicy {
         if policy == 0 || self.tab.allowed.load(Relaxed) {
             return true;
         }
-        let top = if filter_slow() { Arc::from(self.tab.top().as_ref().to_owned()) } else { self.tab.top() };
+        let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
         if !cookies::is_third_party(&top, url) {
             return true;
         }
@@ -627,7 +600,7 @@ impl TabNet {
     }
 
     pub fn top_url(&self) -> String {
-        self.io.top().to_string()
+        self.io.top_url.lock().map(|t| t.clone()).unwrap_or_default()
     }
 }
 
@@ -1011,7 +984,7 @@ impl Browser {
 
         // A real navigation: reset the shield and prepare cosmetic filters.
         if let Ok(mut top) = net.io.top_url.lock() {
-            *top = Arc::from(uri);
+            *top = uri.to_string();
         }
         net.io.blocked.store(0, Relaxed);
         if let Ok(mut log) = net.io.blocked_log.lock() {

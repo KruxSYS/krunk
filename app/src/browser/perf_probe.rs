@@ -8,13 +8,8 @@
 
 use crate::ffi::cef::Scripts;
 
-/// Read once: some names are checked per request on the IO thread (`filter-fast`), and both
-/// sides of an A/B must pay the same for the check.
-fn list() -> &'static [String] {
-    static LIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    LIST.get_or_init(|| {
-        std::env::var("KRUNK_PERF_OFF").unwrap_or_default().split(',').map(|s| s.trim().to_string()).collect()
-    })
+fn list() -> Vec<String> {
+    std::env::var("KRUNK_PERF_OFF").unwrap_or_default().split(',').map(|s| s.trim().to_string()).collect()
 }
 
 pub(super) fn off(name: &str) -> bool {
