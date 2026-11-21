@@ -14,7 +14,7 @@ if (-not (Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-
   Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile','-File',"$K\serve.ps1",'-PrefixList','http://localhost:8092/'
   Start-Sleep 2
 }
-Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process Krunk, firefox -ErrorAction SilentlyContinue | Stop-Process -Force
 Start-Sleep 2
 Remove-Item -Recurse -Force "$K\$P" -ErrorAction SilentlyContinue
 Copy-Item -Recurse "$K\$Base" "$K\$P"
@@ -26,11 +26,22 @@ $env:LOCALAPPDATA = "$K\$P"
 $env:KRUNK_PERF_OFF = $(if ($Case -eq 'off') { 'preconnect-block' } else { '' })
 $url = 'http://localhost:8092/preconnect.html'
 if ($Case -eq 'private') {
+  # Keys must reach Krunk: with another window in front they open the URL in the default
+  # browser (Firefox on the VM) and the netlog proves nothing (0.26.0 smoke).
+  Add-Type -Namespace F -Name G -MemberDefinition '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, System.Text.StringBuilder s, int n);' -ErrorAction SilentlyContinue
+  function FgTitle { $sb = New-Object System.Text.StringBuilder 256; [void][F.G]::GetWindowText([F.G]::GetForegroundWindow(), $sb, 256); $sb.ToString() }
   Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App"
   for ($i = 0; $i -lt 60 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
   Start-Sleep 6
+  [void][U]::SetForegroundWindow((MainWindow)); Start-Sleep -Milliseconds 800
+  Log "[netlog private] foreground before Ctrl+Shift+N: '$(FgTitle)'"
+  if ((FgTitle) -notlike '*Krunk*') { Log "[netlog private] ABORT: Krunk is not in front"; return }
   Keys '^+n' 2500
+  $t = FgTitle; Log "[netlog private] foreground after Ctrl+Shift+N: '$t'"
+  if ($t -notlike '*Krunk*') { Log "[netlog private] ABORT: no Krunk window in front"; return }
   Keys '^l' 300; Keys $url 100; Keys '{ENTER}' 20000
+  Shot "nl-private-page"
+  Log "[netlog private] foreground with the page: '$(FgTitle)'"
 } else {
   Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App" -ArgumentList $url
   Start-Sleep 20

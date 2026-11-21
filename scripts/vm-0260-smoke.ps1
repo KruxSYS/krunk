@@ -26,6 +26,7 @@ switch ($Step) {
     Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App"
     for ($i = 0; $i -lt 80 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
     $A = MainWindow; [U]::MoveWindow($A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 6
+    [void][U]::SetForegroundWindow($A); Start-Sleep -Milliseconds 800
     Go 'https://www.theguardian.com/international' 9000; Shot 's0260-corpus-guardian'
     Go 'https://en.wikipedia.org/wiki/Rust_{(}programming_language{)}' 7000; Shot 's0260-live-wikipedia'
     Go 'https://www.bbc.com/news' 8000; Shot 's0260-live-bbc'
@@ -44,6 +45,8 @@ switch ($Step) {
     Set-Content -Path "$K\nl-flags.json" -Value (@{ extraFlags = "--disable-quic --log-net-log=$nl" } | ConvertTo-Json -Compress) -Encoding ascii
     python "$K\setkv.py" "$K\lp-vpn-$Name" "@$K\nl-flags.json" | Out-Null
     $env:KRUNK_DEVTOOLS_PORT = '9222'
+    # Harness builds import -Path at start (KRUNK_VPN_IMPORT), no file dialog.
+    if ($Path) { $env:KRUNK_VPN_IMPORT = $Path } else { Remove-Item Env:KRUNK_VPN_IMPORT -ErrorAction SilentlyContinue }
     Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App"
     for ($i = 0; $i -lt 80 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
     $A = MainWindow; [U]::MoveWindow($A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 8
