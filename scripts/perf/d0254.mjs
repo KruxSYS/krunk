@@ -1,5 +1,6 @@
 // Krunk 0.25.4 VM smoke driver: the VPN kill switch (CDP on 127.0.0.1:19870 = the VM's 9222).
 //   node d0254.mjs <step>   ks on|off | page | import | connect | disconnect | remove | state
+//   0.26.0: nav URL (open URL in the active tab) | creds USER PASS (the first profile's OpenVPN login)
 const base = 'http://127.0.0.1:19870';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function targets() { return (await (await fetch(base + '/json/list')).json()).filter((t) => t.type === 'page'); }
@@ -46,6 +47,7 @@ async function state() {
   return s;
 }
 const [step, a1] = process.argv.slice(2);
+if (step === 'nav') { await go(a1); await sleep(8000); console.log('nav', a1); process.exit(0); }
 if (step !== 'page') await go('krunk://settings');
 if (step === 'ks') {
   const cur = JSON.parse(await evalIn(settingsPage, req('getSettings')));
@@ -67,6 +69,10 @@ if (step === 'page') {
 if (step === 'import') {
   // Opens the native dialog; the ps1 types the path into it. Not awaited here.
   console.log('import', await evalIn(settingsPage, `(LB.request('vpnImport').then(r => console.log('imported', JSON.stringify(r))), 'dialog opened')`));
+}
+if (step === 'creds') {
+  const s = await state();
+  console.log('creds', await evalIn(settingsPage, req('vpnCredentials', { id: s.profiles[0].id, username: a1, password: process.argv[4] })));
 }
 if (step === 'connect') {
   const s = await state();
