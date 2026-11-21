@@ -15,8 +15,8 @@ use lb_core::keys::{self, Command};
 use lb_core::layout;
 use lb_core::pages::{self, Page};
 use lb_core::protocol::{
-    self, AddressEdit, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request,
-    Sender, Source, TabAction, UnlockPurpose, ZoomAction,
+    self, Channel, ContentMessage, Envelope, Event, NavState, PopupContent, PopupKind, PopupRect, Request, Sender,
+    Source, TabAction, UnlockPurpose, ZoomAction,
 };
 use lb_core::settings::{Settings, Startup};
 use lb_core::storage::{now_ms, Store};
@@ -476,10 +476,6 @@ pub struct Browser {
     /// A new-tab page whose address bar must keep the keyboard focus until
     /// the user clicks into the page or navigates.
     address_focus: Cell<Option<TabId>>,
-    /// 0.26.0 (F-keys): Ctrl+L/Alt+D/F6 was pressed in a page of this window at this time; keys
-    /// that still reach the page before its shell has the keyboard go to the address bar
-    /// (`address_capture_key`).
-    address_capture: Cell<Option<(WindowId, std::time::Instant)>>,
     /// The tab whose video went to the floating window automatically (setting `auto_pip`).
     auto_pip_tab: Cell<Option<TabId>>,
     /// The last tab asked to show a video in the floating window, and when (0.24.2): the
@@ -623,7 +619,6 @@ impl Browser {
             exit_cleared: Cell::new(false),
             closing: Cell::new(false),
             address_focus: Cell::new(None),
-            address_capture: Cell::new(None),
             auto_pip_tab: Cell::new(None),
             pip_requested: Cell::new(None),
             ext: ext::ExtHost::new(),
@@ -927,9 +922,6 @@ impl Browser {
             weak.upgrade().is_some_and(|b| {
                 if let Some(win) = b.window_of(id) {
                     b.make_current(win);
-                }
-                if b.address_capture_key(key) {
-                    return true;
                 }
                 // 0.12.0: hotkey recording on krunk://scripts, then the macros' hotkeys.
                 if b.macro_key(id, key) {
@@ -2207,48 +2199,6 @@ impl Browser {
         }
     }
 
-    /// 0.26.0 (F-keys): a key that reached tab content right after Ctrl+L (Alt+D, F6) while its
-    /// window's shell does not have the keyboard yet. Typing goes to the address bar instead
-    /// of the page: characters are inserted at its selection, Backspace deletes, Enter opens
-    /// what it holds. The capture ends with Enter or Escape, when the shell has the keyboard,
-    /// or 1 s after the last captured key. Measured: 43 of 82 cold typed loads of 0.25.5 in
-    /// the page-load baseline never started, every key having gone to the page.
-    fn address_capture_key(&self, key: KeyPress) -> bool {
-        const CAPTURE: std::time::Duration = std::time::Duration::from_millis(1000);
-        let Some((win, since)) = self.address_capture.get() else { return false };
-        // Measurement builds: KRUNK_PERF_OFF=address-capture (0.26.0 F-keys A/B).
-        #[cfg(feature = "perf-probe")]
-        if perf_probe::off("address-capture") {
-            return false;
-        }
-        let shell = self.frame(win).and_then(|f| f.shell.try_borrow().ok()?.clone());
-        let Some(shell) = shell.filter(|s| !s.has_focus() && since.elapsed() < CAPTURE && self.cur_id() == Some(win))
-        else {
-            self.address_capture.set(None);
-            return false;
-        };
-        let edit = if key.ctrl || key.alt {
-            None
-        } else if key.vk == keys::vk::RETURN {
-            Some(AddressEdit::Submit)
-        } else if key.vk == keys::vk::BACK {
-            Some(AddressEdit::Backspace)
-        } else {
-            key.text.map(|c| AddressEdit::Insert { text: c.to_string() })
-        };
-        let Some(edit) = edit else {
-            if key.vk == keys::vk::ESCAPE {
-                self.address_capture.set(None);
-            }
-            return false;
-        };
-        let more = edit != AddressEdit::Submit;
-        self.address_capture.set(more.then(|| (win, std::time::Instant::now())));
-        self.post_shell_to(win, &Event::AddressEdit { edit });
-        shell.focus();
-        true
-    }
-
     /// Opens the find bar with keyboard focus in it: the shell view must
     /// get focus first, or typing still goes to the page.
     pub(super) fn show_find_bar(&self) {
@@ -3019,10 +2969,7 @@ impl Browser {
             }
             Command::SelectTab(i) => self.update_current(|m| m.activate_index(usize::from(i), now)),
             Command::LastTab => self.update_current(|m| m.activate_last(now)),
-            Command::FocusAddressBar => {
-                self.address_capture.set(self.cur_id().map(|w| (w, std::time::Instant::now())));
-                self.focus_address_bar();
-            }
+            Command::FocusAddressBar => self.focus_address_bar(),
             Command::Reload | Command::HardReload => {
                 if let Some(id) = self.active_id() {
                     self.free_stuck_connections(id);

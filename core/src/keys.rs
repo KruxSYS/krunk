@@ -63,9 +63,7 @@ pub enum Command {
 
 /// Virtual-key codes (winuser.h).
 pub mod vk {
-    pub const BACK: u32 = 0x08;
     pub const TAB: u32 = 0x09;
-    pub const RETURN: u32 = 0x0D;
     pub const SPACE: u32 = 0x20;
     pub const ESCAPE: u32 = 0x1B;
     pub const HOME: u32 = 0x24;

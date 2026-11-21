@@ -1054,13 +1054,6 @@
     else if (kind === 'deleteSelection') { address.setRangeText('', address.selectionStart, address.selectionEnd, 'end'); }
     else if (kind === 'insert') { address.setRangeText(ed.insert.text, address.selectionStart, address.selectionEnd, 'end'); }
     else if (kind === 'selectAll') { address.select(); return; }
-    // 0.26.0 (F-keys): keys typed after Ctrl+L before the shell had the keyboard.
-    else if (kind === 'submit') { $('omnibox').requestSubmit(); return; }
-    else if (kind === 'backspace') {
-      const a = address.selectionStart, z = address.selectionEnd;
-      if (a !== z) address.setRangeText('', a, z, 'end');
-      else if (a > 0) address.setRangeText('', a - 1, a, 'end');
-    }
     state.dirty = true;
     suggest.noInline = kind === 'deleteSelection';
     askSuggestions();
