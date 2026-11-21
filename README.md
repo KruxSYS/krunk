@@ -845,6 +845,10 @@ Measured for 0.26.0 (`docs/perf-0.26.0/`: `fixes.md`, `final/table.md`).
     keys after Ctrl+L), so only the loads that started count.
   - Same session, 0.25.5 → 0.26.0: link first byte −13.5 %, beyond the noise band. Link LCP and
     back/forward are unchanged, within the band.
+  - These numbers come from a build that still had a 39 s start-up stall (fixed before release).
+    The driver only starts measuring once Krunk answers it, and the replay allows no filter-list
+    update that would stall it again. One YouTube row may have been caught; it changes no corpus
+    median.
 
   On a real network the early connections save one round trip or more per new host. A replay
   with a fixed RTT shows that only partly, and DNS not at all (the replay maps every host, so
