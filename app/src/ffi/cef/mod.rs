@@ -285,14 +285,18 @@ pub fn set_blocked_hosts(hosts: &[String]) -> bool {
     else {
         return false;
     };
-    list.set_size(hosts.len());
+    // Appended in order, never set_size() first: CEF's SetString on an existing slot erases and
+    // re-inserts it (CefListValueImpl::SetInternal), O(n) per host. With set_size() the 85 000
+    // hosts took 39 s of the UI thread at start and again after each list update (0.26.0 smoke:
+    // "Not Responding"). Appending is O(1) per host.
+    let t0 = std::time::Instant::now();
     for (i, h) in hosts.iter().enumerate() {
         list.set_string(i, Some(&CefString::from(h.as_str())));
     }
     value.set_list(Some(&mut list));
     let ok = app::set_krunk_pref(&mut global, "krunk.blocked_hosts", value);
     if ok {
-        info!("preconnect: {} blocked host(s) handed to the engine", hosts.len());
+        info!("preconnect: {} blocked host(s) handed to the engine in {} ms", hosts.len(), t0.elapsed().as_millis());
     }
     ok
 }
