@@ -35,6 +35,13 @@
     <string name="menu_fill_from_vault">Fill from vault</string>
     <string name="login_fill_armed">Tap the user name or password field</string>
     <string name="login_fill_not_here">Nothing to fill on this page</string>
+    <string name="login_suggest_title">Use a strong password?</string>
+    <string name="login_suggest_text">Krunk made a strong password for %1$s. It is filled in for you and offered for saving in the vault when you send the form.</string>
+    <string name="login_suggest_use">Use password</string>
+    <string name="login_suggest_show">Show</string>
+    <string name="login_suggest_hide">Hide</string>
+    <string name="login_suggest_saved">Saved sign-ins</string>
+    <string name="login_save_new_password_title">Save the new password?</string>
     <string name="vault_bio_use_password">Use password</string>
     <string name="vault_error_key_unavailable">This device\'s key store did not answer. Try again; if it stays like this, restart the device. The vault is untouched.</string>
     <string name="vault_key_lost_retry">Try again</string>

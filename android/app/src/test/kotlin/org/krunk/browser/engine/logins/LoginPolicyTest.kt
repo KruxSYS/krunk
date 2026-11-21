@@ -114,7 +114,8 @@ class LoginPolicyTest {
         assertEquals(Save.Offer(SaveKind.NEW, null, false), save())
         assertEquals(Save.Offer(SaveKind.UPDATE, "id1", false), save(known = SaveDecision.Update("id1")))
         assertTrue(save(known = SaveDecision.Unchanged) is Save.No)
-        assertTrue(save(known = null) is Save.No)
+        // The vault could not be asked: offered anyway (the dialog asks it again).
+        assertEquals(Save.Offer(SaveKind.NEW, null, false), save(known = null))
     }
 
     @Test
@@ -170,6 +171,51 @@ class LoginPolicyTest {
         assertTrue(LoginPolicy.saveStillValid(1u, "http://a.example:8080", 1u, "http://a.example:8080/next"))
         assertFalse(LoginPolicy.saveStillValid(1u, "https://a.example", 2u, "https://a.example/"))
         assertFalse(LoginPolicy.saveStillValid(1u, "https://a.example", 1u, "about:blank"))
+    }
+
+    private val sites: (String) -> String? = { host ->
+        when {
+            host.endsWith(".github.io") -> host.split('.').takeLast(3).joinToString(".")
+            else -> host.split('.').takeLast(2).joinToString(".")
+        }
+    }
+
+    @Test
+    fun aSaveOfferFollowsASignInToASiblingSubdomain() {
+        assertTrue(LoginPolicy.saveStillValid(1u, "https://login.a.example", 1u, "https://app.a.example/", sites))
+        assertTrue(LoginPolicy.saveStillValid(1u, "https://accounts.a.example", 1u, "https://www.a.example/", sites))
+        // Not across a public suffix, not over http, not to another site.
+        assertFalse(LoginPolicy.saveStillValid(1u, "https://x.github.io", 1u, "https://y.github.io/", sites))
+        assertFalse(LoginPolicy.saveStillValid(1u, "http://login.a.example", 1u, "http://app.a.example/", sites))
+        assertFalse(LoginPolicy.saveStillValid(1u, "https://login.a.example", 1u, "https://b.example/", sites))
+        // Without the core's answer only a host and its subdomains count.
+        assertFalse(LoginPolicy.saveStillValid(1u, "https://login.a.example", 1u, "https://app.a.example/") { null })
+    }
+
+    private fun suggest(
+        url: String = "https://shop.example/signup",
+        private: Boolean = false,
+        form: String? = null,
+        suppressed: Boolean = false,
+        enabled: Boolean = true,
+        tap: Boolean = true,
+        vault: State = State.UNLOCKED,
+    ) = LoginPolicy.suggest(LoginPolicy.SuggestContext(private, url, form, suppressed, enabled, tap, vault))
+
+    @Test
+    fun aStrongPasswordIsSuggestedAtATapOnANormalTabsOwnForm() {
+        assertTrue(suggest())
+        assertTrue(suggest(form = "https://shop.example"))
+        assertTrue("without a vault: saving creates it", suggest(vault = State.NONE))
+        assertTrue(suggest(vault = State.LOCKED))
+        assertTrue("http page", suggest(url = "http://10.0.0.1:8080/signup"))
+        assertFalse(suggest(vault = State.KEY_LOST))
+        assertFalse(suggest(private = true))
+        assertFalse(suggest(form = "https://other.example"))
+        assertFalse(suggest(suppressed = true))
+        assertFalse(suggest(enabled = false))
+        assertFalse(suggest(tap = false))
+        assertFalse(suggest(url = "about:blank"))
     }
 
     @Test

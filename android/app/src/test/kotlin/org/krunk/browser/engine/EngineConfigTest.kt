@@ -45,7 +45,10 @@ class EngineConfigTest {
             assertEquals(false, prefs["signon.includeOtherSubdomainsInLookup"])
             assertEquals(false, prefs["signon.schemeUpgrades"])
             assertEquals(false, prefs["signon.privateBrowsingCapture.enabled"])
-            assertEquals(false, prefs["signon.generation.enabled"])
+            // Suggested passwords (Android 0.13.0), without per-site rules from Remote Settings.
+            assertEquals(true, prefs["signon.generation.enabled"])
+            assertEquals(false, prefs["signon.improvedPasswordRules.enabled"])
+            assertEquals("disabled", prefs["signon.firefoxRelay.feature"])
             assertEquals(false, prefs["signon.recipes.remoteRecipes.enabled"])
         }
     }

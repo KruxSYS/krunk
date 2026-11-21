@@ -67,6 +67,11 @@ interface VaultPort {
 
     fun setOfferToSave(on: Boolean)
 
+    /** Whether a strong password is suggested for a page's new-password field. */
+    val suggestPasswords: StateFlow<Boolean>
+
+    fun setSuggestPasswords(on: Boolean)
+
     /** `VaultBackend.minPasswordLength()`, readable without an unlocked vault. */
     val minPasswordLength: Int
 }

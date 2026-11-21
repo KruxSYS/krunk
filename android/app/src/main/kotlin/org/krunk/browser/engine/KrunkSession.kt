@@ -4,6 +4,8 @@ import android.os.SystemClock
 import android.util.Log
 import android.webkit.MimeTypeMap
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -548,6 +550,18 @@ class KrunkSession(
     private var fillSuppressed = false
     private var savePrompt: PagePrompt.LoginSave? = null
 
+    /** A strong password was suggested (or taken) on this page: no second suggestion until the next load. */
+    private var suggestSuppressed = false
+
+    /**
+     * A suggested password the user took, until the engine reports the form that sent it (then
+     * the save offer comes from there) or Krunk offers it itself after the page moved on.
+     */
+    private class Generated(val origin: String, val password: String)
+
+    private var generated: Generated? = null
+    private var generatedFallback: Job? = null
+
     /** This tab's page as the engine's login lookup may know it. */
     val loginPage: LoginPage get() = LoginPage(current.url, private, fillArmedOrigin)
 
@@ -566,6 +580,8 @@ class KrunkSession(
     private fun loginsNewDocument(url: String) {
         httpAuth.onPageStart(url)
         fillSuppressed = false
+        suggestSuppressed = false
+        generatedPageLeft()
         if (fillArmedOrigin != originOf(url)) fillArmedOrigin = null
     }
 
@@ -573,16 +589,44 @@ class KrunkSession(
         if (fillArmedOrigin != null && fillArmedOrigin != originOf(current.url)) fillArmedOrigin = null
         // A save offer follows the sign-in to the next page of the site, not to another site.
         savePrompt?.let { if (!LoginPolicy.saveStillValid(id, it.origin, id, current.url)) it.close() }
+        // A page that signs up by script changes its address without a new document.
+        generatedPageLeft()
+    }
+
+    /**
+     * The page with a taken suggestion moved on (new document or address). The engine normally
+     * reports the sent form around this moment; if it has not within [GENERATED_GRACE_MS], Krunk
+     * offers to save the password itself, so a password Krunk made up is never lost unasked.
+     */
+    private fun generatedPageLeft() {
+        val g = generated ?: return
+        if (generatedFallback?.isActive == true) return
+        generatedFallback = engine.logins.scope.launch {
+            delay(GENERATED_GRACE_MS)
+            if (generated !== g || closed) return@launch
+            generated = null
+            Log.i(KrunkApp.TAG, "logins: no save request for a suggested password; offering it")
+            offerSave(g.origin, "", g.password)
+        }
     }
 
     /** The tab is going away: nothing of a sign-in is kept. */
     private fun loginsClosed() {
         httpAuth.clear()
         savePrompt?.close()
+        generated = null
+        generatedFallback?.cancel()
     }
 
     /** A login was sent from this tab ([origin] is the form's or the server's): ask to save it? */
     private fun offerSave(origin: String?, username: String?, password: String?) {
+        // The engine reported the form a suggested password went into: that is the offer.
+        val g = generated
+        if (g != null && password == g.password) {
+            generated = null
+            generatedFallback?.cancel()
+        }
+        val newPassword = g != null && password == g.password
         val vault = engine.logins.vault ?: return
         // A private tab: nothing is asked of the vault, nothing is kept.
         if (private || origin == null || password.isNullOrEmpty()) return
@@ -622,6 +666,7 @@ class KrunkSession(
                 password = password,
                 kind = decision.kind,
                 warnInsecure = decision.warnInsecure,
+                newPassword = newPassword,
                 onClosed = { p ->
                     if (savePrompt === p) savePrompt = null
                     listener.onPromptClosed(this@KrunkSession, p)
@@ -753,9 +798,17 @@ class KrunkSession(
             request: GeckoSession.PromptDelegate.AutocompleteRequest<Autocomplete.LoginSelectOption>,
         ): GeckoResult<GeckoSession.PromptDelegate.PromptResponse> {
             val vault = engine.logins.vault
-            val formOrigin = request.options.firstOrNull()?.value?.origin
+            val generatedHint = Autocomplete.SelectOption.Hint.GENERATED
+            val loginOptions = request.options.filter { it.hint and generatedHint == 0 }
+            // The engine adds a password it made up when the field is for a new password
+            // (sign-up, change of password): see LoginPolicy.suggest.
+            val suggested = request.options.firstOrNull { it.hint and generatedHint != 0 }?.value?.password
+            val formOrigin = loginOptions.firstOrNull()?.value?.origin
             val pageUrl = current.url
-            val decision = if (vault == null) {
+            val recentTap = LoginPolicy.recentTap(
+                lastTouchAt.takeIf { it > 0 }?.let { SystemClock.uptimeMillis() - it },
+            )
+            val decision = if (vault == null || loginOptions.isEmpty()) {
                 LoginPolicy.Fill.No("no vault")
             } else {
                 LoginPolicy.fill(
@@ -767,48 +820,97 @@ class KrunkSession(
                         formOrigin = formOrigin,
                         vault = vault.state(),
                         hint = vault.hasHint(pageUrl),
-                        recentTap = LoginPolicy.recentTap(
-                            lastTouchAt.takeIf { it > 0 }?.let { SystemClock.uptimeMillis() - it },
-                        ),
+                        recentTap = recentTap,
                     ),
                 )
             }
-            if (decision !is LoginPolicy.Fill.Ask || formOrigin == null) {
+            val suggest = vault != null && !suggested.isNullOrEmpty() && LoginPolicy.suggest(
+                LoginPolicy.SuggestContext(
+                    private = private,
+                    pageUrl = pageUrl,
+                    formOrigin = formOrigin,
+                    suppressed = suggestSuppressed,
+                    enabled = vault.suggestEnabled(),
+                    recentTap = recentTap,
+                    vault = vault.state(),
+                ),
+            )
+            val fill = decision is LoginPolicy.Fill.Ask && formOrigin != null
+            if (!fill && !suggest) {
                 return GeckoResult.fromValue(request.dismiss())
             }
             return ask(request) { answer ->
-                PagePrompt.LoginFill(
-                    tabId = id,
-                    site = promptSiteOf(pageUrl),
-                    pageUrl = pageUrl,
-                    unlockFirst = decision.unlockFirst,
-                    warnInsecure = decision.warnInsecure,
-                    onPick = { secret ->
-                        // Once per page: a filled form does not ask again at the next tap.
-                        fillSuppressed = true
-                        fillArmedOrigin = null
-                        // The tab may have gone elsewhere while the picker was open.
-                        if (originOf(current.url) == originOf(pageUrl)) {
-                            val login = Autocomplete.LoginEntry.Builder()
-                                .origin(formOrigin)
-                                .formActionOrigin(formOrigin)
-                                .username(secret.username)
-                                .password(secret.password)
-                                .build()
-                            answer(request.confirm(Autocomplete.LoginSelectOption(login)))
-                        } else {
+                val fillPrompt = if (decision is LoginPolicy.Fill.Ask && formOrigin != null) {
+                    loginFillPrompt(request, decision, pageUrl, formOrigin, answer)
+                } else {
+                    null
+                }
+                if (!suggest || suggested == null) {
+                    fillPrompt!!
+                } else {
+                    val pageOrigin = originOf(pageUrl) ?: ""
+                    PagePrompt.PasswordSuggest(
+                        tabId = id,
+                        site = promptSiteOf(pageUrl),
+                        password = suggested,
+                        fill = fillPrompt,
+                        onUse = {
+                            suggestSuppressed = true
+                            if (originOf(current.url) == pageOrigin) {
+                                generated = Generated(pageOrigin, suggested)
+                                generatedFallback?.cancel()
+                                // The engine's own entry: it fills the field and its confirmation.
+                                val entry = Autocomplete.LoginEntry.Builder().password(suggested).build()
+                                answer(request.confirm(Autocomplete.LoginSelectOption(entry, generatedHint)))
+                            } else {
+                                answer(request.dismiss())
+                            }
+                        },
+                        onDismiss = {
+                            suggestSuppressed = true
                             answer(request.dismiss())
-                        }
-                    },
-                    onDismiss = {
-                        fillSuppressed = true
-                        // "Fill from vault" was for this one picker, not for every later tap.
-                        fillArmedOrigin = null
-                        answer(request.dismiss())
-                    },
-                )
+                        },
+                    )
+                }
             }
         }
+
+        private fun loginFillPrompt(
+            request: GeckoSession.PromptDelegate.AutocompleteRequest<Autocomplete.LoginSelectOption>,
+            decision: LoginPolicy.Fill.Ask,
+            pageUrl: String,
+            formOrigin: String,
+            answer: (GeckoSession.PromptDelegate.PromptResponse) -> Unit,
+        ): PagePrompt.LoginFill = PagePrompt.LoginFill(
+            tabId = id,
+            site = promptSiteOf(pageUrl),
+            pageUrl = pageUrl,
+            unlockFirst = decision.unlockFirst,
+            warnInsecure = decision.warnInsecure,
+            onPick = { secret ->
+                // Once per page: a filled form does not ask again at the next tap.
+                fillSuppressed = true
+                fillArmedOrigin = null
+                // The tab may have gone elsewhere while the picker was open.
+                if (originOf(current.url) == originOf(pageUrl)) {
+                    val login = Autocomplete.LoginEntry.Builder()
+                        .origin(formOrigin)
+                        .formActionOrigin(formOrigin)
+                        .username(secret.username)
+                        .password(secret.password)
+                        .build()
+                    answer(request.confirm(Autocomplete.LoginSelectOption(login)))
+                } else {
+                    answer(request.dismiss())
+                }
+            },
+            onDismiss = {
+                fillSuppressed = true
+                // "Fill from vault" was for this one picker, not for every later tap.
+                fillArmedOrigin = null
+                answer(request.dismiss())
+            },
+        )
 
         /**
          * A form with a password was sent. The engine's request is answered at once (nothing is
@@ -1052,3 +1154,6 @@ private fun pageSecurity(info: GeckoSession.ProgressDelegate.SecurityInformation
         certificate = info.certificate,
     )
 }
+
+/** How long after a page with a taken suggestion moved on Krunk waits for the engine's save request. */
+private const val GENERATED_GRACE_MS = 3_000L

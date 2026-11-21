@@ -54,10 +54,14 @@ object EngineConfig {
         "browser.safebrowsing.downloads.remote.enabled" to false,
         "browser.safebrowsing.blockedURIs.enabled" to false,
         "browser.safebrowsing.passwords.enabled" to false,
-        // Sign-ins (0.3.0). Krunk's vault decides what is filled and saved: the engine neither
-        // asks to save in private tabs nor suggests passwords of its own or a mail mask.
+        // Sign-ins (0.3.0). Krunk's vault decides what is filled and saved: the engine does not
+        // ask to save in private tabs and offers no mail mask. Since Android 0.13.0 it makes up a
+        // strong password for a new-password field, which Krunk offers in its own dialog
+        // (KrunkSession.onLoginSelect); the generator's per-site rules would come from Mozilla's
+        // Remote Settings, so the plain generator is used (it keeps to the field's maxlength).
         "signon.privateBrowsingCapture.enabled" to false,
-        "signon.generation.enabled" to false,
+        "signon.generation.enabled" to true,
+        "signon.improvedPasswordRules.enabled" to false,
         "signon.firefoxRelay.feature" to "disabled",
         // The engine keeps a stand-in entry only for a form of exactly the origin Krunk named
         // (the tab's own): never for a sibling subdomain or the https twin of an http page. A

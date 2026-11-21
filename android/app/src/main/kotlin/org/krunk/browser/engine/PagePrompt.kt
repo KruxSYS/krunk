@@ -120,6 +120,28 @@ sealed class PagePrompt {
     }
 
     /**
+     * A new-password field (sign-up, change of password) was tapped and the engine made up a
+     * strong password for it (Android 0.13.0). [use] lets the engine fill it into the field and
+     * its confirmation; the save offer follows when the form is sent. [fill] is the saved-login
+     * picker of the same field, when the vault has logins for the page.
+     */
+    class PasswordSuggest(
+        override val tabId: UInt,
+        override val site: String,
+        private val password: String,
+        val fill: LoginFill?,
+        private val onUse: () -> Unit,
+        private val onDismiss: () -> Unit,
+    ) : PagePrompt() {
+        /** For the dialog's "Show" only. */
+        fun password(): String = password
+
+        fun use() = onUse()
+
+        override fun dismiss() = onDismiss()
+    }
+
+    /**
      * Offer to save the login a page (or an HTTP sign-in) just sent (0.3.0). Krunk's own
      * question: the engine's request is answered at once and nothing is stored by the engine.
      * The password stays in this object until the user answers; it is never shown.
@@ -133,6 +155,8 @@ sealed class PagePrompt {
         val kind: LoginPolicy.SaveKind,
         val warnInsecure: Boolean,
         private val onClosed: (LoginSave) -> Unit,
+        /** The password is one Krunk suggested for this sign-up (title "Save the new password?"). */
+        val newPassword: Boolean = false,
     ) : PagePrompt() {
         private var closed = false
 

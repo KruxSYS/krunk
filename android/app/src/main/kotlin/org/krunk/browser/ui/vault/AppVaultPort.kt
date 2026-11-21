@@ -81,6 +81,14 @@ class AppVaultPort(private val app: KrunkApp) : VaultPort {
         scope.launch { withContext(Dispatchers.IO) { app.loginVault.setOffersEnabled(on) } }
     }
 
+    private val _suggestPasswords = MutableStateFlow(app.loginVault.suggestEnabled())
+    override val suggestPasswords: StateFlow<Boolean> = _suggestPasswords.asStateFlow()
+
+    override fun setSuggestPasswords(on: Boolean) {
+        _suggestPasswords.value = on
+        scope.launch { withContext(Dispatchers.IO) { app.loginVault.setSuggestEnabled(on) } }
+    }
+
     override val minPasswordLength: Int get() = app.vaultBackend.minPasswordLength()
 
     /**

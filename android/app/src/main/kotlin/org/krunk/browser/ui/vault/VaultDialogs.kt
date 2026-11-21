@@ -367,6 +367,7 @@ private fun VaultSettingsDialog(holder: VaultUiState, port: VaultPort) {
     val minutes by port.lockMinutes.collectAsStateWithLifecycle()
     val grace by port.backgroundGraceSeconds.collectAsStateWithLifecycle()
     val offerToSave by port.offerToSave.collectAsStateWithLifecycle()
+    val suggestPasswords by port.suggestPasswords.collectAsStateWithLifecycle()
     val vault by port.state.collectAsStateWithLifecycle()
     val bioOn by port.biometric.enabled.collectAsStateWithLifecycle()
     val activity = LocalActivity.current
@@ -381,6 +382,12 @@ private fun VaultSettingsDialog(holder: VaultUiState, port: VaultPort) {
                     null,
                     offerToSave,
                     onChange = holder::setOfferToSave,
+                )
+                SwitchRow(
+                    stringResource(R.string.vault_suggest_passwords),
+                    stringResource(R.string.vault_suggest_passwords_detail),
+                    suggestPasswords,
+                    onChange = holder::setSuggestPasswords,
                 )
                 HorizontalDivider()
                 Text(

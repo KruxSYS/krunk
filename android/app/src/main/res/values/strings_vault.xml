@@ -92,6 +92,8 @@
     <string name="vault_grace_300">After 5 minutes</string>
     <string name="vault_grace_help">Lets you switch to another app, for example for a sign-in code, and come back without unlocking again.</string>
     <string name="vault_offer_save">Offer to save sign-ins</string>
+    <string name="vault_suggest_passwords">Suggest strong passwords</string>
+    <string name="vault_suggest_passwords_detail">When you sign up or change a password on a site</string>
     <string name="vault_bio_switch">Unlock with fingerprint</string>
     <string name="vault_bio_switch_help">The vault password still works and is still needed after fingerprints change</string>
     <string name="vault_bio_none_enrolled">No fingerprint enrolled on this device</string>

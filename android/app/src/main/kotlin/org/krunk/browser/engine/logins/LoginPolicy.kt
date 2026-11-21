@@ -2,6 +2,7 @@ package org.krunk.browser.engine.logins
 
 import org.krunk.browser.engine.originOf
 import org.krunk.browser.vault.SaveDecision
+import org.krunk.ffi.siteOfHost
 
 /**
  * When Krunk offers a saved login to a page and when it offers to save one. Pure decisions; the
@@ -125,9 +126,14 @@ object LoginPolicy {
             LoginVault.State.LOCKED -> Save.Offer(SaveKind.LOCKED, null, insecure)
 
             LoginVault.State.UNLOCKED -> when (val k = c.known) {
-                null -> Save.No("vault did not answer")
+                // The vault could not be asked (locked meanwhile, busy): offer anyway; the dialog
+                // asks the vault again before it stores anything.
+                null -> Save.Offer(SaveKind.NEW, null, insecure)
+
                 SaveDecision.Unchanged -> Save.No("already saved")
+
                 SaveDecision.New -> Save.Offer(SaveKind.NEW, null, insecure)
+
                 is SaveDecision.Update -> Save.Offer(SaveKind.UPDATE, k.id, insecure)
             }
         }
@@ -141,16 +147,68 @@ object LoginPolicy {
     fun stillValid(promptTab: UInt, promptOrigin: String, activeTab: UInt?, activeUrl: String): Boolean =
         activeTab == promptTab && originOf(activeUrl) == originOf(promptOrigin)
 
-    /** A save offer follows a sign-in to the next page of the same site, not further. */
-    fun saveStillValid(promptTab: UInt, promptOrigin: String, activeTab: UInt?, activeUrl: String): Boolean {
+    /**
+     * A save offer follows a sign-in to the next pages of the same site (over https: the same
+     * registrable domain, so `login.example.com` → `app.example.com` keeps it), not further.
+     * [siteOf] is the core's registrable-domain rule; null when it cannot answer, and then only
+     * a host and its subdomains count as one site.
+     */
+    fun saveStillValid(
+        promptTab: UInt,
+        promptOrigin: String,
+        activeTab: UInt?,
+        activeUrl: String,
+        siteOf: (String) -> String? = ::coreSiteOf,
+    ): Boolean {
         if (activeTab != promptTab) return false
         val a = originOf(promptOrigin) ?: return false
         val b = originOf(activeUrl) ?: return false
-        return a == b || (a.startsWith("https://") && b.startsWith("https://") && sameSite(hostOf(a), hostOf(b)))
+        if (a == b) return true
+        if (!a.startsWith("https://") || !b.startsWith("https://")) return false
+        val ha = hostOf(a)
+        val hb = hostOf(b)
+        if (sameSite(ha, hb)) return true
+        val sa = siteOf(ha)
+        val sb = siteOf(hb)
+        return !sa.isNullOrEmpty() && sa == sb && sa.contains('.')
+    }
+
+    /** The core's registrable domain of [host], or null without the native library (JVM tests). */
+    private fun coreSiteOf(host: String): String? = try {
+        siteOfHost(host)
+    } catch (e: Throwable) {
+        null
     }
 
     private fun hostOf(origin: String): String = origin.substringAfter("://").substringBefore(':')
 
     /** One host is the other or a subdomain of it (`example.com` and `accounts.example.com`). */
     private fun sameSite(a: String, b: String): Boolean = a == b || a.endsWith(".$b") || b.endsWith(".$a")
+
+    /** What the tab is in when the engine offers a generated password for a new-password field. */
+    data class SuggestContext(
+        val private: Boolean,
+        val pageUrl: String,
+        /** The origin of the form, as the engine reports it (null: the page's own). */
+        val formOrigin: String?,
+        /** The user closed a suggestion (or took one) on this page already. */
+        val suppressed: Boolean,
+        /** The setting "Suggest strong passwords". */
+        val enabled: Boolean,
+        val recentTap: Boolean,
+        val vault: LoginVault.State,
+    )
+
+    /**
+     * Offer a strong password for a new-password field? Only on a web page in a normal tab, for a
+     * form of the page's own origin, at the user's tap, once per page. Without a vault (or with a
+     * locked one) too: the save offer after the form is sent creates or unlocks it.
+     */
+    fun suggest(c: SuggestContext): Boolean {
+        val page = originOf(c.pageUrl)
+        if (!isWeb(page)) return false
+        if (c.formOrigin != null && originOf(c.formOrigin) != page) return false
+        if (c.private || c.suppressed || !c.enabled || !c.recentTap) return false
+        return c.vault != LoginVault.State.KEY_LOST
+    }
 }

@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -191,6 +192,67 @@ private fun FillList(prompt: PagePrompt.LoginFill, host: LoginUiHost, onLocked: 
 
 private const val ROW_DELAY_MS = 500L
 
+/**
+ * "Use a strong password?" for a tapped new-password field (Android 0.13.0). The password is
+ * hidden until "Show"; "Use password" has the engine fill it in. With saved logins for the page,
+ * "Saved sign-ins" switches to the usual picker for the same field.
+ */
+@Composable
+fun PasswordSuggestDialog(prompt: PagePrompt.PasswordSuggest) {
+    val host = LocalLoginUi.current
+    if (host == null) {
+        LaunchedEffect(prompt) { prompt.dismiss() }
+        return
+    }
+    host.secure()
+    var showFill by remember { mutableStateOf(false) }
+    val fill = prompt.fill
+    if (showFill && fill != null) {
+        LoginFillDialog(fill)
+        return
+    }
+    var shown by remember { mutableStateOf(false) }
+    // As with the picker: a dialog appearing under a finger must not take that tap as "Use".
+    var armed by remember { mutableStateOf(false) }
+    LaunchedEffect(prompt) {
+        delay(ROW_DELAY_MS)
+        armed = true
+    }
+    AlertDialog(
+        properties = SecureDialog,
+        onDismissRequest = prompt::dismiss,
+        title = { Text(stringResource(R.string.login_suggest_title)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.login_suggest_text, prompt.site))
+                Row(Modifier.padding(top = 12.dp)) {
+                    Text(
+                        if (shown) prompt.password() else "\u2022".repeat(SUGGEST_DOTS),
+                        style = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                        modifier = Modifier.weight(1f).padding(top = 12.dp),
+                    )
+                    TextButton(onClick = { shown = !shown }) {
+                        Text(stringResource(if (shown) R.string.login_suggest_hide else R.string.login_suggest_show))
+                    }
+                }
+                if (fill != null) {
+                    TextButton(onClick = { showFill = true }, modifier = Modifier.padding(top = 4.dp)) {
+                        Text(stringResource(R.string.login_suggest_saved))
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = armed, onClick = prompt::use) { Text(stringResource(R.string.login_suggest_use)) }
+        },
+        dismissButton = {
+            TextButton(onClick = prompt::dismiss) { Text(stringResource(R.string.login_not_now)) }
+        },
+    )
+}
+
+private const val SUGGEST_DOTS = 12
+
 private enum class SaveStep { ASK, WARN, UNLOCK, SAVING }
 
 /** "Save this sign-in?" after a form or an HTTP sign-in was sent. The password is never shown. */
@@ -265,12 +327,10 @@ fun LoginSaveDialog(prompt: PagePrompt.LoginSave) {
             title = {
                 Text(
                     stringResource(
-                        if (prompt.kind ==
-                            LoginPolicy.SaveKind.UPDATE
-                        ) {
-                            R.string.login_update_title
-                        } else {
-                            R.string.login_save_title
+                        when {
+                            prompt.kind == LoginPolicy.SaveKind.UPDATE -> R.string.login_update_title
+                            prompt.newPassword -> R.string.login_save_new_password_title
+                            else -> R.string.login_save_title
                         },
                     ),
                 )

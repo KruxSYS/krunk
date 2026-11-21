@@ -61,7 +61,22 @@ class AppLoginVault(
         }
     }
 
+    override fun suggestEnabled(): Boolean = try {
+        store.kvGet(KV_SUGGEST) != "0"
+    } catch (e: FfiException) {
+        true
+    }
+
+    override fun setSuggestEnabled(on: Boolean) {
+        try {
+            store.kvSet(KV_SUGGEST, if (on) "1" else "0")
+        } catch (e: FfiException) {
+            Log.w(KrunkApp.TAG, "vault: suggest setting not stored: ${e.javaClass.simpleName}")
+        }
+    }
+
     companion object {
         const val KV_OFFER = "android.vault.offer_save"
+        const val KV_SUGGEST = "android.vault.suggest_passwords"
     }
 }

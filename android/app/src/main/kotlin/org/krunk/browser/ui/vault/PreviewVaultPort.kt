@@ -118,6 +118,13 @@ class PreviewVaultPort(
         _offerToSave.value = on
     }
 
+    private val _suggestPasswords = MutableStateFlow(true)
+    override val suggestPasswords: StateFlow<Boolean> = _suggestPasswords
+
+    override fun setSuggestPasswords(on: Boolean) {
+        _suggestPasswords.value = on
+    }
+
     internal fun unlockedByBiometric() {
         backend.unlockWithKey(backend.unlockKey())
         sync()

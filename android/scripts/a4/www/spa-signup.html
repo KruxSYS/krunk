@@ -1,0 +1,14 @@
+<!doctype html><meta name=viewport content="width=device-width,initial-scale=1"><title>spa signup</title>
+<style>input,button{font-size:22px;display:block;margin:14px 0;width:90%;padding:10px}</style>
+<h3>Create account</h3>
+<div id=f><input id=u name=email type=email autocomplete=username placeholder=email>
+<input id=p name=password type=password autocomplete=new-password placeholder=password>
+<input id=c name=confirm type=password autocomplete=new-password placeholder=confirm>
+<button id=s>Create account</button></div>
+<div id=o>u= p= c=</div>
+<!-- Android 0.13.0: a sign-up sent by script (fetch), the fields removed, the address changed by
+     pushState: no form submission and no new document. -->
+<script>
+setInterval(()=>{if(!document.getElementById('u'))return;const t='u='+u.value+' p='+p.value+' c='+c.value;if(o.textContent!==t)o.textContent=t},400);
+s.onclick=async()=>{await fetch('/post?spa=1',{method:'POST',body:u.value});f.remove();history.pushState({},'','/welcome');o.textContent='Welcome'};
+</script>

@@ -97,7 +97,8 @@ class GeckoEngine(
             val config = EngineConfig.write(
                 context.applicationContext.filesDir,
                 automaticUpdates,
-                extraPrefs = vpnPrefs,
+                // Debug builds: the engine's sign-in log (why a form was or was not captured).
+                extraPrefs = vpnPrefs + if (BuildConfig.DEBUG) listOf("signon.debug" to true) else emptyList(),
             )
             builder.configFilePath(config.absolutePath)
         } catch (e: java.io.IOException) {

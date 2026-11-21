@@ -32,4 +32,9 @@ interface LoginVault {
     fun offersEnabled(): Boolean
 
     fun setOffersEnabled(on: Boolean)
+
+    /** The setting "Suggest strong passwords" (Android 0.13.0). */
+    fun suggestEnabled(): Boolean
+
+    fun setSuggestEnabled(on: Boolean)
 }

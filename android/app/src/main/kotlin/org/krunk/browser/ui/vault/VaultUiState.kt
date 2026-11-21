@@ -402,6 +402,8 @@ class VaultUiState(
 
     fun setOfferToSave(on: Boolean) = port.setOfferToSave(on)
 
+    fun setSuggestPasswords(on: Boolean) = port.setSuggestPasswords(on)
+
     /** [enable] shows the system's biometric prompt (it needs the activity). */
     fun setBiometric(on: Boolean, enable: suspend () -> Unit) {
         if (!on) {

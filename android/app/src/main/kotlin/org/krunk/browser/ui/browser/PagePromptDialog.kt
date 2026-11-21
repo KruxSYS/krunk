@@ -73,6 +73,8 @@ fun PagePromptDialog(prompt: PagePrompt) {
 
             is PagePrompt.LoginSave -> LoginSaveDialog(prompt)
 
+            is PagePrompt.PasswordSuggest -> PasswordSuggestDialog(prompt)
+
             is PagePrompt.Choice -> ChoiceDialog(prompt)
 
             is PagePrompt.File -> FilePromptUi(prompt)
