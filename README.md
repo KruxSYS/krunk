@@ -795,8 +795,7 @@ scripts/ build, CEF download/verification and Windows VM test scripts.
   1.5 → 27.5 (27.9 with one tab).
 
 #### Page loading (0.26.0)
-_Draft: the numbers come from the 0.26.0 measurements (`.pipeline/evidence-0.26.0/`) and are
-filled in when the release is measured._
+Measured for 0.26.0 (`docs/perf-0.26.0/`: `fixes.md`, `final/table.md`).
 - **What Krunk does to load pages faster:**
   - **"Preload pages for faster browsing"** (Settings › General › Tabs and memory; on by default,
     like Chrome). In normal tabs the engine's network prediction is on:
@@ -819,26 +818,43 @@ filled in when the release is measured._
       hidden page that Krunk's filter never saw;
     - the engine's own prerendering (Prerender2) is off in CEF.
   - **Request filtering:** the ad blocker's check runs on the network thread, without a round
-    trip to the UI thread; since 0.26.0 it takes the page's address once per request. TODO:
-    measured cost per request and per page.
+    trip to the UI thread. The load trace measured 0.03–17 ms in total per navigation, spread over
+    the page's requests. A cheaper variant was tried and dropped: no gain beyond the noise band.
   - **Back/forward cache:** on, as in Chrome. Krunk's page scripts don't block it; pages with their
     own `unload` listener or a `no-store` document load again, as in Chrome.
   - **Spare renderer:** the engine keeps one renderer process ready, as in Chrome. A private tab in
     between uses it up, so the next normal page starts its own.
 - **What to expect** (Windows test VM, 4 vCPU, no GPU; 9 recorded pages behind a 40 ms round-trip
-  shim; ms from the input, median over pages):
+  shim; ms from the input, median over pages, 5 runs):
 
-  | | Krunk 0.25.5 | Krunk 0.26.0 | Chrome 157 | Edge 156 |
+  | | Krunk 0.25.5 | Krunk 0.26.0 | Chrome 157 ¹ | Edge 156 ¹ |
   |---|---|---|---|---|
-  | typed URL, LCP | TODO | TODO | TODO | TODO |
-  | link click, LCP | TODO | TODO | TODO | TODO |
-  | back/forward (cached), first frame | TODO | TODO | TODO | TODO |
+  | typed URL, cold, first byte | 170 ¹ | 64 | 145 | 376 |
+  | typed URL, cold, LCP | 817 ¹ ² | 472 | 713 | 899 |
+  | typed URL, LCP from navigation start | 488 ² | 370 | 418 | 412 |
+  | link click, first byte | 158 | 137 | 142 | 144 |
+  | link click, LCP | 559 | 562 | 669 | 590 |
+  | back / forward (cached), first frame | 36 / 27 | 37 / 26 | 55 / 38 | 53 / 44 |
+
+  - ¹ From an earlier session (2026-11-20), same corpus, VM, harness and round trip. Chrome and
+    Edge auto-updated afterwards (158/157) and the harness couldn't drive their input any more.
+    0.25.5's own numbers drifted up to 30 % between the sessions (link LCP 801 vs 559 ms), so
+    these columns are indicative.
+  - ² Biased: 0.25.5 lost the typed address on most cold starts (the address bar didn't take the
+    keys after Ctrl+L), so only the loads that started count.
+  - Same session, 0.25.5 → 0.26.0: link first byte −13.5 %, beyond the noise band. Link LCP and
+    back/forward are unchanged, within the band.
 
   On a real network the early connections save one round trip or more per new host. A replay
   with a fixed RTT shows that only partly, and DNS not at all (the replay maps every host, so
   there is no lookup to save).
-- **Not done (and why):** TODO, e.g. the V8 context snapshot (engine cross-build limit), and
-  Prerender2 (off in CEF).
+- **Not done (and why):**
+  - **V8 context snapshot:** about 7.7 ms more per load than Chrome, 2 % of LCP: below the bar for
+    a near-full engine rebuild.
+  - **Prerender2:** off in CEF.
+  - **Tried and dropped:** cheaper request filtering, a later start for the login detector,
+    writing history after the load, cosmetic filters off the navigation path, and buffering keys
+    typed right after Ctrl+L. None beat the noise band (`docs/perf-0.26.0/fixes.md`).
 
 ### Windows and views
 - **Windows:** any number of top-level Win32 frames. Every view is a CEF browser (Alloy style)
@@ -2435,21 +2451,29 @@ Page-load harness (0.26.0; details and every option in
     order, and later sessions replace earlier ones.
   - With the same build twice (`krunk-a`, `krunk-b`), `load-summary.py` prints the noise band
     and, with `--ab A=B`, whether B's change beats it.
+- **Pin Chrome and Edge** (auto-update off) on the test VM before comparison runs. In 0.26.0 both
+  updated between two sessions (Chrome 157 → 158, Edge 156 → 157), and the harness's clicks and
+  keys no longer reached them: every Chrome/Edge cell timed out. Krunk-only passes are unaffected.
 - **Recording the corpus again:** `mkconfig.py record 1 chrome typed`, then `load-run.sh record`
   (Chrome, real network, about 7 minutes).
 
 ## Known limitations
-<!-- 0.26.0 DRAFT: trimmed to the measured facts at release -->
-- **Page loading (0.26.0):** Krunk's engine runs page JavaScript and layout slower than Chrome on the
-  same machine (the 0.7.0 finding; TODO: P1's numbers). The cross-built engine has no V8 context
-  snapshot (TODO: measured cost per frame; F-snap done / not done). Chrome's own prerendering
-  (Prerender2) is off in CEF, so pages a site asks to prerender are not made ahead; speculation-rules
-  prefetch works.
-- **Preload pages (0.26.0):** early connections to hosts the ad blocker blocks are skipped only for
-  plain host rules (`||host^`); a host blocked by a narrower rule (path, options) can still get a
-  connection (no request is sent). The per-site allowlist doesn't apply to early connections.
-- **Typing right after Ctrl+L (TODO: only if F-keys is not fixed):** on a busy start the first
-  characters can land in the page before the address bar has the keyboard.
+- **Page loading (0.26.0):** on the test corpus, 0.26.0 opens typed addresses sooner (median first
+  byte 64 ms). For link-opened pages the time to the largest paint is unchanged from 0.25.5
+  (559 → 562 ms, same session). Krunk's engine still runs page JavaScript and layout slower than
+  Chrome on the same machine (the 0.7.0 finding).
+- **No V8 context snapshot:** the cross-built engine creates each page context from scratch. That
+  costs about 7.7 ms more per page load than Chrome (19.5 vs 4.2 ms over two loads), 2 % of the
+  largest paint. Below the bar for a rebuild in 0.26.0.
+- **Prerendering:** Chrome's Prerender2 is off in CEF, so pages a site asks to prerender are not
+  made ahead. Speculation-rules prefetch works.
+- **Preload pages (0.26.0):** early connections to hosts the ad blocker blocks are skipped only
+  for plain host rules (`||host^`). A host blocked by a narrower rule (path, options) can still get
+  a connection, but no request is sent. The per-site allowlist doesn't apply to early connections.
+- **Page-load comparison runs:** Chrome and Edge must be pinned (auto-update off) on the test
+  machine. In 0.26.0 they updated between sessions (Chrome 157 → 158, Edge 156 → 157), and the
+  harness could no longer drive input into them. The Chrome/Edge figures come from the earlier
+  session.
 - **Theme colour of open tabs (0.15.0):** after switching between light and dark, tabs that were
   already open keep the previous background colour for the moment before one of their pages
   paints (a reload, a slow page). Krunk's tabs are windowed engine views whose pre-paint colour is
