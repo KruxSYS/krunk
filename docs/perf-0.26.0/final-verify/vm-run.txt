@@ -1,0 +1,10 @@
+02:23:31.248 [up0260] installed 0.25.5; Start menu shortcut ID before: 'Krunk.Browser'
+02:24:35.983 [up0260] version 0.26.0 after 40 s; first start alive after 5 s: True; crash events since the run began: 0; Krunk.dll 480CE8BD72A495B5; libcef 33BBBE35ECBFF3E9
+02:24:36.092 [up0260] first start log: 1795256669 INFO Krunk 0.26.0 starting, data dir C:\Users\pipe\AppData\Local\Krunk ## 1795256669 INFO engine command line: "C:\Users\pipe\AppData\Local\Programs\Krunk\Krunk.exe" --lang=en-US --log-file="C:\Users\pipe\AppData\Local\Krunk\cef.log" --log-severity=w
+02:24:36.108 [up0260] AppUserModelId key: 'Krunk' 'C:\Users\pipe\AppData\Local\Programs\Krunk\Krunk.exe,0'; Start menu shortcut ID: 'Krunk.Browser'
+02:24:40.140 [up0260] running app: 1795256669 INFO Krunk 0.26.0 starting, data dir C:\Users\pipe\AppData\Local\Krunk; exe 0.26.0
+02:24:40.140 [up0260] done (live, short)
+02:24:58.920 [flows] exe 0.26.0; hung at 5 s: False
+02:25:58.045 [flows] hung at the end: False
+02:25:58.123 [flows] push: 1795256693 INFO preconnect: 86308 blocked host(s) handed to the engine in 131 ms; PANIC lines: 0; crash events: 0
+02:26:02.161 [flows] done

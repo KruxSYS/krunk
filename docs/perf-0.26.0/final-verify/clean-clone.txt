@@ -1,0 +1,11 @@
+== fresh clone of e3e45c4, 2026-11-21T09:53:08Z, own target dir
+fmt: OK
+clippy: exit 0
+build-dist (release, cross): exit 0
+142M	Krunk-Setup-0.26.0.exe
+CEF 156.0.15 (Chromium 156.0.8078.80), release build: /work/projects/extra/browser/verify-clone/dist/Krunk-win-x64
+engine files = published dist
+engine-files.sha256: all match
+cargo test core/vpn/ffi: exit 0
+  passed 1185, failed 0, ignored 5
+test-ui: exit 0 (3123 passed, 0 failed)
