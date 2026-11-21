@@ -1,0 +1,9 @@
+== gates on 8c9e81c 2026-11-21T09:15:52Z
+fmt: OK
+clippy (windows, -D warnings): exit 0
+cross cargo build --release: exit 0
+cargo test (core, vpn, ffi): exit 0
+  passed 1185, failed 0, ignored 5
+cargo test -p app (host): exit 0
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test-ui: exit 0 (3123 passed, 0 failed)

@@ -1,0 +1,36 @@
+== https://krunk.209.wf after publishing (2026-11-21T09:46:15Z)
+/updates/win-x64/latest.json  206 application/json cache=no-cache, no-transform cf=DYNAMIC
+/updates/win-x64/latest.json.sig  206 text/plain; charset=utf-8 cache=no-cache, no-transform cf=DYNAMIC
+/download/release.json  206 application/json cache=no-cache, no-transform cf=DYNAMIC
+/download/0.26.0/NOTES.md  206 text/plain; charset=utf-8 cache=public, max-age=31536000, immutable, no-transform cf=DYNAMIC
+/download/0.26.0/SHA256SUMS  206 text/plain; charset=utf-8 cache=public, max-age=31536000, immutable, no-transform cf=DYNAMIC
+/download/0.26.0/Krunk-Setup-0.26.0.exe  206 application/octet-stream cache=public, max-age=31536000, immutable, no-transform cf=MISS
+/download/0.26.0/Krunk-win-x64.zip  206 application/zip cache=public, max-age=31536000, immutable, no-transform cf=MISS
+/download/0.15.2/Krunk-Setup-0.15.2.exe  206 application/octet-stream cache=public, max-age=31536000, immutable, no-transform cf=HIT
+/download/0.26.0/files.json  206 application/json cache=public, max-age=31536000, immutable, no-transform cf=DYNAMIC
+/  206 text/html; charset=utf-8 cache=no-cache, no-transform cf=DYNAMIC
+
+{"version":"0.26.0","released":"2026-11-21","url":"/download/0.26.0/Krunk-Setup-0.26.0.exe","sha256":"86f2f76dacc509fba571a8b37a2727e89f9aa6cd7f4f9ddb8d9d06f200330270","size":148490137,"notes_url":"/download/0.26.0/NOTES.md","min_supported":"0.2.0","files_url":"/download/0.26.0/files.json","files_sha256":"ec81f2b0ff5a11e07fb6e7e22595fe5f255d0eaf525811c1a574467053c43559"}
+
+$ verify served manifest with assets/keys/update-signing.pub
+Signature Verified Successfully
+$ download the installer and zip from the site and hash them
+86f2f76dacc509fba571a8b37a2727e89f9aa6cd7f4f9ddb8d9d06f200330270  /tmp/setup-0201.exe
+7ac892254116becb7dca8a283f66bd3ffede7e8a2cf20c40d3e56e87108d29f1  /tmp/k-0201.zip
+installer = dist
+zip = dist
+$ libcef.dll in the served zip vs this release engine (engine-files.sha256)
+libcef.dll 33bbbe35ecbff3e9df4392c5a419eb716a039ab02377b1369886dc552e439cc8
+libcef.dll byte-identical
+$ release.json
+{
+  "version": "0.26.0",
+  "released": "2026-11-21",
+  "notes": "/download/0.26.0/NOTES.md",
+  "files": [
+    {"name": "Krunk-Setup-0.26.0.exe", "kind": "installer", "url": "/download/0.26.0/Krunk-Setup-0.26.0.exe", "size": 148490137, "sha256": "86f2f76dacc509fba571a8b37a2727e89f9aa6cd7f4f9ddb8d9d06f200330270"},
+    {"name": "Krunk-win-x64.zip", "kind": "portable", "url": "/download/0.26.0/Krunk-win-x64.zip", "size": 198473895, "sha256": "7ac892254116becb7dca8a283f66bd3ffede7e8a2cf20c40d3e56e87108d29f1"}
+  ]
+}
+
+$ landing page mentions of 0.26.0: 0
