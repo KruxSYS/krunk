@@ -3,6 +3,18 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.13.0 — 2026-11-21
+
+- **Strong passwords when you sign up.** Tap the password field of a sign-up or change-password
+  form and Krunk offers a strong password it made up for you. **Use password** fills it into the
+  field and into the "repeat password" field; **Show** lets you see it first. When you send the
+  form, Krunk asks to save the new password in your vault (or to create the vault). You can switch
+  the suggestions off in Passwords › Settings › **Suggest strong passwords**.
+- **Asked to save more reliably.** Krunk now asks to save a new sign-in when the site moves you on
+  to another part of the same site afterwards (for example from `login.example.com` to
+  `app.example.com`), and also when the vault was busy at that moment. A suggested password you
+  used is always offered for saving, even on sites that send the form in the background.
+
 ## 0.12.0 — 2026-11-19
 
 - **Krunk on your TV.** Krunk now installs and runs on Android TV and Google TV (Android 8 and
