@@ -1475,7 +1475,7 @@ impl Browser {
                 }
                 // Once per top-level navigation, when it loaded.
                 if net_done.visit_pending.replace(false) && error.is_none() {
-                    b.record_visit_soon(id);
+                    b.record_visit(id);
                 }
                 b.tab_changed(id);
             }

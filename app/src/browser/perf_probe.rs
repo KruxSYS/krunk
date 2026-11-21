@@ -1,11 +1,11 @@
 //! Measurement builds only (`--features perf-probe`): `KRUNK_PERF_OFF` names page scripts to
 //! leave out (gpc, dnt, tokens, login, audio, pointer, notify, media) and `cdp` (no per-tab
 //! DevTools domains), so a benchmark can show what each costs (R24, `speedometer-0.7.0.md`).
+<<<<<<< HEAD
 //! 0.26.0 adds `omnibox-preconnect` (no early connection for the address bar's top row),
 //! `preconnect-block` (the engine gets an empty blocked-host set) and `preload` (network
 //! prediction off, as with the setting off). F-filter, F-scripts, F-writes, F-cosmetic and F-keys
 //! had switches too; they were measured, dropped and reverted (docs/perf-0.26.0/fixes.md).
-
 use crate::ffi::cef::Scripts;
 
 /// Read once: some names are checked per request on the IO thread (`filter-fast`), and both
