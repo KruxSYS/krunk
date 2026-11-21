@@ -30,13 +30,14 @@ if ($Case -eq 'private') {
   for ($i = 0; $i -lt 60 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
   Start-Sleep 6
   Keys '^+n' 2500
-  Keys '^l' 300; Keys $url 100; Keys '{ENTER}' 8000
+  Keys '^l' 300; Keys $url 100; Keys '{ENTER}' 20000
 } else {
   Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App" -ArgumentList $url
-  Start-Sleep 14
+  Start-Sleep 20
 }
 Shot "nl-$Case"
 Get-Process Krunk -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
-for ($i = 0; $i -lt 30 -and (Get-Process Krunk -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
+# The netlog is complete only after a clean exit (a forced kill leaves it cut off or empty).
+for ($i = 0; $i -lt 120 -and (Get-Process Krunk -ErrorAction SilentlyContinue); $i++) { Start-Sleep -Milliseconds 500 }
 Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
 Log "[netlog $Case] $((Get-Item $nl -ErrorAction SilentlyContinue).Length) bytes"

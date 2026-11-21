@@ -287,6 +287,8 @@ impl Browser {
         });
     }
 
+    /// Writes the visit at once (0.25.5; the `defer-writes` A/B side of measurement builds).
+    #[cfg_attr(not(feature = "perf-probe"), allow(dead_code))]
     pub(super) fn record_visit(&self, id: TabId) {
         let (url, title, private) = {
             let Some(t) = self.tab(id) else { return };
