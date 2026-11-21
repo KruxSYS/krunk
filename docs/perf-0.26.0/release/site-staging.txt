@@ -26,3 +26,4 @@
   /download/0.26.0/Krunk-win-x64.zip 200
   /download/0.25.5/Krunk-Setup-0.25.5.exe 200
   latest.json and release.json version: 0.26.0 / 0.26.0
+live check 2026-11-21T09:52:01Z: /changelog shows the 0.26.0 entry (1), /healthz 200
