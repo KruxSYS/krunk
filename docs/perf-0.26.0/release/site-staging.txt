@@ -1,0 +1,28 @@
+== staging http://dind:10017 (2026-11-21T09:51:39Z, commit d9de043); service_stage: HEALTHY (api, backup, db, secrets, web healthy)
+-- /healthz: 200
+-- /changelog: HTTP 200
+-- /changelog 0.26.0 section (the <section> holding its first bullet):
+  heading: Krunk 0.26.0 Released 21 November 2026 Typed addresses start
+  yes  Typed addresses start loading sooner
+  yes  Preload pages for faster browsing
+  yes  Where early connections never happen
+  yes  kill switch is holding connections
+  yes  whole-host rules
+  yes  A blocking hole closed
+  yes  Engine:
+  yes  the blocked-host check
+  is the first <section> on the page: True
+-- /: HTTP 200
+-- / landing page: versions in the served HTML: none
+   (the landing page shows no version number; nothing to update there)
+-- download/update paths, GET without range (status code):
+  /updates/win-x64/latest.json 200
+  /updates/win-x64/latest.json.sig 200
+  /download/release.json 200
+  /download/0.26.0/NOTES.md 200
+  /download/0.26.0/files.json 200
+  /download/0.26.0/SHA256SUMS 200
+  /download/0.26.0/Krunk-Setup-0.26.0.exe 200
+  /download/0.26.0/Krunk-win-x64.zip 200
+  /download/0.25.5/Krunk-Setup-0.25.5.exe 200
+  latest.json and release.json version: 0.26.0 / 0.26.0
