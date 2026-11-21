@@ -1,13 +1,10 @@
 //! Measurement builds only (`--features perf-probe`): `KRUNK_PERF_OFF` names page scripts to
 //! leave out (gpc, dnt, tokens, login, audio, pointer, notify, media) and `cdp` (no per-tab
 //! DevTools domains), so a benchmark can show what each costs (R24, `speedometer-0.7.0.md`).
-//! 0.26.0 adds `omnibox-preconnect` (no early connection for the address bar's top row) and
-//! `preconnect-block` (the engine gets an empty blocked-host set) and `filter-fast` (the request
-//! filter takes the page's address per use, as in 0.25.5) and `preload` (network prediction off,
-//! as with the setting off) and `login-defer` (login.js watches the DOM from the document's
-//! start again, as in 0.25.5) and `defer-writes` (the history visit is written at load end, as in
-//! 0.25.5) and `cosmetic-sync` (cosmetic filters made inside on_before_browse, as in 0.25.5) and `address-capture` (keys typed after Ctrl+L before the shell has the keyboard
-//! go to the page, as in 0.25.5).
+//! 0.26.0 adds `omnibox-preconnect` (no early connection for the address bar's top row),
+//! `preconnect-block` (the engine gets an empty blocked-host set) and `preload` (network
+//! prediction off, as with the setting off). F-filter, F-scripts, F-writes, F-cosmetic and F-keys
+//! had switches too; they were measured, dropped and reverted (docs/perf-0.26.0/fixes.md).
 
 use crate::ffi::cef::Scripts;
 
