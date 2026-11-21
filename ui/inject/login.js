@@ -289,14 +289,7 @@
       observer.observe(document, { childList: true, subtree: true });
     }
   }
-  // 0.26.0 (F-scripts): from DOMContentLoaded, not from the document's start. While the HTML
-  // parser builds the page, every node it inserts was a mutation record and a callback here,
-  // and the `check` at DOMContentLoaded (above) finds every form the HTML has anyway. Late forms
-  // (script-rendered, after a click or a history change) are still caught. Measurement builds
-  // can switch back (KRUNK_PERF_OFF=login-defer replaces the marker with `true`).
-  var watchEarly = /*KRUNK_LOGIN_EARLY*/false;
-  if (watchEarly || document.readyState !== 'loading') watch(Infinity);
-  else document.addEventListener('DOMContentLoaded', function () { watch(Infinity); }, { once: true });
+  watch(Infinity);
   window.addEventListener('load', function () { until = Date.now() + 10000; }, { once: true });
   document.addEventListener('click', function () { watch(5000); setTimeout(check, 400); }, true);
   window.addEventListener('popstate', function () { watch(5000); }, true);

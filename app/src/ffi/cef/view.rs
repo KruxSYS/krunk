@@ -68,9 +68,6 @@ pub struct Scripts {
     pub notify: bool,
     /// The page's videos for Picture-in-Picture (main frame; Krunk 0.6.0).
     pub media: bool,
-    /// Measurement builds only (`KRUNK_PERF_OFF=login-defer`): `login.js` watches the DOM from
-    /// the document's start, as up to 0.25.5, instead of from DOMContentLoaded (0.26.0 F-scripts).
-    pub login_watch_early: bool,
 }
 
 impl Scripts {
@@ -85,7 +82,6 @@ impl Scripts {
             ("plock", self.pointer_lock),
             ("notify", self.notify),
             ("media", self.media),
-            ("loginearly", self.login_watch_early),
         ] {
             d.set_bool(Some(&CefString::from(k)), i32::from(v));
         }
@@ -103,7 +99,6 @@ impl Scripts {
             pointer_lock: get("plock"),
             notify: get("notify"),
             media: get("media"),
-            login_watch_early: get("loginearly"),
         }
     }
 }
