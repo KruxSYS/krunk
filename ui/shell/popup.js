@@ -222,7 +222,7 @@
     if (d.state === 'paused') acts.push(dlButton('Resume', 'resume', function () { dlAct(d.id, 'resume'); }));
     if (running) acts.push(dlButton('Cancel', 'cancel', function () { dlAct(d.id, 'cancel'); }));
     if (failed) acts.push(dlButton('Retry', 'retry', function () { dlAct(d.id, 'retry'); }));
-    const row = el('div', { class: 'dl-row state-' + d.state, 'data-id': String(d.id), title: done ? 'Open ' + d.fileName : d.path, tabindex: done ? '0' : null, role: done ? 'button' : null }, [
+    const row = el('div', { class: 'dl-row state-' + d.state, 'data-id': String(d.id), title: done ? 'Open ' + d.fileName + ' (or drag it to a folder)' : d.path, tabindex: done ? '0' : null, role: done ? 'button' : null }, [
       DlView.icon(d),
       el('div', { class: 'dl-main' }, [
         el('div', { class: 'dl-name', text: d.fileName }),
@@ -234,6 +234,7 @@
     if (done) {
       const open = function () { dlAct(d.id, 'open'); close(); };
       row.addEventListener('click', open);
+      DlView.dragOut(row, function () { dlAct(d.id, 'drag'); });
       row.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
     }
     return row;

@@ -3,12 +3,13 @@
 use std::path::{Path, PathBuf};
 use windows::core::{w, Interface, HSTRING, PCWSTR};
 use windows::Win32::Foundation::HWND;
-use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER};
+use windows::Win32::System::Com::{CoCreateInstance, CoTaskMemFree, IDataObject, CLSCTX_INPROC_SERVER};
+use windows::Win32::System::Ole::{DROPEFFECT, DROPEFFECT_COPY, DROPEFFECT_LINK, DROPEFFECT_MOVE};
 use windows::Win32::UI::Shell::Common::COMDLG_FILTERSPEC;
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::Shell::{
     FileOpenDialog, FileSaveDialog, IFileDialog, IFileOpenDialog, IFileSaveDialog, IShellItem,
-    SHCreateItemFromParsingName, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST,
+    SHCreateItemFromParsingName, SHDoDragDrop, BHID_DataObject, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FOS_OVERWRITEPROMPT, FOS_PATHMUSTEXIST,
     SIGDN_FILESYSPATH,
 };
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK, SW_SHOWNORMAL};
@@ -155,4 +156,22 @@ pub fn show_in_folder(path: &Path) {
     let args = format!("/select,\"{}\"", path.display());
     // SAFETY: launching explorer.exe with a quoted local path argument.
     unsafe { ShellExecuteW(None, w!("open"), w!("explorer.exe"), &HSTRING::from(args), None, SW_SHOWNORMAL) };
+}
+
+/// Drags a file out of Krunk (0.27.0: a finished download from the downloads popup or page) to
+/// Explorer, the desktop or another app. The data object is the shell's own for the file (what
+/// Explorer itself hands out, so every drop target takes it) and the shell draws the drag
+/// image. Copy, move and link are offered: the target picks as for a drag out of Explorer
+/// (a move within one drive, a copy to another; Shift/Ctrl change it). Blocks in the system's
+/// drag loop until the drop or Esc; the effect the target reported, or `None` if the drag
+/// could not start. The caller checks that the mouse button is still held: the drag loop
+/// drops at once where the pointer is otherwise.
+pub fn drag_file_out(path: &Path) -> Option<DROPEFFECT> {
+    // SAFETY: COM calls on the UI thread (OLE is initialised there by the engine); the item
+    // and data object are owned references released on drop.
+    unsafe {
+        let item: IShellItem = SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None).ok()?;
+        let data: IDataObject = item.BindToHandler(None, &BHID_DataObject).ok()?;
+        SHDoDragDrop(None, &data, None, DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK).ok()
+    }
 }

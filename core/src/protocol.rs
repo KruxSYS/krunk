@@ -87,6 +87,9 @@ pub enum DownloadAction {
     Retry,
     /// Delete the downloaded file (a completed one) and remove it from the list.
     DeleteFile,
+    /// Drag the downloaded file (a completed one) out to Explorer or another app (Windows
+    /// 0.27.0): sent once the pointer moved with the button held on its row.
+    Drag,
 }
 
 /// Data kinds for "Clear browsing data".
@@ -4067,6 +4070,7 @@ mod tests {
             Request::DownloadAction { id: 4, action: DownloadAction::CopyPageAddress },
             Request::DownloadAction { id: 4, action: DownloadAction::Retry },
             Request::DownloadAction { id: 4, action: DownloadAction::DeleteFile },
+            Request::DownloadAction { id: 4, action: DownloadAction::Drag },
             Request::ShowBookmarkMenu { id: Some(3), rect },
             Request::ShowBookmarkMenu { id: None, rect },
             Request::BookmarkMenuAction { id: None, action: BookmarkAction::NewFolder },

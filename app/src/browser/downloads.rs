@@ -426,6 +426,23 @@ impl Browser {
                             dialogs::show_in_folder(&path);
                         }
                     }
+                    DownloadAction::Drag => {
+                        if item.state != DownloadState::Completed || !path.is_absolute() || !path.is_file() {
+                            self.reply(tab, Event::err(req_id, "The file no longer exists"));
+                            return;
+                        }
+                        // The button was let go before the request arrived: the drag loop would
+                        // drop the file at once where the pointer is (on Krunk itself).
+                        if crate::ffi::cursor::buttons() & 3 == 0 {
+                            self.reply(tab, Event::ok(req_id, ()));
+                            return;
+                        }
+                        let effect = dialogs::drag_file_out(&path);
+                        // A move (Explorer reports an optimised move as "none") leaves the entry
+                        // pointing at nothing; Open and Show in folder then say so.
+                        let moved = !path.exists();
+                        info!("download {id}: dragged out ({effect:?}{})", if moved { ", moved away" } else { "" });
+                    }
                     DownloadAction::Cancel => {
                         if let Some(op) = op {
                             op.cancel();

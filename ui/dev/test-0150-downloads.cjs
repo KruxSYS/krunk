@@ -98,6 +98,18 @@ module.exports = (h) => {
     check(a && a.id === 2 && a.action === 'showInFolder', 'Show in folder sends downloadAction');
     await page.locator('.dl[data-id="2"] .name').click();
     check((await lastSent(page, 'downloadAction')).action === 'open', 'a click on a finished name opens the file');
+    // 0.27.0: pressing on a finished row and moving hands the file to the host's shell drag;
+    // the release after it doesn't open the file.
+    {
+      const b = await page.locator('.dl[data-id="2"] .name').boundingBox();
+      await page.mouse.move(b.x + 10, b.y + b.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(b.x + 30, b.y + b.height / 2 + 12, { steps: 4 });
+      const dragAct = await lastSent(page, 'downloadAction');
+      await page.mouse.up();
+      const after = await lastSent(page, 'downloadAction');
+      check(dragAct && dragAct.id === 2 && dragAct.action === 'drag' && after.action === 'drag', 'dragging a finished row sends downloadAction{drag} and does not open it');
+    }
     await page.locator('.dl[data-id="3"] .act[aria-label="Cancel"]').click();
     check((await lastSent(page, 'downloadAction')).action === 'cancel', 'Cancel sends downloadAction{cancel}');
     // The list changed (the host says so): the page fetches its rows again.

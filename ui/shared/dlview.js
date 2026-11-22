@@ -5,6 +5,8 @@
 //   DlView.bar(d)            a progress bar: one fill, or the parts of a download in parts,
 //                            each at its place in the file and coloured by its connection
 //   DlView.motion            moves the fills smoothly between the host's updates
+//   DlView.dragOut(row, start) a press on a finished download's row that moves a few pixels
+//                            calls start(): the host then drags the file out (Windows shell)
 // The host pushes progress a few times a second; between pushes the fills move on at the
 // measured speed (requestAnimationFrame, never backwards, never past the next byte count by
 // more than a moment's worth). With reduced motion the fills jump to each pushed value.
@@ -155,6 +157,39 @@
     node.title = d.partProgress.length + ' parts over ' + (d.connections || new Set(d.partProgress.map(function (p) { return p.conn; })).size) + ' connections';
   }
 
-  window.DlView = { kind: kind, icon: icon, size: size, left: left, status: status, bar: bar, update: update, forget: forget, host: host,
+  // 0.27.0: dragging a finished download out to Explorer, the desktop or another app. The page
+  // can't put a file on the system's drag, so once the pointer moved a few pixels with the
+  // primary button held, start() asks the host, which runs the shell's drag (it follows the
+  // still-held button from there). Presses on the row's action buttons don't drag; the row's
+  // own drag and text selection are off, and the click a drag may end with doesn't open.
+  const DRAG_SLOP = 4;
+  function dragOut(row, start) {
+    let from = null;
+    let dragged = false;
+    row.addEventListener('dragstart', function (e) { e.preventDefault(); });
+    row.addEventListener('mousedown', function (e) {
+      dragged = false;
+      from = e.button === 0 && !e.target.closest('.acts, .dl-acts') ? { x: e.clientX, y: e.clientY } : null;
+      if (!from) return;
+      // No text selection (or the page's own drag of it); focus as the press would have.
+      e.preventDefault();
+      const target = e.target.closest('button, [tabindex]');
+      if (target && row.contains(target)) target.focus({ preventScroll: true });
+    });
+    row.addEventListener('mousemove', function (e) {
+      if (!from) return;
+      if (!(e.buttons & 1)) { from = null; return; }
+      if (Math.abs(e.clientX - from.x) < DRAG_SLOP && Math.abs(e.clientY - from.y) < DRAG_SLOP) return;
+      from = null;
+      dragged = true;
+      start();
+    });
+    row.addEventListener('mouseup', function () { from = null; });
+    row.addEventListener('click', function (e) {
+      if (dragged) { dragged = false; e.stopPropagation(); e.preventDefault(); }
+    }, true);
+  }
+
+  window.DlView = { dragOut: dragOut, kind: kind, icon: icon, size: size, left: left, status: status, bar: bar, update: update, forget: forget, host: host,
     site: site, kindLabel: kindLabel };
 })();

@@ -217,7 +217,7 @@
     }));
     const kind = DlView.kind(d.fileName);
     const name = done
-      ? el('button', { type: 'button', class: 'name', title: 'Open ' + d.path, text: d.fileName, onclick: function () { act(d.id, 'open'); } })
+      ? el('button', { type: 'button', class: 'name', title: 'Open ' + d.path + ' (or drag it to a folder)', text: d.fileName, onclick: function () { act(d.id, 'open'); } })
       : el('span', { class: 'name', title: d.path, text: d.fileName });
     const row = el('div', { class: 'dl state-' + d.state + (failed ? ' failed' : ''), role: 'listitem', 'data-id': String(d.id), tabindex: '0' }, [
       DlView.icon(d),
@@ -234,6 +234,7 @@
       el('div', { class: 'acts' }, acts),
     ]);
     row.addEventListener('contextmenu', function (e) { e.preventDefault(); showMenu(current(d), e.clientX, e.clientY); });
+    if (done) DlView.dragOut(row, function () { act(d.id, 'drag').catch(function () {}); });
     row.addEventListener('keydown', function (e) {
       if (e.target !== row) return;
       if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
