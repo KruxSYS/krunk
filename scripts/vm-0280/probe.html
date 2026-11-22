@@ -1,0 +1,105 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Krunk 0.28.0 probe</title>
+<style>body{font:12px monospace;margin:8px}pre{white-space:pre-wrap;word-break:break-all}iframe{width:600px;height:120px;border:1px solid #888}</style>
+<h3 id="h">probe</h3>
+<pre id="out">running…</pre>
+<script>
+// Krunk 0.28.0 (M1): what a page can see of the browser it runs in. Loaded as the top page
+// (?tag=…&frame=1 adds a cross-site iframe of itself) and inside that frame. Results are POSTed
+// to /report on the same server; the summary is shown in the page.
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const tag = q.get('tag') || 'x';
+  const role = window.top === window ? 'top' : 'frame';
+  const r = { tag, role, origin: location.origin, when: new Date().toISOString() };
+  const nativeStr = (f) => { try { return Function.prototype.toString.call(f); } catch (e) { return 'ERR ' + e.message; } };
+  const isNative = (f) => /\{\s*\[native code\]\s*\}$/.test(nativeStr(f));
+  const lies = {};
+  function lieCheck(name, f) {
+    if (typeof f !== 'function') { lies[name] = 'missing'; return; }
+    const out = [];
+    if (!isNative(f)) out.push('source-visible');
+    if (Object.prototype.hasOwnProperty.call(f, 'prototype') && !/^[A-Z]/.test(f.name)) out.push('has-prototype');
+    try { new f(); out.push('constructible'); } catch (e) { if (!/not a constructor|Illegal constructor|Failed to construct|Illegal invocation/.test(e.message)) out.push('ctor-error:' + e.message.slice(0, 60)); }
+    const s = nativeStr(f);
+    if (f.name && !s.includes(f.name) && /native code/.test(s)) out.push('unnamed-native');
+    lies[name] = out.length ? out.join(',') : 'ok';
+  }
+  lieCheck('Function.prototype.toString', Function.prototype.toString);
+  lies['toString.own'] = Object.getOwnPropertyNames(Function.prototype.toString).join(',');
+  try {
+    const e = new Error(); const st = (function () { try { null.x; } catch (e) { return e.stack; } })();
+    lies['toString.stack'] = (function () { try { Function.prototype.toString.call(1); } catch (e) { return e.stack.split('\n').slice(0, 3).join(' | '); } return 'no throw'; })();
+  } catch (e) { }
+  lieCheck('HTMLMediaElement.prototype.play', HTMLMediaElement.prototype.play);
+  lieCheck('Notification.requestPermission', window.Notification && Notification.requestPermission);
+  lieCheck('Element.prototype.requestPointerLock', Element.prototype.requestPointerLock);
+  lieCheck('Document.prototype.exitPointerLock', Document.prototype.exitPointerLock);
+  try {
+    lies['AudioContext.ctor'] = (AudioContext.prototype.constructor === AudioContext) ? 'ok' : 'prototype.constructor differs';
+    lies['AudioContext.str'] = nativeStr(AudioContext);
+  } catch (e) { lies['AudioContext'] = 'ERR ' + e.message; }
+  const d = (o, p) => { const x = Object.getOwnPropertyDescriptor(o, p); return x && x.get ? nativeStr(x.get).slice(0, 80) : String(x && x.value); };
+  lies['Navigator.doNotTrack.get'] = d(Navigator.prototype, 'doNotTrack');
+  lies['Navigator.globalPrivacyControl.get'] = d(Navigator.prototype, 'globalPrivacyControl');
+  lies['MouseEvent.movementX.get'] = d(MouseEvent.prototype, 'movementX');
+  lies['Document.pointerLockElement.get'] = d(Document.prototype, 'pointerLockElement');
+  r.lies = lies;
+  const n = navigator;
+  r.nav = {
+    userAgent: n.userAgent, webdriver: n.webdriver, languages: n.languages, language: n.language,
+    doNotTrack: n.doNotTrack, gpc: n.globalPrivacyControl, hardwareConcurrency: n.hardwareConcurrency,
+    deviceMemory: n.deviceMemory, platform: n.platform, vendor: n.vendor, plugins: Array.from(n.plugins || []).map(p => p.name),
+    mimeTypes: Array.from(n.mimeTypes || []).map(m => m.type), pdfViewerEnabled: n.pdfViewerEnabled,
+    cookieEnabled: n.cookieEnabled, maxTouchPoints: n.maxTouchPoints,
+  };
+  try {
+    r.uad = { brands: n.userAgentData.brands, mobile: n.userAgentData.mobile, platform: n.userAgentData.platform };
+    r.uadHigh = await n.userAgentData.getHighEntropyValues(['fullVersionList', 'uaFullVersion', 'platformVersion', 'architecture', 'bitness', 'model', 'wow64', 'formFactors']);
+  } catch (e) { r.uad = 'ERR ' + e.message; }
+  r.chrome = typeof window.chrome === 'object' ? {
+    keys: Object.keys(window.chrome), app: typeof chrome.app, csi: typeof chrome.csi, loadTimes: typeof chrome.loadTimes,
+    runtime: typeof chrome.runtime, runtimeKeys: chrome.runtime ? Object.keys(chrome.runtime).slice(0, 30) : null,
+  } : typeof window.chrome;
+  try {
+    const p = await navigator.permissions.query({ name: 'notifications' });
+    r.perm = { notificationsQuery: p.state, notificationPermission: window.Notification ? Notification.permission : 'none' };
+  } catch (e) { r.perm = 'ERR ' + e.message; }
+  try {
+    const c = document.createElement('canvas'); const gl = c.getContext('webgl');
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    r.webgl = gl ? { vendor: gl.getParameter(gl.VENDOR), renderer: gl.getParameter(gl.RENDERER),
+      uVendor: ext && gl.getParameter(ext.UNMASKED_VENDOR_WEBGL), uRenderer: ext && gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) } : 'no webgl';
+  } catch (e) { r.webgl = 'ERR ' + e.message; }
+  // Globals that are not standard: automation traces and our own.
+  const own = Object.getOwnPropertyNames(window);
+  r.suspicious = own.filter(k => /cdc_|webdriver|__krunk|__lb|selenium|domAutomation|_phantom|callPhantom|__nightmare|puppeteer|playwright/i.test(k));
+  r.ownCount = own.length;
+  // Feature surface: every global, and the members of every interface prototype (for the
+  // engine-version diff against real Chrome).
+  const surface = {};
+  for (const k of own.sort()) {
+    let v; try { v = window[k]; } catch (e) { continue; }
+    if (typeof v === 'function' && /^[A-Z]/.test(k) && v.prototype) {
+      try { surface[k] = Object.getOwnPropertyNames(v.prototype).sort().join(','); } catch (e) { surface[k] = '?'; }
+    } else surface[k] = typeof v;
+  }
+  for (const o of ['navigator', 'CSS', 'Intl', 'Math', 'JSON', 'Reflect', 'Atomics', 'WebAssembly', 'console', 'Promise', 'Array', 'Object', 'String', 'Iterator', 'Map', 'Set']) {
+    try { surface['#' + o] = Object.getOwnPropertyNames(window[o]).sort().join(','); } catch (e) { }
+  }
+  try { surface['#cssProps'] = Array.from(getComputedStyle(document.documentElement)).sort().join(','); } catch (e) { }
+  r.surface = surface;
+  try { r.headers = await (await fetch('/headers', { cache: 'no-store' })).json(); } catch (e) { r.headers = 'ERR ' + e.message; }
+  const summary = { tag, role, lies, nav: r.nav, uad: r.uad, uadHigh: r.uadHigh, chrome: r.chrome, perm: r.perm, webgl: r.webgl, suspicious: r.suspicious, headers: r.headers };
+  document.getElementById('h').textContent = 'probe ' + tag + ' ' + role;
+  document.getElementById('out').textContent = JSON.stringify(summary, null, 1);
+  try { await fetch('/report?tag=' + encodeURIComponent(tag) + '&role=' + role, { method: 'POST', body: JSON.stringify(r) }); } catch (e) { }
+  if (role === 'top' && q.get('frame')) {
+    const other = location.hostname === 'localhost' ? '127.0.0.1' : 'localhost';
+    const f = document.createElement('iframe');
+    f.src = location.protocol + '//' + other + ':' + location.port + location.pathname + '?tag=' + encodeURIComponent(tag);
+    document.body.insertBefore(f, document.getElementById('out'));
+  }
+})();
+</script>
