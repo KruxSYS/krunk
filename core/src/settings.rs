@@ -485,6 +485,9 @@ pub struct Settings {
     /// Tracking protection (Krunk 0.6.0). `block_third_party_cookies` and
     /// `strip_tracking_params` above are derived from it (see `sync_protection`).
     pub protection: crate::protection::Protection,
+    /// 0.28.0: embedded content the user allowed with "Always allow on this site": top
+    /// site → embed sites (registrable domains, `core::embeds`).
+    pub embed_allow: std::collections::BTreeMap<String, Vec<String>>,
     /// Request headers (Krunk 0.6.0): Accept-Language, client hints, custom rules. The
     /// user-agent string itself is `user_agent` below.
     pub headers: crate::headers::Headers,
@@ -950,6 +953,7 @@ impl Default for Settings {
             filter_lists_rev: FILTER_LISTS_REV,
             block_third_party_cookies: false,
             protection: crate::protection::Protection::default(),
+            embed_allow: std::collections::BTreeMap::new(),
             headers: crate::headers::Headers::default(),
             dns: crate::dns::Dns::default(),
             https_only: false,

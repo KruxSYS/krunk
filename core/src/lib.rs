@@ -18,6 +18,7 @@ pub mod default_browser;
 pub mod dlresume;
 pub mod dns;
 pub mod downloads;
+pub mod embeds;
 pub mod dpi;
 pub mod ext;
 pub mod ext_guard;

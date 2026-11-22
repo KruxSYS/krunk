@@ -54,8 +54,10 @@
     "thirdPartyCookies": "trackers",
     "stripParams": true,
     "referrer": "origin",
-    "bounceCleanup": true
+    "bounceCleanup": true,
+    "socialEmbeds": false
   },
+  "embedAllow": {},
   "headers": {
     "acceptLanguage": "",
     "hints": null,

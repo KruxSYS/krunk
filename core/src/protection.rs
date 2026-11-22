@@ -78,6 +78,9 @@ pub struct Protection {
     pub referrer: Referrer,
     /// Clear the cookies and storage of bounce trackers periodically.
     pub bounce_cleanup: bool,
+    /// 0.28.0: social-media widgets (embedded posts, like buttons, comments) are
+    /// click-to-load placeholders (`core::embeds`).
+    pub social_embeds: bool,
 }
 
 impl Default for Protection {
@@ -98,6 +101,7 @@ impl Protection {
                 strip_params: true,
                 referrer: Referrer::None,
                 bounce_cleanup: true,
+                social_embeds: true,
             },
             Level::Standard | Level::Custom => Protection {
                 level,
@@ -107,6 +111,7 @@ impl Protection {
                 strip_params: true,
                 referrer: Referrer::Origin,
                 bounce_cleanup: true,
+                social_embeds: false,
             },
         }
     }
