@@ -127,7 +127,13 @@ pub fn is_video_origin(origin: &str) -> bool {
 /// The `Referer` a request should carry (same convention as [`trim_referrer`]). Under the
 /// None policy (Strict), a cross-site sub-frame document (`resource_type` 1) of a video
 /// player, and every request a video player's document makes, get the origin instead.
-pub fn referrer_for(referrer: &str, url: &str, resource_type: i32, initiator: &str, policy: Referrer) -> Option<String> {
+pub fn referrer_for(
+    referrer: &str,
+    url: &str,
+    resource_type: i32,
+    initiator: &str,
+    policy: Referrer,
+) -> Option<String> {
     if policy == Referrer::None
         && ((resource_type == 1 && kind_of(url) == Some(EmbedKind::Video)) || is_video_origin(initiator))
     {
@@ -385,18 +391,36 @@ mod tests {
     fn video_embeds_get_the_origin_on_strict() {
         let r = "https://news.example/story?id=1";
         let yt = "https://www.youtube.com/embed/abc";
-        assert_eq!(referrer_for(r, yt, 1, "https://news.example", Referrer::None), Some("https://news.example/".into()));
+        assert_eq!(
+            referrer_for(r, yt, 1, "https://news.example", Referrer::None),
+            Some("https://news.example/".into())
+        );
         // The player's own requests (initiator youtube.com) to googlevideo.com.
         assert_eq!(
-            referrer_for("https://www.youtube.com/embed/abc", "https://rr1.googlevideo.com/v", 6, "https://www.youtube.com", Referrer::None),
+            referrer_for(
+                "https://www.youtube.com/embed/abc",
+                "https://rr1.googlevideo.com/v",
+                6,
+                "https://www.youtube.com",
+                Referrer::None
+            ),
             Some("https://www.youtube.com/".into())
         );
         // A script (not a frame) to youtube.com from the page: nothing.
-        assert_eq!(referrer_for(r, "https://www.youtube.com/iframe_api", 2, "https://news.example", Referrer::None), Some(String::new()));
+        assert_eq!(
+            referrer_for(r, "https://www.youtube.com/iframe_api", 2, "https://news.example", Referrer::None),
+            Some(String::new())
+        );
         // Other frames: nothing.
-        assert_eq!(referrer_for(r, "https://ads.example/f", 1, "https://news.example", Referrer::None), Some(String::new()));
+        assert_eq!(
+            referrer_for(r, "https://ads.example/f", 1, "https://news.example", Referrer::None),
+            Some(String::new())
+        );
         // Standard and Full unchanged.
-        assert_eq!(referrer_for(r, yt, 1, "https://news.example", Referrer::Origin), trim_referrer(r, yt, Referrer::Origin));
+        assert_eq!(
+            referrer_for(r, yt, 1, "https://news.example", Referrer::Origin),
+            trim_referrer(r, yt, Referrer::Origin)
+        );
         assert_eq!(referrer_for(r, yt, 1, "https://news.example", Referrer::Full), None);
     }
 
@@ -412,13 +436,20 @@ mod tests {
         assert_eq!(embed_decision(&strict, TOP, tw, false, &a), EmbedDecision::Placeholder);
         assert_eq!(embed_decision(&strict, TOP, yt, false, &a), EmbedDecision::Load, "video embeds load on Strict");
         assert_eq!(embed_decision(&strict, TOP, "https://ads.example/f", false, &a), EmbedDecision::Load);
-        assert_eq!(embed_decision(&strict, TOP, "https://ads.example/f", true, &a), EmbedDecision::Load, "list blocks it");
+        assert_eq!(
+            embed_decision(&strict, TOP, "https://ads.example/f", true, &a),
+            EmbedDecision::Load,
+            "list blocks it"
+        );
         // Standard never placeholders unless a list blocks a known embed.
         assert_eq!(embed_decision(&standard, TOP, tw, false, &a), EmbedDecision::Load);
         assert_eq!(embed_decision(&standard, TOP, tw, true, &a), EmbedDecision::Placeholder);
         assert_eq!(embed_decision(&standard, TOP, yt, true, &a), EmbedDecision::Placeholder);
         // First-party frames never.
-        assert_eq!(embed_decision(&strict, "https://www.facebook.com/", "https://www.facebook.com/plugins/x", true, &a), EmbedDecision::Load);
+        assert_eq!(
+            embed_decision(&strict, "https://www.facebook.com/", "https://www.facebook.com/plugins/x", true, &a),
+            EmbedDecision::Load
+        );
         // Custom follows the toggle.
         let custom = Protection { level: Level::Custom, social_embeds: true, ..Protection::preset(Level::Custom) };
         assert_eq!(embed_decision(&custom.effective(), TOP, tw, false, &a), EmbedDecision::Placeholder);
@@ -431,7 +462,10 @@ mod tests {
         let session: HashSet<String> = ["facebook.com".to_string()].into();
         let empty = BTreeMap::new();
         let a = none(&empty, &session);
-        assert_eq!(embed_decision(&strict, TOP, "https://www.facebook.com/plugins/post.php", false, &a), EmbedDecision::Load);
+        assert_eq!(
+            embed_decision(&strict, TOP, "https://www.facebook.com/plugins/post.php", false, &a),
+            EmbedDecision::Load
+        );
         assert!(a.allows(TOP, "https://static.xx.facebook.com"), "initiators of the allowed site");
         assert!(!a.allows(TOP, "https://twitter.com"));
     }
@@ -452,7 +486,10 @@ mod tests {
         );
         // No marker: unchanged (also a lone "always").
         assert_eq!(strip_marker("https://e.example/?a=1"), ("https://e.example/?a=1".into(), None));
-        assert_eq!(strip_marker("https://e.example/?krunk-embed-always=1"), ("https://e.example/?krunk-embed-always=1".into(), None));
+        assert_eq!(
+            strip_marker("https://e.example/?krunk-embed-always=1"),
+            ("https://e.example/?krunk-embed-always=1".into(), None)
+        );
         assert_eq!(strip_marker("https://e.example/?krunk-embedx=1").1, None, "exact name only");
     }
 

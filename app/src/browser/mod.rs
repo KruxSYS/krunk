@@ -3320,6 +3320,7 @@ impl Browser {
                 self.dispatch_dns(tab, req_id, r)
             }
             Request::BounceStatus => self.reply(tab, Event::ok(req_id, self.bounce_status())),
+            Request::EmbedAllowRemove { site, embed } => self.embed_allow_remove(tab, req_id, &site, &embed),
             Request::BounceCleanNow => self.clean_bounces(Some(Box::new(move |b, n| {
                 b.reply(tab, Event::ok(req_id, serde_json::json!({ "cleaned": n })));
             }))),
@@ -4449,6 +4450,7 @@ impl WindowEvents for AppEvents {
             APP_JOB => b.jobs_ready(),
             APP_SHIELD => b.shield_changed(),
             blocking::APP_CHALLENGE => b.cdp_challenges_changed(),
+            blocking::APP_EMBED_ALLOW => b.embed_allows_pending(),
             flight::APP_VSYNC => b.flight_tick(),
             vpn::APP_VPN => b.vpn_status_ready(),
             _ => {}
