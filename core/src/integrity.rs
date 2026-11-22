@@ -290,7 +290,7 @@ mod tests {
         assert!(files.len() > 30, "{}", files.len());
         assert_eq!(
             to_hex(&files["libcef.dll"]),
-            "33bbbe35ecbff3e9df4392c5a419eb716a039ab02377b1369886dc552e439cc8",
+            "dde44510fc23c0991fd5f402faf48bc65727593b9e564d264e40813c9a87aa69",
             "libcef.dll must be the self-built CEF 156.0.15 with codecs and Krunk's patches (cef.lock)"
         );
         assert!(files.contains_key("locales/en-US.pak") && files.contains_key("snapshot_blob.bin"));

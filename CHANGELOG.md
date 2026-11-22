@@ -3,6 +3,16 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.27.0 — 2026-11-22
+
+- **Drag downloads to a folder.** Drag a finished download from the downloads button's list or
+  from the Downloads page (Ctrl+J) to an Explorer window, the desktop or another app, as you would
+  drag a file out of Explorer. Within one drive the file moves; to another drive it is copied.
+  Hold Ctrl to copy or Shift to move instead.
+- **Sites see the latest Chrome.** With the user agent set to Default, Krunk now presents itself
+  as Chrome 158 for Windows, in the user agent and in the client hints alike. Some sites with bot
+  protection (DataDome) turned Krunk away because it named itself Chromium 156.
+
 ## 0.26.0 — 2026-11-21
 
 - **Typed addresses start loading sooner.** While you type, Krunk connects early to where the
