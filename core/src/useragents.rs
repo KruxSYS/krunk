@@ -1,28 +1,31 @@
 //! The user-agent presets of Settings → Advanced (Krunk 0.5.0), and the identity Krunk presents
-//! when the setting is "Default" (0.27.0): the latest stable Chrome, on Windows and Android. Bot
-//! defences (DataDome and the like) rejected the engine's own "Chromium 156" identity, a brand no
-//! ordinary visitor sends. Version numbers are current as of 21 November 2026 (sources in
-//! `SOURCES`); bump [`CHROME_VERSION`] (and the `chrome_major!` macro) with each Chrome stable.
+//! when the setting is "Default": Google Chrome, on Windows and Android. Bot defences (DataDome and
+//! the like) rejected the engine's own "Chromium" brand, a brand no ordinary visitor sends (0.27.0).
+//! 0.28.0: the version is the **engine's own** (`cef.lock` `CHROMIUM_VERSION`), not the latest
+//! Chrome: a page can tell the engine's version from its features (Chrome 158 has APIs a 156
+//! engine lacks, and the reverse), and a "158" that behaves like 156 is a contradiction bot checks
+//! score, while a Chrome two releases behind is an ordinary visitor. Bump [`CHROME_VERSION`] (and
+//! the `chrome_major!` macro) together with the engine; a test keeps them equal to `cef.lock`.
 
 use serde::Serialize;
 
 /// Where the versions came from, for the next update of this table.
 pub const SOURCES: [&str; 4] = [
-    "Chrome 158 stable (158.0.8127.37 Windows, 12 Nov 2026; the stable channel's own update on 21 Nov): https://chromiumdash.appspot.com/releases?platform=Windows",
-    "Edge 158 follows Chrome 158: https://learn.microsoft.com/en-us/microsoft-edge/web-platform/release-notes/158",
+    "Chrome = the engine's Chromium version (cef.lock CHROMIUM_VERSION, 156.0.8078.80); stable releases: https://chromiumdash.appspot.com/releases?platform=Windows",
+    "Edge follows the same Chromium major: https://learn.microsoft.com/en-us/microsoft-edge/web-platform/release-notes/",
     "Firefox 159.0.1, 3 Nov 2026: https://www.firefox.com/en-US/firefox/159.0.1/releasenotes/",
     "Safari 27.0, 17 Sep 2026 (frozen OS tokens): https://webkit.org/blog/18325/webkit-features-for-safari-27-0/",
 ];
 
-/// The latest stable Chrome's major version, as a literal for `concat!`.
+/// The engine's Chromium major version, as a literal for `concat!`.
 macro_rules! chrome_major {
     () => {
-        "158"
+        "156"
     };
 }
 
-/// The latest stable Chrome's full version: the default identity's client hints carry it.
-pub const CHROME_VERSION: &str = "158.0.8127.37";
+/// The engine's full Chromium version: the default identity's client hints carry it.
+pub const CHROME_VERSION: &str = "156.0.8078.80";
 /// The brand real Chrome lists next to "Chromium" in its client hints.
 pub const CHROME_BRAND: &str = "Google Chrome";
 /// Chrome on 64-bit Windows: the default user agent of Krunk for Windows.
@@ -176,23 +179,35 @@ mod tests {
     }
 
     #[test]
-    fn default_identity_is_the_latest_chrome() {
+    fn default_identity_is_the_engines_chrome() {
         assert!(CHROME_VERSION.starts_with(concat!(chrome_major!(), ".")));
         assert_eq!(CHROME_VERSION.split('.').count(), 4);
         assert_eq!(effective("", true), CHROME_WINDOWS);
         assert_eq!(effective("  ", false), CHROME_ANDROID);
         assert_eq!(effective("Custom/1", false), "Custom/1");
-        assert!(CHROME_WINDOWS.contains("Windows NT 10.0; Win64; x64") && CHROME_WINDOWS.contains("Chrome/158.0.0.0"));
+        assert!(CHROME_WINDOWS.contains("Windows NT 10.0; Win64; x64") && CHROME_WINDOWS.contains("Chrome/156.0.0.0"));
         assert!(CHROME_ANDROID.contains("Mobile Safari/537.36"));
         assert_eq!(
             engine_switches(""),
             [
-                "--user-agent-product=Chrome/158.0.0.0",
+                "--user-agent-product=Chrome/156.0.0.0",
                 "--krunk-ua-brand=Google Chrome",
-                "--krunk-ua-version=158.0.8127.37"
+                "--krunk-ua-version=156.0.8078.80"
             ]
         );
         assert!(engine_switches(PRESETS[5].user_agent).is_empty());
+    }
+
+    /// The identity must be the engine's version: a page can tell the engine apart by its features.
+    #[test]
+    fn identity_matches_the_engine() {
+        let lock = include_str!("../../cef.lock");
+        let engine = lock
+            .lines()
+            .find_map(|l| l.strip_prefix("CHROMIUM_VERSION="))
+            .expect("cef.lock names the Chromium version")
+            .trim();
+        assert_eq!(CHROME_VERSION, engine, "bump CHROME_VERSION and chrome_major! with the engine (cef.lock)");
     }
 
     #[test]
