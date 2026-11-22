@@ -1,7 +1,7 @@
 # Krunk 0.27.1 Turnstile check: a fresh copy of lp-base on build -App, then Cloudflare challenge
 # pages, each given 25 s; shots ts-<Tag>-<n>. Extra engine/profile tweaks via -Ext (an unpacked
 # extension folder loaded with --load-extension is not used: Krunk installs from file only).
-param([string]$App = 'app270r', [string]$Tag = 'a', [string]$Ext = '', [switch]$Private)
+param([string]$App = 'app270r', [string]$Tag = 'a', [string]$Ext = '', [switch]$Private, [switch]$Keep)
 . C:\pipeline\krunk\lib.ps1
 # A leftover Windows Firewall prompt ("Windows Security") takes the keystrokes: Esc it.
 for ($i = 0; $i -lt 3; $i++) {
@@ -15,6 +15,8 @@ Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sle
 $P = "lp-ts-$Tag"
 Remove-Item -Recurse -Force "$K\$P" -ErrorAction SilentlyContinue; Copy-Item -Recurse "$K\lp-base" "$K\$P"
 $env:LOCALAPPDATA = "$K\$P"
+# -Keep: leave Krunk running with the DevTools port (fast builds) for a CDP check afterwards.
+if ($Keep) { $env:KRUNK_DEVTOOLS_PORT = '9222' }
 Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App"
 for ($i = 0; $i -lt 80 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
 $A = MainWindow; [U]::MoveWindow($A, 0, 0, 1280, 760, $true) | Out-Null; Start-Sleep 6
@@ -38,5 +40,6 @@ if ($Private) { Keys '^+n' 2500; $A = MainWindow; [U]::MoveWindow($A, 0, 0, 1280
 Go 'https://nopecha.com/demo/cloudflare' 20000; Shot "ts-$Tag-1"
 Click 213 441 15000; Shot "ts-$Tag-2"
 Start-Sleep 15; Shot "ts-$Tag-3"
+if ($Keep) { return }
 Get-Process Krunk -ErrorAction SilentlyContinue | ForEach-Object { $_.CloseMainWindow() | Out-Null }
 Start-Sleep 4; Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
