@@ -1,0 +1,7 @@
+{
+  "manifest_version": 3,
+  "name": "CS everywhere (Krunk test)",
+  "version": "1.0.0",
+  "description": "Test only: a no-op content script on every page, so Krunk turns on its DevTools Runtime domain in every tab (0.27.1 Turnstile check).",
+  "content_scripts": [{ "matches": ["<all_urls>"], "js": ["cs.js"], "run_at": "document_idle" }]
+}

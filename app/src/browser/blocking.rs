@@ -35,6 +35,8 @@ pub(super) const APP_FILTERS_READY: usize = 1;
 pub(super) const APP_DEFERRED: usize = 2;
 /// `WM_APP` code: a request was blocked (posted from the IO thread).
 pub(super) const APP_SHIELD: usize = 4;
+/// `WM_APP` code: a tab's document is (or no longer is) a Cloudflare challenge (0.27.1).
+pub(super) const APP_CHALLENGE: usize = 7;
 /// Timer: push the shield counter (at most ~4 times a second).
 pub(super) const SHIELD_TIMER: usize = 2;
 const SHIELD_DEBOUNCE_MS: u32 = 250;
@@ -323,6 +325,8 @@ struct TabShared {
     private: AtomicBool,
     /// The load trace's filtering cost of the navigation under way (0.26.0).
     cost: crate::perf::NetCost,
+    /// 0.27.1: the tab's last top-level document was a Cloudflare challenge.
+    challenge: AtomicBool,
 }
 
 /// The network policy of one tab (runs on the IO thread).
@@ -472,6 +476,14 @@ impl RequestPolicy for TabPolicy {
         Some(&self.tab.cost)
     }
 
+    fn main_frame_response(&self, cf_challenge: bool) {
+        if self.tab.challenge.swap(cf_challenge, Relaxed) != cf_challenge {
+            if let Some(n) = self.net.notifier.get() {
+                n.notify(APP_CHALLENGE);
+            }
+        }
+    }
+
     fn redirected(&self, resource_type: i32, from_url: &str, new_url: &str) {
         if resource_type != 0 {
             return;
@@ -550,6 +562,11 @@ impl TabNet {
             cert_problem: RefCell::new(None),
             cert_refused: Cell::new(false),
         }
+    }
+
+    /// 0.27.1: the tab shows a Cloudflare challenge (its last top-level response said so).
+    pub fn challenge(&self) -> bool {
+        self.io.challenge.load(Relaxed)
     }
 
     /// The request policy for this tab's view.

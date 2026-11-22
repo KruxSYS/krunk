@@ -4448,6 +4448,7 @@ impl WindowEvents for AppEvents {
             APP_DEFERRED => b.run_deferred(),
             APP_JOB => b.jobs_ready(),
             APP_SHIELD => b.shield_changed(),
+            blocking::APP_CHALLENGE => b.cdp_challenges_changed(),
             flight::APP_VSYNC => b.flight_tick(),
             vpn::APP_VPN => b.vpn_status_ready(),
             _ => {}

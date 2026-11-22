@@ -65,6 +65,10 @@ pub trait RequestPolicy: Send + Sync {
     /// A request was answered with a redirect to `new_url` (bounce-tracker bookkeeping).
     fn redirected(&self, _resource_type: i32, _from_url: &str, _new_url: &str) {}
 
+    /// 0.27.1: a top-level document arrived; `cf_challenge`: Cloudflare answered it with its
+    /// challenge (`cf-mitigated: challenge`).
+    fn main_frame_response(&self, _cf_challenge: bool) {}
+
     /// Where the load trace counts this tab's filtering cost (0.26.0; read only while it is on).
     fn perf_cost(&self) -> Option<&crate::perf::NetCost> {
         None
@@ -190,10 +194,18 @@ wrap_resource_request_handler! {
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             request: Option<&mut Request>,
-            _response: Option<&mut Response>,
+            response: Option<&mut Response>,
         ) -> ::std::os::raw::c_int {
             if let Some(request) = request {
                 self.policy.answered(request.identifier());
+                if sys::cef_resource_type_t::from(request.resource_type()) == sys::cef_resource_type_t::RT_MAIN_FRAME {
+                    let challenge = response.is_some_and(|r| {
+                        CefString::from(&r.header_by_name(Some(&CefString::from("cf-mitigated"))))
+                            .to_string()
+                            .eq_ignore_ascii_case("challenge")
+                    });
+                    self.policy.main_frame_response(challenge);
+                }
             }
             0
         }

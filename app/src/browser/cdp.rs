@@ -11,7 +11,7 @@ use crate::ffi::cef::View;
 use lb_core::tabs::TabId;
 use serde_json::json;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum CdpUser {
@@ -27,6 +27,10 @@ pub(super) enum CdpUser {
 pub(super) struct CdpHost {
     /// The users of each tab's domains (bits of `CdpUser`).
     users: RefCell<HashMap<TabId, u8>>,
+    /// 0.27.1: tabs showing a Cloudflare challenge: their Runtime domain stays off. Cloudflare
+    /// spots an enabled Runtime domain (it is how automation tools drive a browser) and may
+    /// keep challenging; content scripts and userscripts wait for the next document.
+    paused: RefCell<HashSet<TabId>>,
 }
 
 impl Browser {
@@ -41,7 +45,36 @@ impl Browser {
         };
         if first {
             view.devtools_method("Page.enable", &json!({}));
-            view.devtools_method("Runtime.enable", &json!({}));
+            if !self.cdp.paused.borrow().contains(&tab) {
+                view.devtools_method("Runtime.enable", &json!({}));
+            }
+        }
+    }
+
+    /// 0.27.1 (APP_CHALLENGE): a tab's document became, or stopped being, a Cloudflare
+    /// challenge: its Runtime domain goes off for the challenge and on again after it (when
+    /// something uses it).
+    pub(super) fn cdp_challenges_changed(&self) {
+        let tabs: Vec<(TabId, View, bool)> =
+            self.views.borrow().iter().map(|(id, v)| (*id, v.view.clone(), v.net.challenge())).collect();
+        for (tab, view, challenge) in tabs {
+            let was = self.cdp.paused.borrow().contains(&tab);
+            if challenge == was {
+                continue;
+            }
+            let used = self.cdp.users.borrow().contains_key(&tab);
+            if challenge {
+                self.cdp.paused.borrow_mut().insert(tab);
+                if used {
+                    crate::log::info!("tab {tab}: Cloudflare challenge, the Runtime domain is off until it passes");
+                    view.devtools_method("Runtime.disable", &json!({}));
+                }
+            } else {
+                self.cdp.paused.borrow_mut().remove(&tab);
+                if used {
+                    view.devtools_method("Runtime.enable", &json!({}));
+                }
+            }
         }
     }
 
@@ -60,7 +93,9 @@ impl Browser {
             (had, last)
         };
         if last {
-            view.devtools_method("Runtime.disable", &json!({}));
+            if !self.cdp.paused.borrow().contains(&tab) {
+                view.devtools_method("Runtime.disable", &json!({}));
+            }
             self.wasm_contexts_forget(tab);
             view.devtools_method("Page.disable", &json!({}));
         }
@@ -74,6 +109,7 @@ impl Browser {
     /// The tab's browser is new (or gone): no domain is on.
     pub(super) fn cdp_forget(&self, tab: TabId) {
         self.cdp.users.borrow_mut().remove(&tab);
+        self.cdp.paused.borrow_mut().remove(&tab);
         self.wasm_contexts_forget(tab);
     }
 }
