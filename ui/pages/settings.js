@@ -788,7 +788,7 @@
 
   function save(next) {
     const candidate = next || collect();
-    return LB.request('saveSettings', { settings: candidate }).then(function (r) {
+    return LB.request('saveSettings', { settings: candidate, base: settings }).then(function (r) {
       settings = r.settings;
       showErrors([]);
       $('save-error').hidden = true;

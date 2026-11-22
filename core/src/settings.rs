@@ -1114,6 +1114,34 @@ pub const MAX_SLEEP_MINUTES: u32 = 24 * 60;
 pub const MAX_AUTOLOCK_MINUTES: u32 = 24 * 60;
 
 impl Settings {
+    /// 0.27.1: what the settings page saves, on top of the settings as they are now. The page
+    /// holds the copy it loaded (`base`) and sends a whole candidate; what it didn't change
+    /// must not undo a change made elsewhere meanwhile (the VPN popup's "Use for", the
+    /// bookmarks bar's menu, filter lists, the agent). Only the values (leaves; a list counts
+    /// as one value) where `candidate` differs from `base` are taken; the rest stays `self`.
+    /// `None` if the merge doesn't read back as settings (the caller keeps the candidate).
+    pub fn merged_page_edit(&self, base: &Settings, candidate: &Settings) -> Option<Settings> {
+        fn merge(cur: &mut serde_json::Value, base: &serde_json::Value, cand: &serde_json::Value) {
+            use serde_json::Value::Object;
+            if let (Object(c), Object(b), Object(n)) = (&mut *cur, base, cand) {
+                for (k, nv) in n {
+                    match (b.get(k), c.get_mut(k)) {
+                        (Some(bv), Some(cv)) => merge(cv, bv, nv),
+                        (Some(bv), None) if bv == nv => {}
+                        _ => {
+                            c.insert(k.clone(), nv.clone());
+                        }
+                    }
+                }
+            } else if base != cand {
+                *cur = cand.clone();
+            }
+        }
+        let mut cur = serde_json::to_value(self).ok()?;
+        merge(&mut cur, &serde_json::to_value(base).ok()?, &serde_json::to_value(candidate).ok()?);
+        serde_json::from_value(cur).ok()
+    }
+
     /// The search URL template in effect.
     /// The search engine's name for menus ("Search DuckDuckGo for …"); a custom engine is
     /// named by its host.
@@ -1792,6 +1820,31 @@ fn validate_flags(flags: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+
+    /// 0.27.1: a settings page opened before the VPN popup set "private tabs only" saves
+    /// another setting: the scope stays private, the page's own change is taken.
+    #[test]
+    fn page_edit_keeps_changes_made_elsewhere() {
+        let base = Settings::default();
+        let mut now = base.clone();
+        now.vpn.scope = VpnScope::Private;
+        now.bookmarks_bar = BookmarksBar::Never;
+        let mut cand = base.clone();
+        cand.vpn.kill_switch = !base.vpn.kill_switch;
+        cand.default_zoom = 1.25;
+        let m = now.merged_page_edit(&base, &cand).unwrap();
+        assert_eq!(m.vpn.scope, VpnScope::Private);
+        assert_eq!(m.bookmarks_bar, BookmarksBar::Never);
+        assert_eq!(m.vpn.kill_switch, cand.vpn.kill_switch);
+        assert_eq!(m.default_zoom, 1.25);
+        // A page change to the same field wins.
+        let mut cand2 = base.clone();
+        cand2.vpn.scope = VpnScope::Everywhere;
+        cand2.bookmarks_bar = BookmarksBar::NewTab;
+        let m2 = now.merged_page_edit(&base, &cand2).unwrap();
+        assert_eq!(m2.bookmarks_bar, BookmarksBar::NewTab);
+        assert_eq!(m2.vpn.scope, VpnScope::Private, "unchanged on the page (both Everywhere)");
+    }
 
     /// 0.14.2: the local network skips the VPN only when asked; it is off by default.
     #[test]

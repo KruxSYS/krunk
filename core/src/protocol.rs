@@ -1440,6 +1440,10 @@ pub enum Request {
     GetSettings,
     SaveSettings {
         settings: Box<Settings>,
+        /// 0.27.1: the settings the page started from; only what differs from them is taken
+        /// (`Settings::merged_page_edit`). Without it, `settings` replaces them whole.
+        #[serde(default)]
+        base: Option<Box<Settings>>,
     },
     ResetSettings,
     /// Opens the native folder picker for the download folder.
@@ -4160,7 +4164,7 @@ mod tests {
             Request::PopupResize { height: 420.0 },
             Request::BookmarkActivePage { parent: 1, index: 0 },
             Request::AddBookmarkAt { url: "https://a.example/".into(), parent: 1, index: 2 },
-            Request::SaveSettings { settings: Box::new(Settings::default()) },
+            Request::SaveSettings { settings: Box::new(Settings::default()), base: None },
             Request::VaultSave {
                 entry: EntryInput {
                     id: None,
@@ -4243,7 +4247,7 @@ mod tests {
             }
         }
         assert!(Sender::Page(Page::Adblock).permits(&Request::UpdateFilterLists));
-        assert!(!Sender::Page(Page::Adblock).permits(&Request::SaveSettings { settings: Box::default() }));
+        assert!(!Sender::Page(Page::Adblock).permits(&Request::SaveSettings { settings: Box::default(), base: None }));
         assert_eq!(Page::from_name("adblock"), Some(Page::Adblock));
         assert!(Page::Adblock.single_instance());
     }

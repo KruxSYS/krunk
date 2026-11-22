@@ -36,10 +36,15 @@ impl Browser {
                 });
                 self.reply(tab, Event::ok(req_id, data));
             }
-            Request::SaveSettings { settings } => {
+            Request::SaveSettings { settings, base } => {
+                // 0.27.1: only what the page changed, on top of the settings as they are now
+                // (the page may be open since before the VPN popup or a menu changed one).
+                let mut s = match base {
+                    Some(base) => self.settings.borrow().merged_page_edit(&base, &settings).unwrap_or(*settings),
+                    None => *settings,
+                };
                 // The DevTools layout is set by its splitter and dock control, not on the
                 // settings page: keep the live values (the page may have loaded older ones).
-                let mut s = *settings;
                 {
                     let cur = self.settings.borrow();
                     // The filter lists are edited on krunk://adblock.

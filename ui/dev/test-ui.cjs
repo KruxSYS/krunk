@@ -3426,6 +3426,7 @@ async function testSettings(browser) {
   await page.selectOption('[data-key="permissions.midi"]', 'block');
   await page.waitForTimeout(60);
   check((await lastSent(page, 'saveSettings')).settings.permissions.midi === 'block', 'a default change is saved');
+  { const m = await lastSent(page, 'saveSettings'); check(m.base && m.base.permissions && m.base.permissions.midi !== 'block', 'saveSettings carries the settings the page started from (base), so the host keeps changes made elsewhere (0.27.1)'); }
   await page.selectOption('[data-key="permissions.midi"]', 'ask');
   await page.waitForTimeout(60);
   await page.evaluate(() => { window.__host.handlers.permissionExceptions = () => [{ origin: 'https://a.example', kind: 'camera', allow: true }, { origin: 'https://b.example', kind: 'geolocation', allow: false }]; window.__host.handlers.permissionSet = () => null; });
