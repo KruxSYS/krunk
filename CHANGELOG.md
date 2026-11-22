@@ -3,6 +3,18 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.27.1 — 2026-11-22
+
+- **The VPN's "Use for" choice stays put.** "Private tabs only" could switch back to
+  "Everywhere" by itself. It happened when a Settings tab was open and you changed something
+  there: the page saved the settings as they were when it opened. The Settings page now saves
+  only what you change on it, so choices made in the VPN button's list, the bookmarks bar's
+  menu or elsewhere in the meantime are kept.
+- **Fewer stuck Cloudflare checks.** On a Cloudflare "Verify you are human" page, Krunk now
+  turns off what extensions and userscripts use to reach the page until the check is done.
+  Cloudflare can mistake it for an automated browser. If a site still loops, tell us which
+  one, and whether the VPN was on.
+
 ## 0.27.0 — 2026-11-22
 
 - **Drag downloads to a folder.** Drag a finished download from the downloads button's list or
