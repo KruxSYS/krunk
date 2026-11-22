@@ -954,7 +954,9 @@ impl Default for Settings {
             dns: crate::dns::Dns::default(),
             https_only: false,
             send_dnt: true,
-            send_gpc: true,
+            // 0.28.0: off by default. No Chrome sends Sec-GPC, so the signal marks Krunk out
+            // to bot defences; when on, the engine's native feature sends and exposes it.
+            send_gpc: false,
             strip_tracking_params: true,
             engine_security_components: false,
             protected_content: false,
@@ -1071,6 +1073,12 @@ pub const DISABLED_FEATURES: &[&str] = &[
 /// holdback (nothing is fetched). Those prefetches ran in a hidden WebContents with no CEF
 /// browser, so their requests never reached Krunk's ad blocker and tracking protection.
 pub const ENABLED_FEATURES: &[&str] = &["NoStatePrefetchHoldback"];
+
+/// 0.28.0: "Send Global Privacy Control" through the engine's own implementation (the
+/// `Sec-GPC: 1` header on every request and a native `navigator.globalPrivacyControl`), instead of
+/// a header Krunk added and a getter it patched into every frame. A switch: a change needs a
+/// restart.
+pub const GPC_FEATURE: &str = "GlobalPrivacyControlForce";
 
 /// Switches whose value is a comma-separated list. Chromium keeps only the last occurrence of a
 /// switch (`base::CommandLine`), so every source (the engine's own start-up switches, Krunk's,
@@ -1630,8 +1638,11 @@ impl Settings {
             args.push(format!("--proxy-bypass-list={}", unreachable.join(";")));
         }
         // The list switches, in LIST_SWITCHES order; the user's lists are merged into ours.
-        let mut lists: Vec<String> =
-            vec![DISABLED_FEATURES.join(","), ENABLED_FEATURES.join(","), String::new(), String::new()];
+        let mut enabled = ENABLED_FEATURES.to_vec();
+        if self.send_gpc {
+            enabled.push(GPC_FEATURE);
+        }
+        let mut lists: Vec<String> = vec![DISABLED_FEATURES.join(","), enabled.join(","), String::new(), String::new()];
         for flag in self.extra_flags.split_whitespace() {
             let (name, value) = flag.trim_start_matches('-').split_once('=').unwrap_or((flag, ""));
             match LIST_SWITCHES.iter().position(|l| l.eq_ignore_ascii_case(name)) {

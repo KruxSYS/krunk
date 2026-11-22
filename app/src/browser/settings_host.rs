@@ -313,7 +313,9 @@ impl Browser {
         }
         // Privacy headers and ad blocking switch immediately (the navigator
         // properties for DNT/GPC follow on newly opened tabs).
-        self.net.set_privacy_headers(new.send_dnt, new.send_gpc);
+        if old.send_dnt != new.send_dnt {
+            engine::set_dnt(new.send_dnt);
+        }
         // Tracking protection: cookie and referrer policies at once; the lists a level adds
         // go through the rebuild below.
         if old.protection != new.protection {

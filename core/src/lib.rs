@@ -12,6 +12,7 @@ pub mod blocklog;
 pub mod bookmarks;
 pub mod cert_exceptions;
 pub mod certinfo;
+pub mod challenge;
 pub mod color;
 pub mod cookies;
 pub mod default_browser;

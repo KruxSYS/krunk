@@ -52,10 +52,6 @@ pub enum Menu {
 /// Content scripts for a tab's renderer (passed at creation).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Scripts {
-    /// `navigator.globalPrivacyControl` (all frames).
-    pub gpc: bool,
-    /// `navigator.doNotTrack` (all frames).
-    pub dnt: bool,
     /// Generic cosmetic filtering: report class names and ids (main frame).
     pub page_tokens: bool,
     /// Login form detection and fill (main frame).
@@ -74,8 +70,6 @@ impl Scripts {
     pub(super) fn to_dictionary(self) -> Option<DictionaryValue> {
         let d = dictionary_value_create()?;
         for (k, v) in [
-            ("gpc", self.gpc),
-            ("dnt", self.dnt),
             ("tokens", self.page_tokens),
             ("login", self.login),
             ("audio", self.audio),
@@ -91,8 +85,6 @@ impl Scripts {
     pub(super) fn from_dictionary(d: &DictionaryValue) -> Scripts {
         let get = |k: &str| d.bool(Some(&CefString::from(k))) == 1;
         Scripts {
-            gpc: get("gpc"),
-            dnt: get("dnt"),
             page_tokens: get("tokens"),
             login: get("login"),
             audio: get("audio"),

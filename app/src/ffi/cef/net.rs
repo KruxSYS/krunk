@@ -21,11 +21,9 @@ pub struct NetRequest<'a> {
 /// What to do with a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NetVerdict {
-    /// Send it, optionally with `DNT: 1` / `Sec-GPC: 1`, and with the `Referer` trimmed to
-    /// `referrer` (`Some("")` drops it; `None` leaves the engine's choice).
+    /// Send it, with the `Referer` trimmed to `referrer` (`Some("")` drops it; `None` leaves the
+    /// engine's choice). (0.28.0: `DNT` and `Sec-GPC` come from the engine itself.)
     Allow {
-        dnt: bool,
-        gpc: bool,
         referrer: Option<String>,
         /// Custom headers: set (`Some(value)`) or removed (`None`).
         headers: Vec<(String, Option<String>)>,
@@ -249,13 +247,7 @@ wrap_resource_request_handler! {
                     }
                     ReturnValue::CONTINUE
                 }
-                NetVerdict::Allow { dnt, gpc, referrer, headers } => {
-                    if dnt {
-                        request.set_header_by_name(Some(&CefString::from("DNT")), Some(&CefString::from("1")), 1);
-                    }
-                    if gpc {
-                        request.set_header_by_name(Some(&CefString::from("Sec-GPC")), Some(&CefString::from("1")), 1);
-                    }
+                NetVerdict::Allow { referrer, headers } => {
                     match referrer.as_deref() {
                         Some("") => request.set_referrer(None, ReferrerPolicy::NO_REFERRER),
                         Some(r) => request.set_referrer(Some(&CefString::from(r)), ReferrerPolicy::NEVER_CLEAR_REFERRER),

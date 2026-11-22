@@ -60,6 +60,10 @@ wrap_client! {
             Some(Display::new(self.key))
         }
 
+        fn audio_handler(&self) -> Option<AudioHandler> {
+            Some(Audio::new(self.key))
+        }
+
         fn keyboard_handler(&self) -> Option<KeyboardHandler> {
             Some(Keys::new(self.key))
         }
@@ -335,6 +339,29 @@ wrap_load_handler! {
         }
     }
 }
+
+// 0.28.0: whether the page is audible, from the engine (Krunk's patch
+// krunk-audible-state.patch: the engine asks for audio parameters when a page becomes audible,
+// and once more with sample rate 0 when it goes silent). Answering 0 means the engine never
+// captures the audio. Replaces the page-world tracker that wrapped `HTMLMediaElement.play` and
+// `AudioContext`, which bot defences saw as tampering.
+wrap_audio_handler! {
+    struct Audio {
+        key: u64,
+    }
+    impl AudioHandler {
+        fn audio_parameters(&self, _browser: Option<&mut Browser>, params: Option<&mut AudioParameters>) -> c_int {
+            let audible = params.is_some_and(|p| p.sample_rate > 0);
+            if let Some(view) = lookup(self.key) {
+                view.frame_audio(Some(ENGINE_AUDIO_FRAME.to_string()), if audible { 2 } else { 0 });
+            }
+            0
+        }
+    }
+}
+
+/// The pseudo frame the engine's audible state is filed under (`View::frame_audio`).
+const ENGINE_AUDIO_FRAME: &str = "engine";
 
 wrap_display_handler! {
     struct Display {

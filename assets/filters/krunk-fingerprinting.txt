@@ -5,7 +5,10 @@
 !   and the Custom "fingerprinting" switch; Standard relies on EasyPrivacy's rules instead,
 !   because several of these services also serve fraud prevention on sign-in and checkout pages.
 ! Licence: MIT (part of Krunk, https://github.com/krunk-browser)
-! Version: 2026-11-07
+! Version: 2026-11-23
+! 0.28.0: anti-bot services (Arkose Labs, DataDome, Radware/ShieldSquare, PerimeterX, Kasada)
+!   are not listed: blocking them makes the site's bot check fail or loop (Krunk exempts
+!   them at every level, core/src/challenge.rs).
 !
 ! FingerprintJS (open source and Pro) and its CDNs
 ||fpjscdn.net^
@@ -31,7 +34,6 @@
 ||seon.io^$third-party
 ||cdn.castle.io^
 ||api.castle.io^
-||js.datadome.co^
 ||ct.pipedream.io^
 ||cdn.deviceatlas.com^
 ||d.alicdn.com/alilog/mlog/aplus_v2.js
@@ -42,9 +44,6 @@
 ||clientgear.net^
 ||nexus.ensighten.com^$script
 ! Canvas / audio fingerprinting helpers served as "analytics"
-||cdn.perfdrive.com^
-||static.perfdrive.com^
-||ndc.perfdrive.com^
 ||fp.ravelin.com^
 ||cdn.ravelin.com^
 ||riskified.com^$third-party
@@ -52,7 +51,5 @@
 ||c.riskified.com^
 ||cdn.forter.com^
 ||forter.com^$third-party
-||www.arkoselabs.com/api/
-||client-api.arkoselabs.com^$third-party
 ||cdn.kaptcha.com^
 ||tr.snapchat.com/config/

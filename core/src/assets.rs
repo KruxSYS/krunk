@@ -428,7 +428,7 @@ mod tests {
             "shell/popup.html",
             "pages/newtab.html",
             "pages/https-only.html",
-            "inject/gpc.js",
+            "inject/notify.js",
             "inject/page-tokens.js",
         ] {
             assert!(get(key).is_some(), "{key} missing");
@@ -454,7 +454,7 @@ mod tests {
             "https://krunk.invalid/shared/..%2fshell.html",
             "https://krunk.invalid/",
             "https://krunk.invalid/dev/mock-host.js",
-            "https://krunk.invalid/inject/gpc.js",
+            "https://krunk.invalid/inject/notify.js",
             "https://shell.krunk.invalid/inject/page-tokens.js",
             "https://krunk.invalid:8443/newtab.html",
             "http://krunk.invalid/newtab.html",
@@ -499,8 +499,10 @@ mod tests {
 
     #[test]
     fn injected_scripts() {
-        assert!(inject_script("gpc.js").contains("globalPrivacyControl"));
-        assert!(inject_script("dnt.js").contains("doNotTrack"));
+        assert!(inject_script("notify.js").contains("requestPermission"));
+        assert!(inject_script("gpc.js").is_empty(), "0.28.0: GPC and DNT are the engine's own");
+        // 0.28.0: no Krunk script replaces Function.prototype.toString (bot defences see it).
+        assert!(!inject_script("pointer-lock.js").contains("Function.prototype, 'toString'"));
         assert!(inject_script("page-tokens.js").contains("pageTokens"));
         assert_eq!(inject_script("missing.js"), "");
         // CSS is passed as a JSON string literal, so it cannot break out.

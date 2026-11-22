@@ -77,6 +77,9 @@ impl Browser {
         let now = now_ms();
         let visited: HashSet<String> =
             protection::sites_of(&self.store.borrow().visited_origins(None).unwrap_or_default());
+        // 0.28.0: bot checks and sign-in providers are never bounce trackers (a captcha's or a
+        // sign-in's cookies wiped means the check or the sign-in starts over).
+        b.hops.retain(|site, _| !lb_core::challenge::bounce_exempt(site));
         let due = b.candidates(now, &visited);
         if due.is_empty() {
             b.last_cleanup_ms = now;

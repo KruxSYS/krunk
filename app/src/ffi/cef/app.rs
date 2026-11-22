@@ -220,6 +220,18 @@ pub(super) fn set_preload_offline(offline: bool, ctx: Option<&mut RequestContext
     }
 }
 
+/// "Send Do Not Track" (0.28.0): the engine's own `enable_do_not_track` preference.
+static DNT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Changes the setting; applied to `ctx` at once when given (new contexts take it from start).
+pub(super) fn set_dnt(on: bool, ctx: Option<&mut RequestContext>) -> bool {
+    DNT.store(on, std::sync::atomic::Ordering::Relaxed);
+    match ctx {
+        Some(ctx) => set_pref(ctx, "enable_do_not_track", Pref::Bool(on)),
+        None => true,
+    }
+}
+
 /// Changes the setting; applied to `ctx` (the default profile) at once when given.
 pub(super) fn set_preload(on: bool, ctx: Option<&mut RequestContext>) -> bool {
     PRELOAD.store(on, std::sync::atomic::Ordering::Relaxed);
@@ -247,6 +259,10 @@ pub(super) fn apply_profile_prefs(ctx: &mut RequestContext) -> bool {
         // addresses are gathered, so no mDNS responder listens on the LAN
         // (which also triggered a Windows Firewall prompt).
         ("webrtc.ip_handling_policy", Pref::Str(WEBRTC_NORMAL)),
+        // 0.28.0: "Send Do Not Track" through Chrome's own setting: the engine sends `DNT: 1` in
+        // its usual place among the headers and `navigator.doNotTrack` is its native getter
+        // (Krunk used to add the header itself and patch the getter in every frame).
+        ("enable_do_not_track", Pref::Bool(DNT.load(std::sync::atomic::Ordering::Relaxed))),
     ];
     let applied = prefs.iter().filter(|(name, value)| set_pref(ctx, name, *value)).count();
     let scope = if ctx.is_global() != 0 { "default" } else { "private" };

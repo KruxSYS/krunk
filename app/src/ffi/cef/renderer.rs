@@ -95,43 +95,32 @@ const SHIM: &str = r#"(function (send, expose) {
   return dispatch;
 })"#;
 
-/// Reports what this frame plays: 2 = audio (unmuted media elements that are playing, in the
-/// document or not, and running Web Audio contexts), 1 = media without sound (muted or at
-/// volume 0; 0.20.1, for the sleep exemption), 0 = nothing.
-/// The native `report` function stays in the closure.
+/// Reports whether this frame has media elements playing (1; 0.20.1, the sleep exemption also
+/// for muted media) or none (0). Since 0.28.0 sound (level 2) comes from the engine, not from
+/// wrapping `HTMLMediaElement.play` and `AudioContext` in the page. The native `report`
+/// function stays in the closure.
 const AUDIO_TRACKER: &str = r#"(function (report) {
   'use strict';
-  var playing = new Set(), silent = new Set(), contexts = new Set(), last = 0, hooked = new WeakSet();
+  // 0.28.0: whether the page has media playing (the PiP button and media controls); listeners
+  // only, nothing of the page is wrapped (bot defences flag wrapped natives). Whether the page
+  // is audible comes from the engine (`client::Audio`).
+  var running = new Set(), last = 0, hooked = new WeakSet();
   function update() {
-    var now = playing.size > 0 || contexts.size > 0 ? 2 : silent.size > 0 ? 1 : 0;
+    var now = running.size > 0 ? 1 : 0;
     if (now !== last) { last = now; report(now); }
   }
   function track(el) {
     if (hooked.has(el)) return;
     hooked.add(el);
     var on = function () {
-      var runs = !el.paused && !el.ended, heard = runs && !el.muted && el.volume > 0;
-      if (heard) playing.add(el); else playing.delete(el);
-      if (runs && !heard) silent.add(el); else silent.delete(el);
+      if (!el.paused && !el.ended) running.add(el); else running.delete(el);
       update();
     };
-    ['playing', 'pause', 'ended', 'emptied', 'volumechange'].forEach(function (t) { el.addEventListener(t, on); });
+    ['playing', 'pause', 'ended', 'emptied'].forEach(function (t) { el.addEventListener(t, on); });
     on();
   }
   document.addEventListener('play', function (e) { if (e.target instanceof HTMLMediaElement) track(e.target); }, true);
-  var play = HTMLMediaElement.prototype.play;
-  HTMLMediaElement.prototype.play = function () { track(this); return play.apply(this, arguments); };
-  ['AudioContext', 'webkitAudioContext'].forEach(function (name) {
-    var AC = window[name];
-    if (typeof AC !== 'function') return;
-    window[name] = new Proxy(AC, { construct: function (t, a, n) {
-      var c = Reflect.construct(t, a, n);
-      var on = function () { if (c.state === 'running') contexts.add(c); else contexts.delete(c); update(); };
-      c.addEventListener('statechange', on);
-      on();
-      return c;
-    } });
-  });
+  document.addEventListener('playing', function (e) { if (e.target instanceof HTMLMediaElement) track(e.target); }, true);
 })"#;
 
 thread_local! {
@@ -347,13 +336,9 @@ const NO_USER_AGENT_DATA: &str = "(function(){try{delete Navigator.prototype.use
 
 fn context_created(scripts: Scripts, frame: &mut Frame, context: &mut V8Context) {
     let main = frame.is_main() == 1;
-    // Navigator properties matching the privacy headers: every frame.
-    if scripts.gpc {
-        eval(context, assets::inject_script("gpc.js"));
-    }
-    if scripts.dnt {
-        eval(context, assets::inject_script("dnt.js"));
-    }
+    // 0.28.0: no navigator.doNotTrack / globalPrivacyControl getters patched in any more: the
+    // engine has native ones (the `enable_do_not_track` preference, the GlobalPrivacyControlForce
+    // feature), which also send the headers.
     // No user-agent metadata ("Send client hints" off): no navigator.userAgentData (0.7.0; 0.7.1:
     // the setting as of now, not as of when the tab was made). Not in Krunk's own pages: the
     // shell reads the engine's hints there at start (extension pages are like web pages).

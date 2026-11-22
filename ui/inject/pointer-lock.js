@@ -14,16 +14,10 @@
   var stringify = JSON.stringify, parse = JSON.parse;
   var DOMExc = DOMException, Prom = Promise, Ev = Event, MouseEv = MouseEvent, PointerEv = window.PointerEvent;
   var ShadowRootClass = window.ShadowRoot;
-  var nativeToString = Function.prototype.toString;
-  var natives = new WeakMap();
-
-  // Patched functions look native to feature detection.
-  function nativeLike(fn, name) { natives.set(fn, name); return fn; }
-  var toString = nativeLike(function toString() {
-    var name = natives.get(this);
-    return name !== undefined ? 'function ' + name + '() { [native code] }' : nativeToString.call(this);
-  }, 'toString');
-  defineProperty(Function.prototype, 'toString', { value: toString, writable: true, configurable: true });
+  // 0.28.0: no Function.prototype.toString override any more. It made every native function
+  // fail the "lie" checks of bot defences (CreepJS counted 205). The API's functions are method
+  // and getter definitions: like native ones they have no prototype and can't be constructed.
+  function getterOf(obj, name) { return Object.getOwnPropertyDescriptor(obj, name).get; }
 
   var locked = null;   // the element holding the lock
   var pending = null;  // { el, resolve, reject }
@@ -44,7 +38,7 @@
     return null;
   }
 
-  var request = nativeLike(function requestPointerLock(options) {
+  var request = ({ requestPointerLock(options) {
     var el = this;
     return new Prom(function (resolve, reject) {
       var doc = el.ownerDocument;
@@ -61,18 +55,18 @@
       pending = { el: el, resolve: resolve, reject: reject, raw: !!(options && options.unadjustedMovement) };
       send(stringify({ lb: 'pointerLock', unadjusted: !!(options && options.unadjustedMovement) }));
     });
-  }, 'requestPointerLock');
+  } }).requestPointerLock;
   defineProperty(Element.prototype, 'requestPointerLock', { value: request, writable: true, configurable: true, enumerable: true });
 
-  var exit = nativeLike(function exitPointerLock() {
+  var exit = ({ exitPointerLock() {
     if (locked && locked.ownerDocument === this) send(stringify({ lb: 'pointerUnlock' }));
-  }, 'exitPointerLock');
+  } }).exitPointerLock;
   defineProperty(Document.prototype, 'exitPointerLock', { value: exit, writable: true, configurable: true, enumerable: true });
 
-  var docGetter = nativeLike(function () { return locked ? retarget(locked, this) : null; }, 'get pointerLockElement');
+  var docGetter = getterOf({ get pointerLockElement() { return locked ? retarget(locked, this) : null; } }, 'pointerLockElement');
   defineProperty(Document.prototype, 'pointerLockElement', { get: docGetter, configurable: true, enumerable: true });
   if (ShadowRootClass) {
-    var shadowGetter = nativeLike(function () { return locked ? retarget(locked, this) : null; }, 'get pointerLockElement');
+    var shadowGetter = getterOf({ get pointerLockElement() { return locked ? retarget(locked, this) : null; } }, 'pointerLockElement');
     defineProperty(ShadowRootClass.prototype, 'pointerLockElement', { get: shadowGetter, configurable: true, enumerable: true });
   }
 
@@ -132,7 +126,7 @@
     var desc = Object.getOwnPropertyDescriptor(proto, prop);
     if (!desc || !desc.get) return;
     var orig = desc.get;
-    var get = nativeLike(function () { return inLock(this) ? value(this) : orig.call(this); }, 'get ' + prop);
+    var get = getterOf({ get [prop]() { return inLock(this) ? value(this) : orig.call(this); } }, prop);
     defineProperty(proto, prop, { get: get, set: desc.set, configurable: true, enumerable: desc.enumerable });
   }
   // Installed with the first lock of this document (0.7.0, R24): until then every page read

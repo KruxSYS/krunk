@@ -10,7 +10,9 @@
     try { return desc && desc.get ? desc.get.call(Notification) : Notification.permission; } catch (e) { return 'default'; }
   };
   var asked = false;
-  Notification.requestPermission = function (callback) {
+  // A method definition (0.28.0): like the native one it has no prototype and can't be
+  // constructed. Main frames only (cross-site frames can't ask for notifications anyway).
+  Notification.requestPermission = ({ requestPermission(callback) {
     var p = new Promise(function (resolve) {
       var now = read();
       if (now !== 'default') { resolve(now); return; }
@@ -26,5 +28,5 @@
     });
     if (typeof callback === 'function') p.then(callback);
     return p;
-  };
+  } }).requestPermission;
 })();

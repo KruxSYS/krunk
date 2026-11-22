@@ -122,8 +122,6 @@ impl FilterState {
 pub(super) struct NetShared {
     engine: RwLock<Option<Arc<Blocker>>>,
     enabled: AtomicBool,
-    dnt: AtomicBool,
-    gpc: AtomicBool,
     /// Tracking protection (0.6.0): the cookie policy (`ThirdPartyCookies` as u8), the
     /// referrer policy (`Referrer` as u8) and the known-tracker hosts of the privacy lists.
     cookie_policy: AtomicU8,
@@ -196,11 +194,6 @@ impl NetShared {
 
     pub fn set_enabled(&self, on: bool) {
         self.enabled.store(on, Relaxed);
-    }
-
-    pub fn set_privacy_headers(&self, dnt: bool, gpc: bool) {
-        self.dnt.store(dnt, Relaxed);
-        self.gpc.store(gpc, Relaxed);
     }
 
     /// Applies the cookie and referrer policies of a protection level (the lists go
@@ -349,7 +342,7 @@ impl RequestPolicy for TabPolicy {
             // Only built-in pages may load from the internal origins.
             let top_level = req.resource_type == 0;
             return if assets::internal_request_allowed(req.url, req.initiator, top_level) {
-                NetVerdict::Allow { dnt: false, gpc: false, referrer: None, headers: Vec::new() }
+                NetVerdict::Allow { referrer: None, headers: Vec::new() }
             } else {
                 NetVerdict::Block
             };
@@ -373,21 +366,19 @@ impl RequestPolicy for TabPolicy {
             // missing proxy setting.
             return NetVerdict::Block;
         }
+        // 0.28.0: a bot check (captcha, anti-bot service) is left alone at every level: no list
+        // blocks it and its referrer is the engine's (lib.rs `lb_core::challenge`).
+        let challenge = lb_core::challenge::is_challenge_request(req.url, req.initiator);
         // Tracking protection: a cross-site request says at most the origin it comes from
         // (nothing in Strict); off for sites the shield exempts.
-        let referrer = if self.tab.allowed.load(Relaxed) {
+        let referrer = if self.tab.allowed.load(Relaxed) || challenge {
             None
         } else {
             protection::trim_referrer(req.referrer, req.url, referrer_from_code(self.net.referrer_policy.load(Relaxed)))
         };
         let top_for_rules = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
-        let headers = NetVerdict::Allow {
-            dnt: self.net.dnt.load(Relaxed),
-            gpc: self.net.gpc.load(Relaxed),
-            referrer,
-            headers: self.net.header_rules(&top_for_rules),
-        };
-        if !self.net.enabled() || self.tab.allowed.load(Relaxed) || !blocker::is_filterable(req.url) {
+        let headers = NetVerdict::Allow { referrer, headers: self.net.header_rules(&top_for_rules) };
+        if !self.net.enabled() || self.tab.allowed.load(Relaxed) || challenge || !blocker::is_filterable(req.url) {
             return headers;
         }
         let Some(kind) = ResourceKind::from_cef_resource_type(req.resource_type, req.url) else { return headers };
@@ -457,7 +448,8 @@ impl RequestPolicy for TabPolicy {
 
     fn cookie_allowed(&self, url: &str) -> bool {
         let policy = self.net.cookie_policy.load(Relaxed);
-        if policy == 0 || self.tab.allowed.load(Relaxed) {
+        // 0.28.0: a bot check keeps its cookies (its "passed" token lives in them).
+        if policy == 0 || self.tab.allowed.load(Relaxed) || lb_core::challenge::is_challenge_url(url) {
             return true;
         }
         let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
@@ -627,13 +619,9 @@ impl Browser {
     /// Loads the allowlist and the engine (from cache if valid, otherwise
     /// compiled on a worker) and schedules the daily update check.
     pub(super) fn init_filters(&self) {
-        let (enabled, dnt, gpc) = {
-            let s = self.settings.borrow();
-            (s.adblock_enabled, s.send_dnt, s.send_gpc)
-        };
+        let enabled = self.settings.borrow().adblock_enabled;
         let f = &self.filters;
         self.net.set_enabled(enabled);
-        self.net.set_privacy_headers(dnt, gpc);
         self.net.set_protection(&self.settings.borrow().protection);
         self.net.set_headers(&self.settings.borrow().headers);
         self.load_trackers();

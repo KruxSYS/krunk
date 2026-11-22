@@ -1209,8 +1209,6 @@ impl Browser {
             let s = self.settings.borrow();
             #[cfg_attr(not(feature = "perf-probe"), allow(unused_mut))]
             let mut scripts = Scripts {
-                gpc: s.send_gpc,
-                dnt: s.send_dnt,
                 page_tokens: s.adblock_enabled,
                 login: true,
                 audio: true,

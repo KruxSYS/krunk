@@ -335,6 +335,20 @@ pub fn init_preload(on: bool) {
     app::set_preload(on, None);
 }
 
+/// 0.28.0 "Send Do Not Track": the engine's own preference, in the default profile at once and
+/// in the private one (which may not exist yet: it starts with the value) when it is made.
+pub fn set_dnt(on: bool) -> bool {
+    let mut global = request_context_get_global_context();
+    let ok = app::set_dnt(on, global.as_mut());
+    info!("do not track: {}{}", if on { "on" } else { "off" }, if ok { "" } else { " (not applied)" });
+    ok
+}
+
+/// The Do Not Track value the contexts start with (before the engine runs: no CEF call).
+pub fn init_dnt(on: bool) {
+    app::set_dnt(on, None);
+}
+
 /// See `app::set_doh`.
 pub fn set_doh(mode: &str, templates: &str) -> bool {
     app::set_doh(mode, templates)

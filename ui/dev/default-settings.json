@@ -27,7 +27,7 @@
   "blockThirdPartyCookies": false,
   "httpsOnly": false,
   "sendDnt": true,
-  "sendGpc": true,
+  "sendGpc": false,
   "stripTrackingParams": true,
   "engineSecurityComponents": false,
   "protectedContent": false,
