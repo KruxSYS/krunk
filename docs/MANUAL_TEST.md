@@ -218,9 +218,10 @@ The 2026-11-04 figures are in the README under "Memory".
      at `https://example.com/?id=1`.
    - Pressing Back does not bounce back to the long URL (no redirect loop).
 7. **DNT / GPC:**
-   - Open `https://globalprivacycontrol.org/`. It reports "GPC signal detected".
-   - In DevTools, `navigator.globalPrivacyControl === true` and `navigator.doNotTrack === "1"`.
-   - Network → any request → Request Headers include `DNT: 1` and `Sec-GPC: 1`.
+   - Default: `navigator.doNotTrack === "1"` (native getter) and requests carry `DNT: 1`; no
+     `Sec-GPC` header and no `navigator.globalPrivacyControl` (GPC is off by default since 0.28.0).
+   - Turn on "Send Global Privacy Control", restart: `https://globalprivacycontrol.org/` reports
+     "GPC signal detected", `navigator.globalPrivacyControl === true`, requests carry `Sec-GPC: 1`.
 8. **Third-party cookies** (on by default):
    - A page on one site embedding a frame of another site (e.g. `http://127.0.0.1:8081` with a
      `http://localhost:8082` frame that sets a cookie by header and by script): the frame sees

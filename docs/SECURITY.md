@@ -105,12 +105,15 @@ Consequences:
 - **Which scripts:** small scripts from `ui/inject/` and the renderer, embedded in the DLL and
   run by the renderer when a frame's script context is created (before page scripts). They are
   never served over any origin.
-  - `gpc.js` and `dnt.js` (every frame) only define read-only navigator properties.
+  - Since 0.28.0 no Krunk script replaces a native function's `toString` or wraps native
+    prototypes or constructors in the page (bot defences treat such "lies" as automation).
+    DNT and GPC are the engine's own (preference / feature), not injected getters.
   - `page-tokens.js` (main frame only) reports the page's class names and ids for generic
     cosmetic filtering.
   - `login.js` (main frame only) detects login forms and fills a login the user picked.
-  - An audio tracker (every frame) reports whether the frame plays audio, so the tab is not put
-    to sleep. A page can only make its own tab stay awake.
+  - A media listener (every frame, event listeners only) reports whether the frame plays media,
+    so the tab is not put to sleep; whether the tab is audible comes from the engine (0.28.0).
+    A page can only make its own tab stay awake.
 - **What a page can do with the token message:** it can forge or flood it, but the message is
   strictly parsed (at most 2000 tokens of up to 100 characters each). Its only effect is extra
   hiding CSS on that same page, and the host applies it only if the sender's origin equals the

@@ -1402,8 +1402,12 @@ tested and what was shown on Windows: `docs/WASM_INSPECTOR_STATUS.md`.
   (`document.cookie`) through Chromium's `--test-third-party-cookie-phaseout` switch (needs
   a restart); the profile preference alone did not block it in CEF 156.
 - **Tracking parameters** (`utm_*`, `fbclid`, `gclid`, ...) are stripped before navigating.
-- **`DNT: 1` and `Sec-GPC: 1`** headers on every request, plus `navigator.doNotTrack` and
-  `navigator.globalPrivacyControl` in every frame.
+- **Do Not Track** (on by default) through Chromium's own setting: the engine sends `DNT: 1`
+  and `navigator.doNotTrack` is its native getter. **Global Privacy Control** is off by default
+  since 0.28.0 (no Chrome sends it, so bot defences use it to single Krunk out); when you turn it
+  on, the engine's own implementation sends `Sec-GPC: 1` and exposes
+  `navigator.globalPrivacyControl` (takes effect after a restart). Krunk patches neither into the
+  page any more.
 - **HTTPS-only mode** (optional) with a "Continue to HTTP site" interstitial; exceptions last only
   for the session.
 - **WebRTC** uses only the default public interface, and local addresses are replaced with
