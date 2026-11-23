@@ -1,0 +1,33 @@
+<!doctype html>
+<meta charset="utf-8"><title>Krunk 0.28.0 regression</title>
+<style>body{font:15px sans-serif;margin:12px}button{font-size:16px;width:260px;height:44px;margin:4px;display:block}#log{white-space:pre-wrap;font:12px monospace}</style>
+<!-- Krunk 0.28.0 regression smoke: the features whose implementation changed in 0.28.0.
+     Buttons at fixed places (1280x760 window): pointer lock, notification, sound, then the log. -->
+<button id="pl">1. Pointer lock</button>
+<button id="nt">2. Notification</button>
+<button id="snd">3. Play a tone (5 s)</button>
+<div id="log"></div>
+<script src="https://www.google-analytics.com/analytics.js"></script>
+<script>
+const r = { tag: new URLSearchParams(location.search).get('tag') || 'reg' };
+const log = (k, v) => { r[k] = v; document.getElementById('log').textContent = JSON.stringify(r, null, 1); fetch('/report?tag=' + r.tag + '&role=regress', { method: 'POST', body: JSON.stringify(r) }); };
+log('trackerScriptLoaded', typeof window.ga === 'function');
+fetch('/headers', { cache: 'no-store' }).then(x => x.json()).then(h => log('headers', h.map(([k, v]) => k + ': ' + v).filter(l => /^(dnt|sec-gpc|user-agent|sec-ch-ua:)/i.test(l))));
+setTimeout(() => log('contentScript', document.documentElement.getAttribute('data-cs-all')), 2000);
+log('nav', { doNotTrack: navigator.doNotTrack, gpc: navigator.globalPrivacyControl });
+let moves = 0, sum = 0;
+document.addEventListener('pointerlockchange', () => log('pointerLockElement', document.pointerLockElement ? document.pointerLockElement.id : null));
+document.addEventListener('pointerlockerror', () => log('pointerLockError', true));
+document.addEventListener('mousemove', e => { if (document.pointerLockElement) { moves++; sum += Math.abs(e.movementX) + Math.abs(e.movementY); if (moves % 10 === 0) log('lockedMoves', { moves, sum }); } });
+document.getElementById('pl').onclick = e => { e.target.requestPointerLock(); };
+document.getElementById('nt').onclick = async () => {
+  const p = await Notification.requestPermission();
+  log('notificationPermission', p);
+  if (p === 'granted') { const n = new Notification('Krunk 0.28.0 test', { body: 'regression smoke' }); n.onshow = () => log('notificationShown', true); n.onerror = () => log('notificationError', true); }
+};
+document.getElementById('snd').onclick = () => {
+  const ac = new AudioContext(), o = ac.createOscillator(), g = ac.createGain();
+  g.gain.value = 0.05; o.connect(g); g.connect(ac.destination); o.start(); log('tone', 'playing');
+  setTimeout(() => { o.stop(); ac.close(); log('tone', 'stopped'); }, 5000);
+};
+</script>
