@@ -3,6 +3,34 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.28.0 — 2026-11-23
+
+- **Bot checks stop looping.** "Verify you are human" checks that kept coming back after you
+  solved them (GitHub's sign-up check, DataDome sliders, Cloudflare checks on embedded pages) now
+  go through. Their "passed" cookie is a partitioned cookie, and Krunk's engine stored it but never
+  sent it back, so the site asked again. Krunk now sends partitioned cookies the way Chrome does.
+- **Fewer sites take Krunk for a bot.** Krunk no longer changes anything in a page's own
+  JavaScript that bot checks inspect. Its helpers for pointer lock, the tab's sound icon,
+  notifications, Do Not Track and Global Privacy Control had replaced built-in functions, and
+  bot checks counted that as tampering (CreepJS found 205 "lies"; now 0, as in Chrome).
+  The tab's sound icon now comes from the engine.
+- **Krunk names the Chrome version it really is (156).** 0.27.0 claimed Chrome 158, but sites can
+  tell a browser's version from its features, and a mismatch looks suspicious. User agent, client
+  hints and the engine now agree.
+- **Captchas and anti-bot services are never blocked.** Tracking protection and the filter lists
+  leave Cloudflare Turnstile, reCAPTCHA, hCaptcha, Arkose, DataDome and similar services alone at
+  every level, keep their cookies and skip them in bounce cleanup.
+- **Global Privacy Control is off by default.** No Chrome sends it, so bot defences used it to
+  single Krunk out. You can turn it on in Settings; Krunk then uses the engine's own
+  implementation. Do Not Track stays on and now uses Chrome's own setting.
+- **YouTube embeds play on Strict.** Strict sent no referrer to embedded videos, and YouTube
+  answered with "Error 153". Video players (YouTube, Vimeo, Dailymotion, Twitch, Spotify,
+  SoundCloud, Google Maps) now get the page's origin as referrer. Everything else on Strict still
+  gets none.
+- **Click-to-load social embeds on Strict.** Facebook, X/Twitter, Instagram, TikTok, LinkedIn,
+  Disqus and Reddit embeds show "Krunk blocked content from …" with **Load** and **Always allow
+  on this site**. Sites you allowed are listed in Settings → Privacy, where you can remove them.
+
 ## 0.27.1 — 2026-11-22
 
 - **The VPN's "Use for" choice stays put.** "Private tabs only" could switch back to

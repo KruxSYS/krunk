@@ -5088,7 +5088,10 @@ async function testPointerLockShim(browser) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto('https://game.example/');
-  check(await page.evaluate(() => Element.prototype.requestPointerLock.toString()) === 'function requestPointerLock() { [native code] }', 'requestPointerLock looks native');
+  // 0.28.0: no Function.prototype.toString override (bot checks count it as a lie); the shim's
+  // functions are method definitions, like native ones without a prototype and not constructible.
+  check(await page.evaluate(() => Function.prototype.toString.toString() === 'function toString() { [native code] }' && !Object.prototype.hasOwnProperty.call(Function.prototype.toString, 'prototype')), 'Function.prototype.toString is untouched');
+  check(await page.evaluate(() => { const f = Element.prototype.requestPointerLock; try { new f(); return false; } catch (e) { return f.name === 'requestPointerLock' && !('prototype' in f); } }), 'requestPointerLock has no prototype and is not constructible');
   check(await page.evaluate(() => 'pointerLockElement' in Document.prototype && document.pointerLockElement === null), 'pointerLockElement is null when unlocked');
   // 0.7.0 (R24): the event position getters stay the engine's own until a lock is granted.
   check(await page.evaluate(() => ['clientX', 'movementX', 'screenY'].every((p) => Object.getOwnPropertyDescriptor(MouseEvent.prototype, p).get.name === 'get ' + p)), 'MouseEvent getters untouched before the first lock');
@@ -5152,7 +5155,7 @@ async function testPointerLockShim(browser) {
   await page.waitForTimeout(120);
   moves = await page.evaluate(() => log.slice());
   check(moves.includes('move:4,1:false:1'), 'leftover movement arrives as a synthetic event (' + moves.join(' ') + ')');
-  check(await page.evaluate(() => Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'movementX').get.toString()) === 'function get movementX() { [native code] }', 'the movementX getter looks native');
+  check(await page.evaluate(() => { const g = Object.getOwnPropertyDescriptor(MouseEvent.prototype, 'movementX').get; return g.name === 'get movementX' && !('prototype' in g); }), 'the movementX getter is named like the native one, without a prototype');
   // exitPointerLock asks the browser; the release arrives as an event.
   await page.evaluate(() => document.exitPointerLock());
   check((await page.evaluate(() => window.__sent.pop())).lb === 'pointerUnlock', 'exitPointerLock sends pointerUnlock');

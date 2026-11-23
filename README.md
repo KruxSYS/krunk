@@ -1392,8 +1392,24 @@ tested and what was shown on Windows: `docs/WASM_INSPECTOR_STATUS.md`.
   name, tracking parameters stripped, cross-site requests carry only the origin as `Referer`,
   bounce trackers (sites only ever seen as a redirect hop, never visited) lose their cookies
   and storage daily. **Strict** adds Krunk's fingerprinting list, blocks every third-party
-  cookie, sends no `Referer` to other sites and cleans bounce trackers hourly. **Custom**
-  picks each part. The shield's site switch turns all of it off for one site.
+  cookie, sends no `Referer` to other sites (except the page's origin to embedded video players,
+  0.28.0: YouTube refuses to play without it), makes social media embeds click-to-load (a
+  "Krunk blocked content from …" placeholder with Load / Always allow on this site; the allowed
+  sites are listed and removable in Settings → Privacy) and cleans bounce trackers hourly.
+  **Custom** picks each part. The shield's site switch turns all of it off for one site.
+- **Bot checks are left alone** (0.28.0, `core::challenge`): captcha and anti-bot services
+  (Turnstile, reCAPTCHA, hCaptcha, Arkose, DataDome, HUMAN/PerimeterX, …) are never blocked by a
+  list, keep their cookies and referrer at every level, and bounce cleanup skips them and the big
+  sign-in providers.
+- **Looks like Chrome to bot checks** (0.28.0): the default identity is Google Chrome at the
+  engine's own version (156.0.8078.80, `core::useragents`, tied to `cef.lock` by a test), Krunk
+  changes no native function in the page (CreepJS: 0 lies, 0 % headless / stealth, as Chrome on
+  the same machine), the request headers come in Chrome's order, and partitioned (CHIPS) cookies
+  are sent back as in Chrome (engine patch `krunk-chips-cookies.patch`). Known remaining
+  differences: Krunk's pointer-lock functions and `Notification.requestPermission` are its own
+  JavaScript (source visible to a targeted check), and cross-site frames send
+  `Sec-Fetch-Storage-Access`. Not verified: an Arkose puzzle (GitHub's DataDome check blocks the
+  test machine's IP before the sign-up form, for Chrome too).
 - **Third-party cookies:** a `CefCookieAccessFilter` asks `core::cookies::is_third_party` for
   every cookie a request would send or store (a cookie is third-party when the request's
   registrable domain differs from the tab's top-level site), then the level decides: known

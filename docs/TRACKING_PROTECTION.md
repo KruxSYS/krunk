@@ -90,6 +90,25 @@ Code: `core/src/embeds.rs` (pure, unit-tested), hooked into `TabPolicy::check`
   (one row per site and embed, Remove takes effect at once through `embedAllowRemove`). The
   list stays on the device (it is not synced).
 
+## Bot checks (0.28.0)
+
+Code: `core/src/challenge.rs` (pure, unit-tested), used by `app/src/browser/blocking.rs` and
+`bounce.rs`. Captchas and anti-bot services (`CHALLENGE_HOSTS`: Arkose/FunCaptcha incl.
+octocaptcha.com, Cloudflare Turnstile, hCaptcha, reCAPTCHA (`google.com/recaptcha/`,
+`gstatic.com/recaptcha/`, recaptcha.net), DataDome, HUMAN/PerimeterX, Radware, AWS WAF,
+GeeTest) are exempt at **every** level: no filter list blocks a request to them or made by their
+frames (EasyPrivacy's `arkoselabs.com/metrics/` rule included), their cookies are not blocked,
+their referrer is the engine's, and bounce cleanup never clears them or the big sign-in providers
+(`IDP_SITES`). Blocking them protects nothing and makes the site's check fail or loop. Arkose,
+DataDome and Radware were taken off `krunk-fingerprinting.txt` for the same reason.
+
+Partitioned (CHIPS) cookies: Krunk's cookie filter makes CEF load and save cookies itself; until
+0.28.0 that path dropped partitioned cookies on renderer requests, so a check's "passed" cookie
+(DataDome's, Cloudflare's in embedded challenges) never came back and the check looped. The engine
+patch `krunk-chips-cookies.patch` gives those requests the frame's partition key, as Chrome's
+network service does. Strict's "block all third-party cookies" still blocks partitioned
+third-party cookies too (Chrome allows them); unchanged.
+
 ## Not done, and why
 
 - **Total Cookie Protection / cookie partitioning.** Chromium can partition third-party
