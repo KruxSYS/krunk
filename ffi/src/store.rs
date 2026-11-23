@@ -747,7 +747,7 @@ mod tests {
             merge_search_suggestions(r.rows.clone(), "krunk".into(), vec!["krunk browser".into()], DDG.into()).unwrap();
         assert!(merged.iter().any(|m| m.kind == SuggestionKind::SearchSuggestion && m.title == "krunk browser"));
         assert!(merged.len() <= 10);
-        let r2 = s.omnibox_query("krunk.2".into(), DDG.into());
+        let r2 = s.omnibox_query("krunk.k".into(), DDG.into());
         assert!(r2.inline.is_some());
     }
 
