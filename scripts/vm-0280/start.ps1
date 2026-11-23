@@ -3,7 +3,7 @@
 # instead. The probe server (probe-serve.py, port 18111) is started when it isn't running.
 #   -Dev: KRUNK_DEVTOOLS_PORT=9222 (fast builds only; diagnostic runs, never the clean ones).
 param([string]$App = 'app271r', [string]$Prof = 'x', [string]$Level = 'standard', [string]$Url = 'about:blank',
-  [switch]$Chrome, [switch]$Dev, [switch]$KeepProfile, [string]$Set = '', [string]$PerfOff = '')
+  [switch]$Chrome, [switch]$Dev, [switch]$KeepProfile, [string]$Set = '', [string]$PerfOff = '', [string]$ChromeArgs = '')
 . C:\pipeline\krunk\lib.ps1
 $K = 'C:\pipeline\krunk'; $V = "$K\v0280"; $Py = 'C:\Program Files\Python312\python.exe'
 if (-not (Get-NetTCPConnection -LocalPort 18111 -State Listen -ErrorAction SilentlyContinue)) {
@@ -20,7 +20,7 @@ Get-Process Krunk, chrome -ErrorAction SilentlyContinue | Stop-Process -Force; S
 $P = "$K\p0280-$Prof"
 if ($Chrome) {
   if (-not $KeepProfile) { Remove-Item -Recurse -Force $P -ErrorAction SilentlyContinue }
-  Start-Process -FilePath 'C:\Program Files\Google\Chrome\Application\chrome.exe' -ArgumentList "--user-data-dir=$P", '--no-first-run', '--no-default-browser-check', '--window-position=0,0', '--window-size=1280,760', $(if ($Dev) { '--remote-debugging-port=9222' } else { '--no-first-run' }), $Url
+  Start-Process -FilePath 'C:\Program Files\Google\Chrome\Application\chrome.exe' -ArgumentList "--user-data-dir=$P", '--no-first-run', '--no-default-browser-check', '--window-position=0,0', '--window-size=1280,760', $(if ($Dev) { '--remote-debugging-port=9222' } else { '--no-first-run' }), $(if ($ChromeArgs) { $ChromeArgs } else { '--no-first-run' }), $Url
   Start-Sleep 8
   $h = MainWindow 'Chrome_WidgetWin_1'
   if ($h -ne [IntPtr]::Zero) { [U]::MoveWindow($h, 0, 0, 1280, 760, $true) | Out-Null }

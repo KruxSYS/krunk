@@ -1408,8 +1408,11 @@ tested and what was shown on Windows: `docs/WASM_INSPECTOR_STATUS.md`.
   are sent back as in Chrome (engine patch `krunk-chips-cookies.patch`). Known remaining
   differences: Krunk's pointer-lock functions and `Notification.requestPermission` are its own
   JavaScript (source visible to a targeted check), and cross-site frames send
-  `Sec-Fetch-Storage-Access`. Not verified: an Arkose puzzle (GitHub's DataDome check blocks the
-  test machine's IP before the sign-up form, for Chrome too).
+  `Sec-Fetch-Storage-Access`. Not verified: an Arkose puzzle. GitHub's DataDome check blocked every
+  exit available for testing (the test machine's IP and 10 Tor exits) before the sign-up form,
+  for Chrome 158 as well; on the test machine's IP Krunk's slide is now accepted like Chrome's
+  (0.27.1 looped). Also not verified for 0.28.0: the in-app update from 0.27.1 (the update
+  server's public name did not resolve at release time).
 - **Third-party cookies:** a `CefCookieAccessFilter` asks `core::cookies::is_third_party` for
   every cookie a request would send or store (a cookie is third-party when the request's
   registrable domain differs from the tab's top-level site), then the level decides: known
