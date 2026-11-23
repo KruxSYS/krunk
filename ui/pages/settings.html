@@ -292,7 +292,7 @@
         <div class="text"><span class="label">Level</span><p class="desc">What Krunk does against cross-site tracking, on top of the ad and tracker lists above. The shield in the toolbar turns everything off for one site.</p></div>
         <div class="control radios" role="radiogroup" aria-label="Tracking protection level">
           <label><input type="radio" name="plevel" value="standard"> <span><b>Standard</b> – cryptominers blocked, known trackers get no cookies, tracking parameters removed, other sites only see where you came from (not the page), bounce trackers cleared daily.</span></label>
-          <label><input type="radio" name="plevel" value="strict"> <span><b>Strict</b> – also blocks fingerprinting scripts and every third-party cookie, sends no referrer to other sites and clears bounce trackers hourly. Some sites break.</span></label>
+          <label><input type="radio" name="plevel" value="strict"> <span><b>Strict</b> – also blocks fingerprinting scripts and every third-party cookie, sends no referrer to other sites (video players still learn the site), makes social media embeds click-to-load and clears bounce trackers hourly. Some sites break.</span></label>
           <label><input type="radio" name="plevel" value="custom"> <span><b>Custom</b> – choose each part below.</span></label>
         </div>
       </div>
@@ -328,6 +328,14 @@
       <div class="row setting protection-part" data-keywords="bounce trackers redirect clear">
         <div class="text"><label for="p-bounce">Clear bounce trackers</label><p class="desc">Sites you only ever passed through as a redirect lose their cookies and storage (daily; hourly in Strict).</p></div>
         <div class="control"><input type="checkbox" id="p-bounce" data-key="protection.bounceCleanup"></div>
+      </div>
+      <div class="row setting protection-part" data-keywords="social media embeds click to load facebook twitter x instagram tiktok placeholder">
+        <div class="text"><label for="p-social">Click-to-load social media embeds</label><p class="desc">Embedded posts, like buttons and comment threads from Facebook, X, Instagram, TikTok, LinkedIn, Disqus and Reddit show a placeholder until you click Load. Video players always load (in Strict they learn the site they are on, so they keep working).</p></div>
+        <div class="control"><input type="checkbox" id="p-social" data-key="protection.socialEmbeds"></div>
+      </div>
+      <div class="row setting column" data-keywords="embedded content allowed sites embeds always allow social media">
+        <div class="text"><span class="label">Embedded content allowed on sites</span><p class="desc">Added with "Always allow on this site" on a placeholder.</p></div>
+        <table class="exceptions" id="embed-allow"><thead><tr><th>Site</th><th>Embedded from</th><th></th></tr></thead><tbody id="embed-rows"><tr><td colspan="3" class="muted">None.</td></tr></tbody></table>
       </div>
       <div class="row setting" data-keywords="bounce trackers status clean now">
         <div class="text"><span class="label">Bounce trackers</span><p class="desc" id="bounce-status">…</p></div>

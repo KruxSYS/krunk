@@ -1158,6 +1158,8 @@ mod tests {
             // 0.26.0: "Preload pages" is this device's (the synced key set, shared with
             // Krunk for Android, stays as it is).
             "preloadPages",
+            // 0.28.0: embeds allowed per site stay on this device (Windows only for now).
+            "embedAllow",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v

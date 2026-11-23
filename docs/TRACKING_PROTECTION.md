@@ -52,6 +52,44 @@ Everything applies live except the "all third-party cookies" script switch (rest
 Settings from 0.5 migrate: the default toggles become Standard; a changed toggle becomes a
 Custom configuration with the same effect.
 
+## Embedded content (0.28.0)
+
+Code: `core/src/embeds.rs` (pure, unit-tested), hooked into `TabPolicy::check`
+(`app/src/browser/blocking.rs`).
+
+- **Video players get the origin on Strict.** Strict sends no `Referer` cross-site, and some
+  players refuse to play without one (YouTube's "error 153"). A cross-site sub-frame
+  document to a video embed host (`VIDEO_EMBED_HOSTS`: YouTube incl. youtube-nocookie,
+  ytimg and googlevideo, Vimeo, Dailymotion, Twitch's player, Google Maps embeds, Spotify
+  and SoundCloud players), and every request whose initiator is such a host, gets the
+  origin referrer, which is what Chrome sends by default. Everything else on Strict still
+  gets none; Standard and the engine default are unchanged. (Initiators are origins, so
+  hosts listed with a path, like `google.com/maps/embed`, count only as frame addresses.)
+- **Social media embeds are click-to-load** ("Click-to-load social media embeds", Settings
+  key `protection.socialEmbeds`; on in Strict, off in Standard, the user's choice in
+  Custom). A third-party sub-frame document to a social embed host (`SOCIAL_EMBED_HOSTS`:
+  Facebook `/plugins/`, Twitter/X platform and syndication, Instagram `…/embed`, TikTok,
+  LinkedIn `/embed`, Disqus, embed.reddit.com) is not sent: the frame shows a placeholder.
+  Like Firefox's SmartBlock placeholders, a filter list blocking a third-party frame of
+  either list also shows the placeholder instead of an empty frame, at any level.
+  First-party frames are never replaced.
+- **The placeholder** is a small self-contained page answered locally (no script, no
+  external loads, light and dark): "Krunk blocked content from *host*", **Load** and
+  **Always allow on this site** (not offered in private tabs). The buttons navigate the
+  frame to its address plus `krunk-embed=<nonce>` (and `&krunk-embed-always=1`). The nonce
+  is random, bound to that address, single-use and expires after 10 minutes; it is kept in
+  the tab's IO-side state. A request with a valid marker is answered locally (the marker
+  never reaches the site) by a page that sends the frame on to the address without the
+  marker (`location.replace`, no referrer from the stand-in). A forged, stale or reused
+  marker is an ordinary request (the placeholder again).
+- **Allowed embeds.** Load allows the frame's site for the tab's page until the tab goes to
+  another page; Always also stores (page site → embed site) in Settings `embedAllow`. An
+  allowed frame and the requests it makes (initiator in the allowed site) are neither
+  replaced nor list-blocked, and send the origin of the page they are on.
+- **Settings → Privacy → Tracking protection** lists "Embedded content allowed on sites"
+  (one row per site and embed, Remove takes effect at once through `embedAllowRemove`). The
+  list stays on the device (it is not synced).
+
 ## Not done, and why
 
 - **Total Cookie Protection / cookie partitioning.** Chromium can partition third-party

@@ -21,8 +21,8 @@ TOOLCHAIN_HASH_KEY=3bfcb536c8      # TOOLCHAIN_HASH in src/build/vs_toolchain.py
 # since 0.12.1 (Krunk's logo as the engine's product logo, see brand()); -private since 0.12.3
 # (patches/chromium-private-media.patch); -nav since 0.18.0; -preconnect since 0.26.0
 # (patches/chromium-preconnect-blocked-hosts.patch, krunk-preconnect-pref.patch); -ua since 0.27.0
-# (patches/chromium-ua-brand.patch).
-CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect-ua${CEF_FLAVOR_SUFFIX:-}
+# (patches/chromium-ua-brand.patch); -audible since 0.28.0 (patches/krunk-audible-state.patch).
+CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible${CEF_FLAVOR_SUFFIX:-}
 PATCHES=$(cd "$(dirname "$0")" && pwd)/patches
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SRC=$ROOT/chromium_git/chromium/src

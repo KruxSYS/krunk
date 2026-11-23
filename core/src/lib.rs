@@ -20,6 +20,7 @@ pub mod dlresume;
 pub mod dns;
 pub mod downloads;
 pub mod dpi;
+pub mod embeds;
 pub mod ext;
 pub mod ext_guard;
 pub mod ext_runtime;

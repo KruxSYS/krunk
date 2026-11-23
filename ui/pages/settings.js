@@ -423,9 +423,31 @@
 
   // Tracking protection (0.6.0): what Standard and Strict stand for (mirrors core::protection).
   const PROTECTION_PRESETS = {
-    standard: { fingerprinting: false, cryptomining: true, thirdPartyCookies: 'trackers', stripParams: true, referrer: 'origin', bounceCleanup: true },
-    strict: { fingerprinting: true, cryptomining: true, thirdPartyCookies: 'all', stripParams: true, referrer: 'none', bounceCleanup: true },
+    standard: { fingerprinting: false, cryptomining: true, thirdPartyCookies: 'trackers', stripParams: true, referrer: 'origin', bounceCleanup: true, socialEmbeds: false },
+    strict: { fingerprinting: true, cryptomining: true, thirdPartyCookies: 'all', stripParams: true, referrer: 'none', bounceCleanup: true, socialEmbeds: true },
   };
+  // 0.28.0: "Always allow on this site" pairs of embed placeholders (removed one by one
+  // through the host: the page's save merges only what changed and can't drop a key).
+  function renderEmbedAllow() {
+    const body = $('embed-rows');
+    body.textContent = '';
+    const rows = [];
+    Object.keys(settings.embedAllow || {}).sort().forEach(function (site) {
+      (settings.embedAllow[site] || []).forEach((embed) => rows.push([site, embed]));
+    });
+    if (!rows.length) { body.appendChild(el('tr', {}, [el('td', { colspan: '3', class: 'muted', text: 'None.' })])); return; }
+    rows.forEach(function (r) {
+      body.appendChild(el('tr', {}, [
+        el('td', { text: r[0] }), el('td', { text: r[1] }),
+        el('td', {}, [el('button', { class: 'btn small', text: 'Remove', onclick: function () {
+          LB.request('embedAllowRemove', { site: r[0], embed: r[1] }).then(function (res) {
+            settings = res.settings;
+            render();
+          }, function (e) { Page.toast(e.message); });
+        } })]),
+      ]));
+    });
+  }
   function effectiveProtection() {
     const p = settings.protection || { level: 'standard' };
     return p.level === 'custom' ? p : Object.assign({ level: p.level }, PROTECTION_PRESETS[p.level] || PROTECTION_PRESETS.standard);
@@ -706,6 +728,7 @@
   function render() {
     renderAi();
     renderProtection();
+    renderEmbedAllow();
     document.querySelectorAll('[data-key]').forEach(function (input) {
       // A preset's values are shown but not the user's: they stay as saved.
       if (input.disabled && input.closest('.protection-part')) return;

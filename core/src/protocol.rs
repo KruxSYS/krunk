@@ -1259,6 +1259,12 @@ pub enum Request {
     BounceStatus,
     /// Clear the due bounce trackers now (replies `{cleaned}`).
     BounceCleanNow,
+    /// Settings page (0.28.0): forget an "Always allow on this site" for embedded content
+    /// (`site` the page's site, `embed` the embed's; replies with the settings).
+    EmbedAllowRemove {
+        site: String,
+        embed: String,
+    },
     /// Settings page (0.6.0 custom DNS): the stub's state and per-resolver counters.
     DnsStatus,
     /// Resolve a name through resolver `index` alone (replies `{ms}` or an error).
@@ -2307,6 +2313,7 @@ impl Sender {
                     | R::PermissionSet { .. }
                     | R::BounceStatus
                     | R::BounceCleanNow
+                    | R::EmbedAllowRemove { .. }
                     | R::DnsStatus
                     | R::DnsTest { .. }
                     | R::DnsParse { .. }
@@ -4124,6 +4131,7 @@ mod tests {
             Request::PermissionExceptions,
             Request::BounceStatus,
             Request::BounceCleanNow,
+            Request::EmbedAllowRemove { site: "news.example".into(), embed: "twitter.com".into() },
             Request::DefaultBrowserStatus,
             Request::MakeDefaultBrowser,
             Request::DnsStatus,
@@ -4784,6 +4792,7 @@ mod tests {
         for r in [
             Request::BounceStatus,
             Request::BounceCleanNow,
+            Request::EmbedAllowRemove { site: "a.example".into(), embed: "b.example".into() },
             Request::DefaultBrowserStatus,
             Request::MakeDefaultBrowser,
             Request::DnsStatus,

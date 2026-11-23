@@ -3324,6 +3324,13 @@ function settingsMock(defaults) {
     throw new Error('Not a host name: ' + m.text);
   };
   h.dnsTest = (m) => { if (m.index === 0) return { ms: 23 }; throw new Error('no answer within 2000 ms'); };
+  // 0.28.0: embed allows ("Always allow on this site"), removed through the host.
+  h.embedAllowRemove = (m) => {
+    const ea = st.settings.embedAllow || {};
+    ea[m.site] = (ea[m.site] || []).filter((e) => e !== m.embed);
+    if (!ea[m.site].length) delete ea[m.site];
+    return { settings: clone(st.settings) };
+  };
   h.bounceCleanNow = () => { window.__bounce = { watched: 0, cleanedTotal: 7, lastCleanupMs: Date.now() }; return { cleaned: 2 }; };
   const UA_DEFAULT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36';
   const UAS = [
@@ -3658,7 +3665,8 @@ async function testSettings(browser) {
   // Tracking protection (0.6.0): the presets show their values greyed; Strict blocks all
   // third-party cookies, which the host turns into the engine switch (restart banner).
   await tab('privacy');
-  check(await page.locator('.protection-part [data-key]').count() === 6 && await page.locator('.protection-part [data-key]:disabled').count() === 6, 'the six parts are shown disabled under a preset');
+  check(await page.locator('.protection-part [data-key]').count() === 7 && await page.locator('.protection-part [data-key]:disabled').count() === 7, 'the seven parts are shown disabled under a preset');
+  check(!(await page.isChecked('[data-key="protection.socialEmbeds"]')) && (await page.textContent('#embed-rows')).includes('None.'), 'Standard: social embeds load; no embed allows yet');
   check(await page.inputValue('[data-key="protection.thirdPartyCookies"]') === 'trackers' && await page.inputValue('[data-key="protection.referrer"]') === 'origin' && !(await page.isChecked('[data-key="protection.fingerprinting"]')) && await page.isChecked('[data-key="protection.cryptomining"]'), 'Standard: trackers\' cookies, origin referrer, no fingerprinting list, NoCoin on');
   check((await page.textContent('#bounce-status')).startsWith('2 sites seen only as a redirect · 5 cleared so far · last cleanup '), 'bounce-tracker status (' + await page.textContent('#bounce-status') + ')');
   await page.check('input[name=plevel][value=strict]');
@@ -3667,6 +3675,7 @@ async function testSettings(browser) {
     const tp = await lastSent(page, 'saveSettings');
     check(tp && tp.settings.protection.level === 'strict' && await page.locator('#restart-banner').isVisible(), 'Strict saves the level and shows the restart banner (all third-party cookies need the engine switch)');
     check(await page.inputValue('[data-key="protection.thirdPartyCookies"]') === 'all' && await page.inputValue('[data-key="protection.referrer"]') === 'none' && await page.isChecked('[data-key="protection.fingerprinting"]'), 'Strict: all cookies, no referrer, fingerprinting on');
+    check(await page.isChecked('[data-key="protection.socialEmbeds"]'), 'Strict: social embeds click-to-load');
     check(tp.settings.protection.fingerprinting === false, 'the stored custom choices are untouched by a preset');
   }
   await page.check('input[name=plevel][value=custom]');
@@ -3686,6 +3695,22 @@ async function testSettings(browser) {
   await page.click('#bounce-clean');
   await page.waitForTimeout(80);
   check((await lastSent(page, 'bounceCleanNow')) !== undefined && (await page.textContent('#bounce-status')).startsWith('0 sites seen only as a redirect · 7 cleared'), 'Clean now clears the due bounce trackers and refreshes the status');
+  // 0.28.0: embed allows listed per site; Remove goes through the host and the list follows.
+  // (The host adds them from a placeholder: the next save's reply carries them.)
+  await page.evaluate(() => {
+    const h = window.__host.handlers; const orig = h.saveSettings;
+    h.saveSettings = (m) => { h.saveSettings = orig; m.settings.embedAllow = { 'news.example': ['twitter.com', 'facebook.com'] }; return orig(m); };
+  });
+  await page.check('input[name=plevel][value=standard]');
+  await page.waitForTimeout(80);
+  check((await page.locator('#embed-rows tr').count()) === 2 && (await page.textContent('#embed-rows')).includes('twitter.com'), 'embed allows: one row per site and embed');
+  await page.click('#embed-rows tr:has-text("twitter.com") button');
+  await page.waitForTimeout(80);
+  {
+    const m = await lastSent(page, 'embedAllowRemove');
+    check(m && m.site === 'news.example' && m.embed === 'twitter.com', 'Remove sends the pair to the host');
+    check((await page.locator('#embed-rows tr').count()) === 1 && !(await page.textContent('#embed-rows')).includes('twitter.com'), 'the removed row is gone');
+  }
   await page.check('input[name=plevel][value=standard]');
   await page.waitForTimeout(60);
   // 0.6.0 custom DNS: the card, presets, parsing, order, Test and the mode.

@@ -326,6 +326,9 @@ impl Browser {
                 e.level, e.third_party_cookies, e.referrer, e.fingerprinting, e.cryptomining, e.bounce_cleanup
             );
         }
+        if old.embed_allow != new.embed_allow {
+            self.net.set_embed_allow(&new.embed_allow);
+        }
         if old.dns != new.dns {
             self.apply_dns();
         }

@@ -15,6 +15,7 @@ use lb_core::assets;
 use lb_core::blocker::{self, Allowlist, Blocker, Decision, ResourceKind, ScriptletEngine};
 use lb_core::cert_exceptions::{CertProblem, SessionExceptions};
 use lb_core::cookies;
+use lb_core::embeds::{self, EmbedAllows, EmbedDecision};
 use lb_core::filterlists::{self, Rebuilt, SourceSet, UpdateState, MAX_LIST_BYTES};
 use lb_core::headers::Headers;
 use lb_core::pages::Page;
@@ -24,7 +25,7 @@ use lb_core::storage::now_ms;
 use lb_core::tabs::TabId;
 use lb_core::urlclean::{self, LoadFailure, RewriteOptions};
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering::Relaxed};
 use std::sync::{mpsc, Arc, Mutex, OnceLock, RwLock};
@@ -37,6 +38,8 @@ pub(super) const APP_DEFERRED: usize = 2;
 pub(super) const APP_SHIELD: usize = 4;
 /// `WM_APP` code: a tab's document is (or no longer is) a Cloudflare challenge (0.27.1).
 pub(super) const APP_CHALLENGE: usize = 7;
+/// `WM_APP` code: "Always allow on this site" was clicked on an embed placeholder (0.28.0).
+pub(super) const APP_EMBED_ALLOW: usize = 8;
 /// Timer: push the shield counter (at most ~4 times a second).
 pub(super) const SHIELD_TIMER: usize = 2;
 const SHIELD_DEBOUNCE_MS: u32 = 250;
@@ -145,6 +148,12 @@ pub(super) struct NetShared {
     inflight: Mutex<lb_core::inflight::InFlight>,
     /// 0.22.0: the VPN is for private tabs only: `offline` refuses only their requests.
     offline_private_only: AtomicBool,
+    /// 0.28.0 embeds: the effective tracking protection (for the click-to-load decision),
+    /// the stored "Always allow on this site" pairs (Settings `embedAllow`) and those just
+    /// clicked, for the UI thread to store (top site, embed site).
+    embed_protection: RwLock<Arc<Protection>>,
+    embed_allow: RwLock<Arc<BTreeMap<String, Vec<String>>>>,
+    embed_always: Mutex<Vec<(String, String)>>,
 }
 
 impl NetShared {
@@ -202,6 +211,39 @@ impl NetShared {
         let e = p.effective();
         self.cookie_policy.store(cookie_policy_code(e.third_party_cookies), Relaxed);
         self.referrer_policy.store(referrer_code(e.referrer), Relaxed);
+        if let Ok(mut w) = self.embed_protection.write() {
+            *w = Arc::new(e);
+        }
+    }
+
+    /// The stored embed allows (Settings `embedAllow`, 0.28.0).
+    pub fn set_embed_allow(&self, allow: &BTreeMap<String, Vec<String>>) {
+        if let Ok(mut w) = self.embed_allow.write() {
+            *w = Arc::new(allow.clone());
+        }
+    }
+
+    /// The (top site, embed site) pairs "Always allow on this site" added since the last call.
+    pub fn take_embed_always(&self) -> Vec<(String, String)> {
+        self.embed_always.lock().map(|mut v| std::mem::take(&mut *v)).unwrap_or_default()
+    }
+
+    /// IO thread: "Always allow on this site": in force at once, stored by the UI thread.
+    fn embed_always(&self, top_site: String, embed_site: String) {
+        if let Ok(mut w) = self.embed_allow.write() {
+            let mut map = (**w).clone();
+            let list = map.entry(top_site.clone()).or_default();
+            if !list.contains(&embed_site) {
+                list.push(embed_site.clone());
+            }
+            *w = Arc::new(map);
+        }
+        if let Ok(mut v) = self.embed_always.lock() {
+            v.push((top_site, embed_site));
+        }
+        if let Some(n) = self.notifier.get() {
+            n.notify(APP_EMBED_ALLOW);
+        }
     }
 
     pub fn set_headers(&self, h: &Headers) {
@@ -320,6 +362,15 @@ struct TabShared {
     cost: crate::perf::NetCost,
     /// 0.27.1: the tab's last top-level document was a Cloudflare challenge.
     challenge: AtomicBool,
+    /// 0.28.0: the embed placeholders' nonces and the embed sites loaded with "Load" on the
+    /// page (forgotten when the tab goes to another page).
+    embeds: Mutex<TabEmbeds>,
+}
+
+#[derive(Default)]
+struct TabEmbeds {
+    nonces: embeds::Nonces,
+    session: HashSet<String>,
 }
 
 /// The network policy of one tab (runs on the IO thread).
@@ -367,27 +418,65 @@ impl RequestPolicy for TabPolicy {
             return NetVerdict::Block;
         }
         // 0.28.0: a bot check (captcha, anti-bot service) is left alone at every level: no list
-        // blocks it and its referrer is the engine's (lib.rs `lb_core::challenge`).
+        // blocks it and its referrer is the engine's (`lb_core::challenge`).
         let challenge = lb_core::challenge::is_challenge_request(req.url, req.initiator);
+        let tab_allowed = self.tab.allowed.load(Relaxed);
+        let filterable = blocker::is_filterable(req.url);
+        let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
+        let sub_frame = req.resource_type == 1;
+        // 0.28.0 embeds: a placeholder's button came back (the marked request is answered
+        // here, the marker never reaches the site); a forged or stale marker is an ordinary
+        // request (the placeholder again).
+        if sub_frame && filterable && !tab_allowed {
+            if let Some(v) = self.embed_marker(req.url, &top) {
+                return v;
+            }
+        }
+        // Embeds the user let load (this page, or always on this site): the frame and what it
+        // loads are not list-blocked and say where they are embedded (the origin).
+        let embed_allowed = filterable && !tab_allowed && self.embed_allowed(req, &top);
         // Tracking protection: a cross-site request says at most the origin it comes from
-        // (nothing in Strict); off for sites the shield exempts.
-        let referrer = if self.tab.allowed.load(Relaxed) || challenge {
+        // (nothing in Strict, except to and from video players); off for sites the shield
+        // exempts.
+        let referrer = if tab_allowed || challenge {
             None
+        } else if embed_allowed && sub_frame {
+            // (Also replaces the stand-in redirect page's address, which has the marker.)
+            urlclean::origin_of(&top).filter(|o| o.starts_with("http")).map(|o| format!("{o}/"))
+        } else if embed_allowed {
+            protection::trim_referrer(req.referrer, req.url, Referrer::Origin)
         } else {
-            protection::trim_referrer(req.referrer, req.url, referrer_from_code(self.net.referrer_policy.load(Relaxed)))
+            embeds::referrer_for(
+                req.referrer,
+                req.url,
+                req.resource_type,
+                req.initiator,
+                referrer_from_code(self.net.referrer_policy.load(Relaxed)),
+            )
         };
-        let top_for_rules = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
-        let headers = NetVerdict::Allow { referrer, headers: self.net.header_rules(&top_for_rules) };
-        if !self.net.enabled() || self.tab.allowed.load(Relaxed) || challenge || !blocker::is_filterable(req.url) {
+        let headers = NetVerdict::Allow { referrer, headers: self.net.header_rules(&top) };
+        if tab_allowed || embed_allowed || challenge || !filterable {
             return headers;
         }
-        let Some(kind) = ResourceKind::from_cef_resource_type(req.resource_type, req.url) else { return headers };
-        let Some(engine) = self.net.engine() else { return headers };
-        let top = self.tab.top_url.lock().map(|t| t.clone()).unwrap_or_default();
-        let verdict = match engine.check(req.url, &top, kind) {
-            Decision::Allow => return headers,
-            Decision::Block => NetVerdict::Block,
-            Decision::Redirect { content_type, body } => NetVerdict::Respond { content_type, body },
+        let kind = ResourceKind::from_cef_resource_type(req.resource_type, req.url);
+        let listed = match (self.net.enabled(), kind, self.net.engine()) {
+            (true, Some(kind), Some(engine)) => match engine.check(req.url, &top, kind) {
+                Decision::Allow => None,
+                Decision::Block => Some(NetVerdict::Block),
+                Decision::Redirect { content_type, body } => Some(NetVerdict::Respond { content_type, body }),
+            },
+            _ => None,
+        };
+        let placeholder = if sub_frame {
+            self.embed_placeholder(req.url, &top, matches!(listed, Some(NetVerdict::Block)))
+        } else {
+            None
+        };
+        let Some(kind) = kind else { return headers };
+        let verdict = match (placeholder, listed) {
+            (Some(p), _) => p,
+            (None, Some(v)) => v,
+            (None, None) => return headers,
         };
         if LOG_BLOCKED.load(Relaxed) {
             // No query, no fragment, no `user:password@` (0.11.7, audit C15).
@@ -485,6 +574,70 @@ impl RequestPolicy for TabPolicy {
                 h.push((from_url.to_string(), new_url.to_string()));
             }
         }
+    }
+}
+
+impl TabPolicy {
+    /// A sub-frame request with a placeholder's marker: a valid one is used up, the frame's
+    /// site allowed for this page (and stored with "always", except in private tabs) and the
+    /// frame sent on to the clean address. `None`: no marker, or not a valid one.
+    fn embed_marker(&self, url: &str, top: &str) -> Option<NetVerdict> {
+        let (clean, marker) = embeds::strip_marker(url);
+        let (nonce, always) = marker?;
+        let site = protection::host_site(&clean)?;
+        {
+            let mut e = self.tab.embeds.lock().ok()?;
+            if !e.nonces.consume(&nonce, &clean, now_ms()) {
+                return None;
+            }
+            e.session.insert(site.clone());
+        }
+        if always && !self.tab.private.load(Relaxed) {
+            if let Some(top_site) = protection::host_site(top) {
+                self.net.embed_always(top_site, site);
+            }
+        }
+        Some(NetVerdict::Respond {
+            content_type: "text/html; charset=utf-8".into(),
+            body: embeds::redirect_html(&clean).into_bytes(),
+        })
+    }
+
+    /// Did the user let this frame (by its address) or this request (by the document that
+    /// makes it) load on the page? Only third parties: the page's own site is never an embed.
+    fn embed_allowed(&self, req: &NetRequest<'_>, top: &str) -> bool {
+        let by = if req.resource_type == 1 { req.url } else { req.initiator };
+        if by.is_empty() {
+            return false;
+        }
+        let Ok(e) = self.tab.embeds.lock() else { return false };
+        let Some(stored) = self.net.embed_allow.read().ok().map(|s| s.clone()) else { return false };
+        if e.session.is_empty() && stored.is_empty() {
+            return false;
+        }
+        protection::host_site(by) != protection::host_site(top)
+            && (EmbedAllows { stored: &stored, session: &e.session }).allows(top, by)
+    }
+
+    /// The click-to-load placeholder for a sub-frame document, if it gets one (allowed embeds
+    /// never get here).
+    fn embed_placeholder(&self, url: &str, top: &str, list_blocked: bool) -> Option<NetVerdict> {
+        let protection = self.net.embed_protection.read().ok()?.clone();
+        let (stored, session) = (BTreeMap::new(), HashSet::new());
+        let allows = EmbedAllows { stored: &stored, session: &session };
+        if embeds::embed_decision(&protection, top, url, list_blocked, &allows) != EmbedDecision::Placeholder {
+            return None;
+        }
+        let (clean, _) = embeds::strip_marker(url);
+        let now = now_ms();
+        let mut e = self.tab.embeds.lock().ok()?;
+        let nonce = e.nonces.issue(&clean, now);
+        let always = (!self.tab.private.load(Relaxed)).then(|| e.nonces.issue(&clean, now));
+        drop(e);
+        Some(NetVerdict::Respond {
+            content_type: "text/html; charset=utf-8".into(),
+            body: embeds::placeholder_html(&clean, &nonce, always.as_deref()).into_bytes(),
+        })
     }
 }
 
@@ -623,6 +776,7 @@ impl Browser {
         let f = &self.filters;
         self.net.set_enabled(enabled);
         self.net.set_protection(&self.settings.borrow().protection);
+        self.net.set_embed_allow(&self.settings.borrow().embed_allow);
         self.net.set_headers(&self.settings.borrow().headers);
         self.load_trackers();
         *f.allowlist.borrow_mut() = Allowlist::new(self.store.borrow().allowlist().unwrap_or_default());
@@ -989,6 +1143,12 @@ impl Browser {
 
         // A real navigation: reset the shield and prepare cosmetic filters.
         if let Ok(mut top) = net.io.top_url.lock() {
+            // Embeds loaded with "Load" are for that page only (0.28.0).
+            if without_fragment(&top) != without_fragment(uri) {
+                if let Ok(mut e) = net.io.embeds.lock() {
+                    e.session.clear();
+                }
+            }
             *top = uri.to_string();
         }
         net.io.blocked.store(0, Relaxed);
@@ -1053,6 +1213,53 @@ impl Browser {
         };
         if !selectors.is_empty() {
             c.execute_script(&assets::style_injection_script(&blocker::hide_css(selectors.iter())));
+        }
+    }
+
+    // ------------------------------------------------------------ embeds (0.28.0)
+
+    /// "Always allow on this site" was clicked on embed placeholders (APP_EMBED_ALLOW): store
+    /// the pairs in the settings (they are in force on the IO thread already).
+    pub(super) fn embed_allows_pending(&self) {
+        let pairs = self.net.take_embed_always();
+        if pairs.is_empty() {
+            return;
+        }
+        let missing = {
+            let s = self.settings.borrow();
+            pairs.iter().any(|(top, embed)| !s.embed_allow.get(top).is_some_and(|v| v.contains(embed)))
+        };
+        if !missing {
+            return;
+        }
+        if let Err(e) = self.try_change_settings(|s| {
+            for (top, embed) in pairs {
+                let list = s.embed_allow.entry(top).or_default();
+                if !list.contains(&embed) {
+                    list.push(embed);
+                }
+            }
+        }) {
+            warning!("storing an embed allow: {e}");
+        }
+    }
+
+    /// The settings page removed an embed allow (replies with the settings).
+    pub(super) fn embed_allow_remove(&self, tab: Option<TabId>, req_id: Option<u32>, site: &str, embed: &str) {
+        let result = self.try_change_settings(|s| {
+            if let Some(list) = s.embed_allow.get_mut(site) {
+                list.retain(|e| e != embed);
+                if list.is_empty() {
+                    s.embed_allow.remove(site);
+                }
+            }
+        });
+        match result {
+            Ok(()) => {
+                let s = self.settings.borrow().clone();
+                self.reply(tab, Event::ok(req_id, serde_json::json!({ "settings": s })));
+            }
+            Err(e) => self.reply(tab, Event::err(req_id, &e)),
         }
     }
 

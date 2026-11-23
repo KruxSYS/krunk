@@ -14,13 +14,13 @@ CEF_CRATE=156.3.0+156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 CEF_SOURCE=self-built
-CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua.tar.bz2
-CEF_SHA256=1e8e2a1dec26da37932debef180480d6ca3b1294dbe4afa121b1a5e5c04747ec
+CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible.tar.bz2
+CEF_SHA256=8caa9c39c27d5fd16789fff9ddc1b1dd597f6e69945bcbe06701d44bdca9efb7
 # Where the archive is kept (outside git, with the release artifacts): the pipeline's artifact
 # store and the GitHub release of 0.12.3 (dist/). 0.5.2-0.9.0 shipped the unpatched ..._krunk-codecs
 # archive (a8bb5c42…), 0.10.0-0.12.0 ..._krunk-codecs-hidden (5aab8496…), 0.12.1-0.12.2
 # ..._krunk-codecs-hidden-brand (29d97fa8…).
-CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua.tar.bz2
+CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible.tar.bz2
 # Build inputs: CEF cf671c0, Chromium tag 156.0.8078.80, Linux->Windows cross build, GN args in
 # scripts/cef-build/cross-build.sh (is_official_build proprietary_codecs ffmpeg_branding=Chrome
 # enable_platform_hevc enable_platform_ac3_eac3_audio), MSVC 14.51.36231 / SDK 10.0.28000.0.
@@ -37,6 +37,9 @@ CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156
 #   scripts/cef-build/patches/chromium-clone-navigation.patch (0.18.0, Chromium checkout)
 #     sha256 e70936d42a179a5f7ad56f378a11c838284f73d708e066833f3e7b63e477d5a0
 #     DevTools command Page.krunkCloneNavigationFrom: a new tab takes another tab's back/forward list
+#   scripts/cef-build/patches/krunk-audible-state.patch (0.28.0, CEF checkout)
+#     sha256 d8cb96babb2729b26daad32a014cb5be7a9edd57586f8967ca49f6cc1a0966eb
+#     the audio handler also hears when a page goes silent (tab sound icon without page scripts)
 #   scripts/cef-build/patches/chromium-sockets-per-host.patch (0.18.0, Chromium checkout)
 #     sha256 1b6061d9d90a43c466f51aabe8ca06b396bfb98ac05c561b98b8983e68aa811c
 #     16 instead of 6 connections per host. Archive ..._krunk-codecs-hidden-brand-private-nav
