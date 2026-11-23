@@ -5647,16 +5647,16 @@ async function testAccountCard(browser) {
     await page.click('#account-sign-in');
     check((await lastSent(page, 'accountSignIn')) !== undefined, theme + ': Sign in posts accountSignIn');
     // Working, then the code.
-    await emit(page, { event: 'account', card: { state: 'working', message: 'Asking krunk.209.wf for a code…' } });
+    await emit(page, { event: 'account', card: { state: 'working', message: 'Asking krunk.kruxsys.com for a code…' } });
     await page.waitForTimeout(40);
     check((await page.textContent('#account-title')).startsWith('Asking') && !(await vis('account-sign-in')), theme + ': working: no buttons');
-    await emit(page, { event: 'account', card: { state: 'linking', userCode: 'ABCD-EFGH', verifyUrl: 'https://krunk.209.wf/link?code=ABCD-EFGH', expiresAtMs: Date.now() + 9 * 60000 + 30000 } });
+    await emit(page, { event: 'account', card: { state: 'linking', userCode: 'ABCD-EFGH', verifyUrl: 'https://krunk.kruxsys.com/link?code=ABCD-EFGH', expiresAtMs: Date.now() + 9 * 60000 + 30000 } });
     await page.waitForTimeout(60);
     check((await page.textContent('#account-code')) === 'ABCD-EFGH' && await vis('account-copy') && await vis('account-cancel') && await vis('account-reopen'), theme + ': linking: the code, Copy, Open again, Cancel');
     check(/9:(2|3)\d more/.test(await page.textContent('#account-wait')), theme + ': a countdown (' + (await page.textContent('#account-wait')) + ')');
     await shot(page, 'account-linking-' + theme + '.png');
     // 0.24.0: past the code's deadline the host may still wait (registration): no 0:00.
-    await emit(page, { event: 'account', card: { state: 'linking', userCode: 'ABCD-EFGH', verifyUrl: 'https://krunk.209.wf/link?code=ABCD-EFGH', expiresAtMs: Date.now() - 1000 } });
+    await emit(page, { event: 'account', card: { state: 'linking', userCode: 'ABCD-EFGH', verifyUrl: 'https://krunk.kruxsys.com/link?code=ABCD-EFGH', expiresAtMs: Date.now() - 1000 } });
     await page.waitForTimeout(60);
     check((await page.textContent('#account-wait')) === 'Waiting for the approval…', theme + ': past the deadline: waiting, no 0:00 (' + (await page.textContent('#account-wait')) + ')');
     await page.click('#account-reopen');
@@ -5664,7 +5664,7 @@ async function testAccountCard(browser) {
     await page.click('#account-cancel');
     check((await lastSent(page, 'accountCancel')) !== undefined, theme + ': Cancel posts accountCancel');
     // An error, then signed in.
-    await emit(page, { event: 'account', card: { state: 'signedOut', message: "Krunk couldn't reach krunk.209.wf. Check your connection and try again." } });
+    await emit(page, { event: 'account', card: { state: 'signedOut', message: "Krunk couldn't reach krunk.kruxsys.com. Check your connection and try again." } });
     await page.waitForTimeout(40);
     check(await vis('account-message') && (await page.textContent('#account-message')).includes("couldn't reach"), theme + ': an error is one clear sentence');
     await shot(page, 'account-error-' + theme + '.png');

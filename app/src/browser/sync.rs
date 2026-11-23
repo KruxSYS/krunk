@@ -57,7 +57,7 @@ const COLLECTIONS: [(&str, &str); 7] = [
     ("tabs", "Open tabs"),
 ];
 const SOCKS_TEXT: &str = "Sync can't work through a SOCKS proxy. Change the proxy in Settings → Advanced.";
-const OFFLINE_TEXT: &str = "Krunk couldn't reach krunk.209.wf. Check your connection and try again.";
+const OFFLINE_TEXT: &str = "Krunk couldn't reach krunk.kruxsys.com. Check your connection and try again.";
 
 fn base() -> &'static str {
     env!("KRUNK_UPDATE_BASE_URL")

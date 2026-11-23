@@ -31,9 +31,9 @@ function Report([string]$what) {
 function Fetch([string]$version) {
   $out = "$K\Krunk-Setup-$version.exe"
   if (-not (Test-Path $out)) {
-    Invoke-WebRequest -UseBasicParsing "https://krunk.209.wf/download/$version/Krunk-Setup-$version.exe" -OutFile $out
+    Invoke-WebRequest -UseBasicParsing "https://krunk.kruxsys.com/download/$version/Krunk-Setup-$version.exe" -OutFile $out
   }
-  $sums = (Invoke-WebRequest -UseBasicParsing "https://krunk.209.wf/download/$version/SHA256SUMS").Content
+  $sums = (Invoke-WebRequest -UseBasicParsing "https://krunk.kruxsys.com/download/$version/SHA256SUMS").Content
   $want = ($sums -split "`n" | Where-Object { $_ -match "Krunk-Setup-$version.exe" }) -split ' ' | Select-Object -First 1
   $have = (Get-FileHash -Algorithm SHA256 $out).Hash.ToLower()
   Log "[$P] $out sha256 matches the server: $($want -eq $have)"
@@ -97,7 +97,7 @@ switch ($Phase) {
   }
   'zip' {
     $z = "$K\Krunk-win-x64-060.zip"
-    if (-not (Test-Path $z)) { Invoke-WebRequest -UseBasicParsing 'https://krunk.209.wf/download/0.6.0/Krunk-win-x64.zip' -OutFile $z }
+    if (-not (Test-Path $z)) { Invoke-WebRequest -UseBasicParsing 'https://krunk.kruxsys.com/download/0.6.0/Krunk-win-x64.zip' -OutFile $z }
     Remove-Item -Recurse -Force "$K\zipover" -EA SilentlyContinue
     Expand-Archive -Force $z "$K\zipover-060"
     Hold 'image'

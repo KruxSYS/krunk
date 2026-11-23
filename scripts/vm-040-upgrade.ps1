@@ -88,8 +88,8 @@ switch ($Phase) {
     Copy-Item "$data\browser.db", "$data\vault.json" $bak -Force
     Log "[$P] backed up browser.db and vault.json to $bak"
     $ProgressPreference = 'SilentlyContinue'
-    Invoke-WebRequest 'https://krunk.209.wf/download/0.3.0/Krunk-Setup-0.3.0.exe' -OutFile $old -UseBasicParsing
-    $sums = (Invoke-WebRequest 'https://krunk.209.wf/download/0.3.0/SHA256SUMS' -UseBasicParsing).Content
+    Invoke-WebRequest 'https://krunk.kruxsys.com/download/0.3.0/Krunk-Setup-0.3.0.exe' -OutFile $old -UseBasicParsing
+    $sums = (Invoke-WebRequest 'https://krunk.kruxsys.com/download/0.3.0/SHA256SUMS' -UseBasicParsing).Content
     $want = ($sums -split "`n" | Where-Object { $_ -match 'Krunk-Setup-0.3.0.exe' }) -replace '\s.*$', ''
     $have = (Get-FileHash $old).Hash.ToLower()
     Log "[$P] live 0.3.0 installer SHA-256 $have, SHA256SUMS says $want, match: $($have -eq $want)"

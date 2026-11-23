@@ -1,6 +1,6 @@
 //! Windows link setup for Krunk.dll, and the update check's server and key.
 //!
-//! `UPDATE_BASE_URL` (default `https://krunk.209.wf`, the live server) is the update server;
+//! `UPDATE_BASE_URL` (default `https://krunk.kruxsys.com`, the live server) is the update server;
 //! `KRUNK_UPDATE_PUBKEY_FILE` (default `assets/keys/update-signing.pub`) the
 //! Ed25519 public key (PEM) whose signatures the update check accepts. Only
 //! builds with the `dev-updates` feature may use an `http://` server.
@@ -17,7 +17,7 @@ fn main() {
 
     println!("cargo:rerun-if-env-changed=UPDATE_BASE_URL");
     println!("cargo:rerun-if-env-changed=KRUNK_UPDATE_PUBKEY_FILE");
-    let base = std::env::var("UPDATE_BASE_URL").unwrap_or_else(|_| "https://krunk.209.wf".into());
+    let base = std::env::var("UPDATE_BASE_URL").unwrap_or_else(|_| "https://krunk.kruxsys.com".into());
     let dev = std::env::var_os("CARGO_FEATURE_DEV_UPDATES").is_some();
     let lower = base.to_ascii_lowercase();
     if !(lower.starts_with("https://") || (dev && lower.starts_with("http://"))) {

@@ -95,7 +95,7 @@ still override them.
 | Before the installer | Size and SHA-256 from the signed manifest; package `org.krunk.browser`; exactly the manifest's versionCode; the installed app's signing certificate, which must also be the manifest's. Then `PackageInstaller` (session), the user confirms; "install unknown apps" explained first. Same or lower versionCode = up to date |
 | Play signing | **Not decided** (operator, q10 below). The AAB is signed with the existing release key as a local artefact; no upload key was made |
 | ABIs | `arm64-v8a`, `x86_64` and universal; **no `armeabi-v7a`** (q3 closed) |
-| `UPDATE_BASE_URL` | `https://krunk.209.wf` (q7 closed). Only the `qa` build type (versionCode 6, never published) and debug builds take another address, for the update tests |
+| `UPDATE_BASE_URL` | `https://krunk.kruxsys.com` (q7 closed). Only the `qa` build type (versionCode 6, never published) and debug builds take another address, for the update tests |
 | Versions | 0.5.0 = versionCode 7; `0.5.0-qa` = 6 |
 | Upgrade from 0.4.0 | 0.4.0 has no update check: users install the 0.5.0 APK over it once (said in the changelog and on the site) |
 | QA images | A: the hosted emulator (API 36, x86_64). B: a local software-emulated AVD (API 29, x86_64, no KVM), time-boxed; results in `docs/ANDROID_DEV.md` "QA images (0.5.0)" |
@@ -250,7 +250,7 @@ Total: about **15–16 weeks** to a first public beta, then a GeckoView bump eve
 6. ~~Shared account/sync~~ answered in 0.6.0: yes, built in round 4 with the shared core
    (§4). Open for the operator: whether the Android-only settings should ever sync (D2).
 7. ~~Branding/package name~~ `org.krunk.browser` confirmed; ~~`UPDATE_BASE_URL`~~
-   `https://krunk.209.wf` since 0.5.0.
+   `https://krunk.kruxsys.com` since 0.5.0.
 8. ~~Play Services FIDO~~ kept (passkeys); `-Pkrunk.noGms=true` documented for devices without
    Google Play services.
 9. **Feature list wording:** confirm/supply the original 17-category list wording so the matrix

@@ -3,6 +3,13 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.28.1 — 2026-11-23
+
+- **Krunk's website moved to krunk.kruxsys.com.** Updates, signing in and sync now use the new
+  address; krunk.209.wf no longer answers. Earlier versions can't find this update by
+  themselves: download it from https://krunk.kruxsys.com and install it over your current
+  version; your settings, passwords and tabs stay as they are.
+
 ## 0.28.0 — 2026-11-23
 
 - **Bot checks stop looping.** "Verify you are human" checks that kept coming back after you

@@ -107,9 +107,9 @@ impl Default for Quota {
 
 pub const DEFAULT_BIND: &str = "0.0.0.0:8081";
 pub const DEFAULT_SECRETS_DIR: &str = "/run/krunk-secrets";
-pub const DEFAULT_PUBLIC_BASE_URL: &str = "https://krunk.209.wf";
-const DEFAULT_PUBLIC_HOST: &str = "krunk.209.wf";
-pub const DEFAULT_MAIL_FROM: &str = "Krunk <no-reply@krunk.209.wf>";
+pub const DEFAULT_PUBLIC_BASE_URL: &str = "https://krunk.kruxsys.com";
+const DEFAULT_PUBLIC_HOST: &str = "krunk.kruxsys.com";
+pub const DEFAULT_MAIL_FROM: &str = "Krunk <no-reply@krunk.kruxsys.com>";
 
 /// Cloudflare's documented Turnstile test secrets (always pass, always fail, already spent).
 pub const TURNSTILE_TEST_SECRETS: [&str; 3] = [
@@ -356,7 +356,7 @@ mod tests {
     }
 
     const BASE: [(&str, &str); 2] =
-        [("DATABASE_URL", "postgres://u:p@db/k"), ("PUBLIC_BASE_URL", "https://krunk.209.wf")];
+        [("DATABASE_URL", "postgres://u:p@db/k"), ("PUBLIC_BASE_URL", "https://krunk.kruxsys.com")];
 
     fn with(extra: &[(&'static str, &'static str)]) -> Result<Config, String> {
         let mut v = BASE.to_vec();
@@ -375,7 +375,7 @@ mod tests {
         let c = Config::from_sources(
             &|k| match k {
                 "POSTGRES_PASSWORD_FILE" => Some("/run/krunk-secrets/postgres_password".into()),
-                "PUBLIC_BASE_URL" => Some("https://krunk.209.wf".into()),
+                "PUBLIC_BASE_URL" => Some("https://krunk.kruxsys.com".into()),
                 _ => None,
             },
             &files,
@@ -396,11 +396,11 @@ mod tests {
         let no_keys =
             Config::from_sources(&|k| BASE.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string()), &|_| None);
         assert!(no_keys.unwrap_err().contains("token_hmac_key"));
-        assert_eq!(cfg(&[BASE[0]]).unwrap().public_base_url, "https://krunk.209.wf", "the default address");
-        let c = cfg(&[BASE[0], ("PUBLIC_BASE_URL", "https://krunk.209.wf/")]).unwrap();
-        assert_eq!(c.public_base_url, "https://krunk.209.wf");
-        assert_eq!(c.public_origin(), "https://krunk.209.wf");
-        assert_eq!(c.turnstile_hostname, "krunk.209.wf");
+        assert_eq!(cfg(&[BASE[0]]).unwrap().public_base_url, "https://krunk.kruxsys.com", "the default address");
+        let c = cfg(&[BASE[0], ("PUBLIC_BASE_URL", "https://krunk.kruxsys.com/")]).unwrap();
+        assert_eq!(c.public_base_url, "https://krunk.kruxsys.com");
+        assert_eq!(c.public_origin(), "https://krunk.kruxsys.com");
+        assert_eq!(c.turnstile_hostname, "krunk.kruxsys.com");
         assert_eq!(c.bind.to_string(), "0.0.0.0:8081");
         assert_eq!(c.trusted_peer_host, "web");
         assert_eq!(c.ip_retention_days, 90);
@@ -454,7 +454,7 @@ mod tests {
         ];
         for url in [
             "https://krunk.test",
-            "http://krunk.209.wf",
+            "http://krunk.kruxsys.com",
             "http://dind:10017",
             "https://x.localhost",
             "https://localhost:8080",
@@ -466,9 +466,9 @@ mod tests {
             assert!(c.base_url_rejected, "{url}");
             assert!(!c.accounts_enabled(), "{url}");
             assert!(c.accounts_blocker().unwrap().contains("PUBLIC_BASE_URL"));
-            assert_eq!(c.public_base_url, "https://krunk.209.wf", "{url}: the real address is reported");
-            assert_eq!(c.public_origin(), "https://krunk.209.wf");
-            assert_eq!(c.turnstile_hostname, "krunk.209.wf");
+            assert_eq!(c.public_base_url, "https://krunk.kruxsys.com", "{url}: the real address is reported");
+            assert_eq!(c.public_origin(), "https://krunk.kruxsys.com");
+            assert_eq!(c.turnstile_hostname, "krunk.kruxsys.com");
             v.push(("ACCOUNTS_TEST_MODE", "1"));
             let t = cfg(&v).unwrap();
             assert!(!t.base_url_rejected && t.accounts_enabled(), "{url} in test mode");

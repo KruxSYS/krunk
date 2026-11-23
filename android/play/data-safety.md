@@ -25,7 +25,7 @@ Sources for every fact below: `README.md` ("Krunk for Android", "Promises", "Dat
 | Update check | **none** in the `play` flavour (brief for 0.5.0; Play updates the app) | — | — |
 
 There is no telemetry, analytics, crash reporting, advertising SDK or account on Android (no
-crash handler is set up; sync is a Windows feature). Krunk's own server (krunk.209.wf) is not
+crash handler is set up; sync is a Windows feature). Krunk's own server (krunk.kruxsys.com) is not
 contacted by the `play` build at all (to be confirmed on the 0.5.0 build, see `CHECKLIST.md`).
 A packet capture per app UID showed no traffic after a fresh install until a page was opened
 (0.2.0 and later; `docs/ANDROID_FEATURES.md` §12).
@@ -88,6 +88,6 @@ security questions, answer:
 
 ## Gaps the privacy policy has to close first
 
-The form must agree with the privacy policy. https://krunk.209.wf/privacy
+The form must agree with the privacy policy. https://krunk.kruxsys.com/privacy
 (`dist/server/site/privacy.html`, last updated 10 November 2026) describes the Windows browser
 and the account, and does not mention Android; details in `CHECKLIST.md`, step 4.

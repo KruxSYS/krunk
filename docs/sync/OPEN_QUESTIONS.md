@@ -9,9 +9,9 @@ else waits on them.
 
 | # | Question | Decision | Why | Provisioning? |
 |---|---|---|---|---|
-| Q1 | **Turnstile keys** | A **managed** Turnstile widget for hostname `krunk.209.wf` (add the final domain later). `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` go into the live `.env`. Staging uses Cloudflare's public test keys. | Managed mode needs no interaction for most users, and it is what the brief asks for. | **Yes:** create the widget in the Cloudflare dashboard |
+| Q1 | **Turnstile keys** | A **managed** Turnstile widget for hostname `krunk.kruxsys.com` (add the final domain later). `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` go into the live `.env`. Staging uses Cloudflare's public test keys. | Managed mode needs no interaction for most users, and it is what the brief asks for. | **Yes:** create the widget in the Cloudflare dashboard |
 | Q2 | **SMTP provider and credentials** | SMTP submission (587 with STARTTLS, or 465 TLS) through the mailbox provider that hosts mail for 209.wf, configured with `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_TLS` in the live `.env`. Without SMTP, accounts stay disabled, because nobody could verify an email address. | We run no MTA of our own (deliverability, port 25). Using the domain's existing mail host keeps SPF and DKIM simple. | **Yes:** credentials |
-| Q3 | **"From" address and DNS** | `Krunk <no-reply@krunk.209.wf>`, with SPF (the provider's `include:`), DKIM (the provider's key) and DMARC `v=DMARC1; p=quarantine` for `krunk.209.wf`. | A dedicated subdomain keeps the reputation separate from personal mail. | **Yes:** DNS records |
+| Q3 | **"From" address and DNS** | `Krunk <no-reply@krunk.kruxsys.com>`, with SPF (the provider's `include:`), DKIM (the provider's key) and DMARC `v=DMARC1; p=quarantine` for `krunk.kruxsys.com`. | A dedicated subdomain keeps the reputation separate from personal mail. | **Yes:** DNS records |
 | Q4 | **Database storage and backups** | Postgres in the named volume `krunk-db` on the stack's host. A `backup` service writes a daily `pg_dump -Fc` into a separate named volume, `krunk-backups`, and keeps 14 days. Those dumps are **not** encrypted at rest: they sit on the same host and within the same trust boundary as the live database, so encrypting them there protects nothing. **Any off-site copy must be `age`-encrypted** (`backup-db.sh --age-recipient`). | A self-contained, automatic stack; restore is tested by a drill. | No |
 | Q5 | **Quotas per account** | 50 MiB of ciphertext, 100,000 records, 20,000 history URLs (client) with a server cap of 25,000, 64 KiB per record, 500 tabs per device, 10 active devices. | Comfortably above typical use, small enough to bound storage on one host. | No |
 | Q6 | **IP retention** | **90 days**, then IPs are nulled. Countries (from `CF-IPCountry`) are kept while the session or device exists. | Long enough for abuse investigation, short enough for privacy. | No |
@@ -22,16 +22,16 @@ else waits on them.
 | Q11 | **Email wording and language** | English, short plain-text templates in `server/templates/`, no tracking or images. | Simple, readable, nothing to leak. | No |
 | Q12 | **Breached-password check** | **No HIBP call.** Passwords are checked against a bundled common-password list. | It avoids a third-party request per registration. | No |
 | Q13 | **OPRF escrow hardening (RFC 9497)** | Later (S11+). The generated 6-word passphrase already makes offline guessing impractical. | It adds complexity better spent after launch. | No |
-| Q14 | **Final domain** | When it exists, one release from `krunk.209.wf` switches clients over, and the old domain redirects for 6 months. | Installed copies follow automatically. | Later |
+| Q14 | **Final domain** | When it exists, one release from `krunk.kruxsys.com` switches clients over, and the old domain redirects for 6 months. | Installed copies follow automatically. | Later |
 | Q15 | **Privacy policy and legal** | A `/privacy` page in S2 states the data held, the retention periods, Cloudflare's role, deletion and backups. Contact: `privacy@209.wf`. The user's personal address is never published. | A role address can be redirected without changing the site. | **Yes:** create the `privacy@209.wf` alias |
 | Q16 | **Cloudflare rules** | **No WAF or rate-limit rules** at Cloudflare. The application limits are enough. If bot challenges are ever turned on, `/api/*` must be excluded, because the native client can't solve them. | Fewer moving parts outside the repository. | No |
 | Q17 | **Device limit and approval rate** | 10 active devices, 5 approvals per day, 10 link grants per hour per IP. | They match the quotas and the threat model. | No |
 | Q18 | **Android timeline** | No spike until an Android project exists. The frozen vectors (`core/tests/fixtures/sync/`) are ready for a Kotlin runner. | Nothing to validate against yet. | No |
 
 ## Operator provisioning (the only remaining steps; accounts switch on without a code change)
-1. **Turnstile:** in the Cloudflare dashboard, go to Turnstile → Add widget. Hostname `krunk.209.wf`, mode Managed. Put the keys into the live `.env` as `TURNSTILE_SITE_KEY=…` and `TURNSTILE_SECRET_KEY=…`.
-2. **SMTP:** put `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_TLS=starttls` for the 209.wf mail provider into the live `.env`. The sender is `no-reply@krunk.209.wf`.
-3. **DNS for `krunk.209.wf` mail:** SPF `v=spf1 include:<provider> -all`, DKIM as given by the provider, and DMARC `_dmarc.krunk.209.wf TXT "v=DMARC1; p=quarantine"`.
+1. **Turnstile:** in the Cloudflare dashboard, go to Turnstile → Add widget. Hostname `krunk.kruxsys.com`, mode Managed. Put the keys into the live `.env` as `TURNSTILE_SITE_KEY=…` and `TURNSTILE_SECRET_KEY=…`.
+2. **SMTP:** put `SMTP_HOST`, `SMTP_PORT=587`, `SMTP_USER`, `SMTP_PASSWORD` and `SMTP_TLS=starttls` for the 209.wf mail provider into the live `.env`. The sender is `no-reply@krunk.kruxsys.com`.
+3. **DNS for `krunk.kruxsys.com` mail:** SPF `v=spf1 include:<provider> -all`, DKIM as given by the provider, and DMARC `_dmarc.krunk.kruxsys.com TXT "v=DMARC1; p=quarantine"`.
 4. **Alias:** `privacy@209.wf` → the operator's mailbox.
 5. Restart the live service. `web/config` then reports `accounts_enabled: true`.
 

@@ -874,7 +874,7 @@
       $('account-desc').textContent = 'This device: ' + c.deviceName + (c.version ? ' · version ' + c.version : '') + '. You can rename or remove it on your account page.';
     } else if (st === 'linking') {
       $('account-title').textContent = 'Signing in…';
-      $('account-desc').textContent = 'Approve this device on krunk.209.wf. Only approve a code that you see here.';
+      $('account-desc').textContent = 'Approve this device on krunk.kruxsys.com. Only approve a code that you see here.';
       $('account-code').textContent = c.userCode;
       // 0.13.0: the QR of the sign-in link (checked in core; an older server sends none).
       const qr = typeof c.qr === 'string' && c.qr.startsWith('data:image/svg+xml;base64,') ? c.qr : '';
@@ -898,7 +898,7 @@
       accountShow('account-message', false);
     } else {
       $('account-title').textContent = 'Sign in to Krunk';
-      $('account-desc').textContent = 'Sign in with your Krunk account to see this device on your account page. Signing in opens krunk.209.wf, where you approve this device.';
+      $('account-desc').textContent = 'Sign in with your Krunk account to see this device on your account page. Signing in opens krunk.kruxsys.com, where you approve this device.';
     }
   }
   LB.on('account', function (m) { accountCard = m.card; renderAccount(); });

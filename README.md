@@ -15,7 +15,7 @@ used. It installs per user without administrator rights, or runs portable from a
 - a Krunk account to sign the browser in (0.8.0; sync comes in a later version)
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.8.0.exe` (about 138 MB), from `https://krunk.209.wf`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.8.0.exe` (about 138 MB), from `https://krunk.kruxsys.com`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
@@ -1505,7 +1505,7 @@ and screen sharing shows no window chooser: the whole screen is shared).
 
 ### Krunk account (0.8.0)
 Settings → Account signs this browser in to a Krunk account (made on
-[krunk.209.wf](https://krunk.209.wf/account/register)). A signed-in browser shows who it is
+[krunk.kruxsys.com](https://krunk.kruxsys.com/account/register)). A signed-in browser shows who it is
 signed in as and appears in the account's device list on the website, where it can be renamed or
 removed. Since 0.9.0 the account can also sync your data (below, opt-in). Since 0.11.0 a new
 browser's name is "Krunk on Windows 11" (it carried the version at sign-in, which went stale
@@ -1513,8 +1513,8 @@ with the first update); Settings → Account and the website show the version it
 the name ("Krunk on Windows 11 · version 0.11.0"). Names made before 0.11.0 are shown without
 their old version; a name you typed yourself is never changed.
 
-- **Signing in** works like signing in a TV: **Sign in** asks krunk.209.wf for a code, shows it
-  and opens `https://krunk.209.wf/link?code=…` in a new tab. There you sign in to the website,
+- **Signing in** works like signing in a TV: **Sign in** asks krunk.kruxsys.com for a code, shows it
+  and opens `https://krunk.kruxsys.com/link?code=…` in a new tab. There you sign in to the website,
   check the device and the code, enter your password again and click **Approve this device**
   (or **Deny**). Krunk asks every 5 seconds whether the code was approved; the code works for 10
   minutes and only once. **Cancel** stops it. The ⋮ menu shows "Sign in to Krunk" or "Signed in
@@ -1538,7 +1538,7 @@ their old version; a name you typed yourself is never changed.
   device by scanning it (without one from the server, the code alone, as before). Signed in,
   **Add a device** next to Manage account opens the account page's "Add a device" part in a new
   tab.
-- **The account page** (`https://krunk.209.wf/account/`, 0.13.0) also has:
+- **The account page** (`https://krunk.kruxsys.com/account/`, 0.13.0) also has:
   - **Add a device:** a QR code a phone scans (in its browser, later in the Android app). It
     works once for 5 minutes; you approve after checking that both screens show the same
     6-digit code (`docs/sync/PROTOCOL.md` §6.5).
@@ -1895,13 +1895,13 @@ network traffic it starts itself is the daily filter-list update and the daily u
   not be replaced, stops before changing anything (exit code 3); Krunk shows the reason at its
   next start and offers Repair.
 - **The server** is set when Krunk is built (`UPDATE_BASE_URL`). Builds use
-  **`https://krunk.209.wf`**, the project's website and update server for now (a temporary
+  **`https://krunk.kruxsys.com`**, the project's website and update server for now (a temporary
   domain while Krunk is tested). Moving to the final domain takes one release from this server
   whose build points at the new one. Krunk 0.2.0 builds pointed at the placeholder
   `https://krunk.example` and can't update themselves; reinstall them from the website. The
   server itself (Docker, Caddy, behind Cloudflare) is in `dist/server/`; see its README.
 - **Release notes:** `CHANGELOG.md` is their one source. The website's
-  [/changelog](https://krunk.209.wf/changelog) page is generated from it when the site is built,
+  [/changelog](https://krunk.kruxsys.com/changelog) page is generated from it when the site is built,
   and `publish-release.sh` takes a release's `NOTES.md` (what **Release notes** shows) and date
   from its section.
 
@@ -1969,7 +1969,7 @@ new-tab shortcuts and settings, the same session format and background-tab polic
 feature by feature), `docs/ANDROID_DEV.md` (building, testing, signing and publishing),
 `CHANGELOG-android.md` (its own release notes).
 
-**Download.** The website (https://krunk.209.wf, "Download for Android") offers the signed APK:
+**Download.** The website (https://krunk.kruxsys.com, "Download for Android") offers the signed APK:
 `Krunk-android-<version>-arm64-v8a-release.apk` for phones and tablets, plus a universal and an
 `x86_64` (emulator) build, with SHA-256 checksums. Android asks once to allow installs from the
 browser you downloaded it with. The APKs are signed (APK Signature Scheme v2 and v3) with Krunk's
@@ -1978,7 +1978,7 @@ Android release key; its certificate's SHA-256 fingerprint is
 (check with `apksigner verify --print-certs`). Later releases are signed with the same key, so
 they install over this one and keep your data.
 
-**Updates (since 0.5.0).** Settings › About › **Check for updates** asks krunk.209.wf for the
+**Updates (since 0.5.0).** Settings › About › **Check for updates** asks krunk.kruxsys.com for the
 signed update information (`/updates/android-arm64/latest.json` and its Ed25519 signature, made
 with the same key as the Windows updates) and, after you tap **Download and install**, fetches the
 one APK for your device. Krunk installs only an APK that matches the signed size and SHA-256 and
@@ -2010,7 +2010,7 @@ Behaviour:
   **Sync now** and the other devices' open tabs.
 - **When it runs:** only while Krunk is open: a minute after start, every 5 minutes, and 30 s
   after a change.
-- **No request before sign-in:** nothing goes to krunk.209.wf before you tap Sign in (checked
+- **No request before sign-in:** nothing goes to krunk.kruxsys.com before you tap Sign in (checked
   with a packet capture of the app's traffic).
 - **Stored where:** `files/krunk-sync/account.json` (the sign-in) and `sync.json` (sync's keys), in
   the core's formats, wrapped by the key store key `krunk.sync.wrap.v1`. They are excluded from
@@ -2263,8 +2263,8 @@ Center, Back and (where the remote has one) Menu. Phones and tablets are unchang
 
 **Installing.** Krunk is not on the TV's Play Store yet. Sideload it:
 - With the **Downloader** app (or any TV file manager), open
-  `https://krunk.209.wf/download/android.json` to see the current files, or go straight to the APK:
-  `https://krunk.209.wf/download/android/<version>/Krunk-android-<version>-<abi>-release.apk`.
+  `https://krunk.kruxsys.com/download/android.json` to see the current files, or go straight to the APK:
+  `https://krunk.kruxsys.com/download/android/<version>/Krunk-android-<version>-<abi>-release.apk`.
   Most Google TV and Android TV devices are 64-bit (`arm64-v8a`); **32-bit TVs, such as the
   Chromecast with Google TV, need the `armeabi-v7a` APK**; the `universal` APK works on all of
   them but is larger. Allow "Install unknown apps" for Downloader when the TV asks.
@@ -2551,7 +2551,7 @@ Page-load harness (0.26.0; details and every option in
 - **The engine is bundled.** Chromium security fixes reach users only with a new Krunk
   release with a newer CEF. Krunk checks for one daily and offers it, but installs only when you
   choose Update now. Releases should follow CEF security releases promptly.
-- **The update server is on a temporary domain** (`https://krunk.209.wf`). When the final
+- **The update server is on a temporary domain** (`https://krunk.kruxsys.com`). When the final
   domain exists, one release from it must point Krunk at the new domain
   (`UPDATE_BASE_URL=https://<domain> scripts/build-dist.sh`). 0.2.0 copies (placeholder server)
   must be reinstalled by hand.

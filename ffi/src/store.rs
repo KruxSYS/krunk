@@ -737,8 +737,8 @@ mod tests {
     #[test]
     fn omnibox_uses_history_and_bookmarks() {
         let s = store();
-        s.record_visit("https://krunk.209.wf/".into(), "Krunk".into(), 1_000).unwrap();
-        s.add_bookmark(other_bookmarks_id(), "Krunk docs".into(), "https://krunk.209.wf/docs".into()).unwrap();
+        s.record_visit("https://krunk.kruxsys.com/".into(), "Krunk".into(), 1_000).unwrap();
+        s.add_bookmark(other_bookmarks_id(), "Krunk docs".into(), "https://krunk.kruxsys.com/docs".into()).unwrap();
         let r = s.omnibox_query("krunk".into(), DDG.into());
         assert!(r.rows.iter().any(|r| r.kind == SuggestionKind::Search));
         assert!(r.rows.iter().any(|r| r.kind == SuggestionKind::Bookmark && r.url.ends_with("/docs")));

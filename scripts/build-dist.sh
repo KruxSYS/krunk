@@ -13,7 +13,7 @@
 #   scripts/build-dist.sh --harness  release build with the perf-harness feature (DevTools port and
 #                                    KRUNK_HOST_RULES for the page-load harness) -> target/harness-dist/
 #
-# UPDATE_BASE_URL (default https://krunk.209.wf, the live server) is where the update check looks
+# UPDATE_BASE_URL (default https://krunk.kruxsys.com, the live server) is where the update check looks
 # and what the installer names as the homepage, and
 # KRUNK_UPDATE_PUBKEY_FILE the public key it trusts (default assets/keys/update-signing.pub):
 #   UPDATE_BASE_URL=https://downloads.example.org scripts/build-dist.sh
@@ -40,7 +40,7 @@ case "${1:-}" in
 esac
 
 # The update server, also passed to build.rs (app/build.rs has the same default).
-export UPDATE_BASE_URL="${UPDATE_BASE_URL:-https://krunk.209.wf}"
+export UPDATE_BASE_URL="${UPDATE_BASE_URL:-https://krunk.kruxsys.com}"
 
 # shellcheck source=scripts/xwin-env.sh
 source "$root/scripts/xwin-env.sh"

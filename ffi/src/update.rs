@@ -223,9 +223,9 @@ mod tests {
 
     #[test]
     fn urls() {
-        let u = update_urls("https://krunk.209.wf".into(), false).unwrap();
-        assert_eq!(u.manifest, "https://krunk.209.wf/updates/android-arm64/latest.json");
-        assert_eq!(u.signature, "https://krunk.209.wf/updates/android-arm64/latest.json.sig");
+        let u = update_urls("https://krunk.kruxsys.com".into(), false).unwrap();
+        assert_eq!(u.manifest, "https://krunk.kruxsys.com/updates/android-arm64/latest.json");
+        assert_eq!(u.signature, "https://krunk.kruxsys.com/updates/android-arm64/latest.json.sig");
         assert!(matches!(update_urls("http://10.0.2.2:18090".into(), false), Err(UpdateFailure::NotOnServer { .. })));
         assert!(update_urls("http://10.0.2.2:18090".into(), true).is_ok());
     }

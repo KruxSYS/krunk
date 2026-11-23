@@ -275,7 +275,7 @@ pub mod tests {
     pub fn state_with(extra: &[(&str, &str)]) -> AppState {
         let mut env: Vec<(String, String)> = vec![
             ("DATABASE_URL".into(), "postgres://x:y@127.0.0.1:1/none".into()),
-            ("PUBLIC_BASE_URL".into(), "https://krunk.209.wf".into()),
+            ("PUBLIC_BASE_URL".into(), "https://krunk.kruxsys.com".into()),
         ];
         env.extend(extra.iter().map(|(k, v)| (k.to_string(), v.to_string())));
         let config = Config::from_lookup(&|k| env.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone())).unwrap();
@@ -284,7 +284,7 @@ pub mod tests {
             .acquire_timeout(Duration::from_millis(500))
             .connect_lazy(&config.database_url)
             .unwrap();
-        let turnstile = Turnstile::with_url("http://127.0.0.1:9/siteverify", "s", "krunk.209.wf", false).unwrap();
+        let turnstile = Turnstile::with_url("http://127.0.0.1:9/siteverify", "s", "krunk.kruxsys.com", false).unwrap();
         AppState { config: Arc::new(config), db, trusted: TrustedPeers::default(), passwords: passwords(), turnstile }
     }
 
@@ -320,7 +320,7 @@ pub mod tests {
         let v = json(&body);
         assert_eq!(v["accounts_enabled"], false);
         assert_eq!(v["turnstile_site_key"], "");
-        assert_eq!(v["public_base_url"], "https://krunk.209.wf");
+        assert_eq!(v["public_base_url"], "https://krunk.kruxsys.com");
         let (_, _, body) = call_with(
             state_with(&ENABLED),
             axum::http::Request::get("/api/v1/web/config").body(Body::empty()).unwrap(),
@@ -346,7 +346,7 @@ pub mod tests {
     async fn accounts_fail_closed() {
         for path in ["/api/v1/web/register", "/api/v1/web/login", "/api/v1/web/password-reset/request"] {
             let req = axum::http::Request::post(path)
-                .header(header::ORIGIN, "https://krunk.209.wf")
+                .header(header::ORIGIN, "https://krunk.kruxsys.com")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from("{}"))
                 .unwrap();
@@ -377,9 +377,9 @@ pub mod tests {
         for (origin, site) in [
             (None, None),
             (Some("https://evil.example"), None),
-            (Some("https://krunk.209.wf.evil.example"), Some("same-origin")),
+            (Some("https://krunk.kruxsys.com.evil.example"), Some("same-origin")),
             (Some("null"), None),
-            (Some("http://krunk.209.wf"), None),
+            (Some("http://krunk.kruxsys.com"), None),
             (None, Some("cross-site")),
             (None, Some("same-site")),
         ] {
@@ -388,7 +388,7 @@ pub mod tests {
             assert_eq!(json(&body)["error"], "forbidden");
         }
         // Same origin passes the check (and then fails on the empty body, before any database use).
-        for (origin, site) in [(Some("https://krunk.209.wf"), None), (None, Some("same-origin"))] {
+        for (origin, site) in [(Some("https://krunk.kruxsys.com"), None), (None, Some("same-origin"))] {
             let (status, _, _) = call_with(state_with(&ENABLED), post(origin, site)).await;
             assert_ne!(status, StatusCode::FORBIDDEN, "{origin:?} {site:?}");
         }
@@ -403,7 +403,7 @@ pub mod tests {
         // A cookie but no CSRF header on a POST: refused before the database is asked.
         let token = crate::crypto::new_token();
         let req = axum::http::Request::post("/api/v1/web/logout")
-            .header(header::ORIGIN, "https://krunk.209.wf")
+            .header(header::ORIGIN, "https://krunk.kruxsys.com")
             .header(header::COOKIE, format!("{}={token}", sessions::COOKIE))
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from("{}"))
@@ -411,7 +411,7 @@ pub mod tests {
         let (status, _, body) = call_with(s.clone(), req).await;
         assert_eq!((status, json(&body)["error"].as_str()), (StatusCode::FORBIDDEN, Some("forbidden")));
         let req = axum::http::Request::post("/api/v1/web/logout")
-            .header(header::ORIGIN, "https://krunk.209.wf")
+            .header(header::ORIGIN, "https://krunk.kruxsys.com")
             .header(header::COOKIE, format!("{}={token}", sessions::COOKIE))
             .header(sessions::CSRF_HEADER, sessions::csrf_for(&s.config.keys, &crate::crypto::new_token()))
             .header(header::CONTENT_TYPE, "application/json")
@@ -425,7 +425,7 @@ pub mod tests {
     async fn bad_json_is_a_json_400() {
         for body in ["not json", "{\"email\":1}", "{\"email\":\"a@b.cd\",\"turnstile\":\"t\",\"extra\":1}"] {
             let req = axum::http::Request::post("/api/v1/web/password-reset/request")
-                .header(header::ORIGIN, "https://krunk.209.wf")
+                .header(header::ORIGIN, "https://krunk.kruxsys.com")
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body))
                 .unwrap();

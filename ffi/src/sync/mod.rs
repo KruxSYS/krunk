@@ -50,7 +50,7 @@ pub const AFTER_CHANGE_MS: i64 = 30_000;
 const MAX_SECRET: usize = 256;
 const MAX_LABEL: usize = 64;
 
-const OFFLINE_TEXT: &str = "Krunk couldn't reach krunk.209.wf. Check your connection and try again.";
+const OFFLINE_TEXT: &str = "Krunk couldn't reach krunk.kruxsys.com. Check your connection and try again.";
 const REMOVED_TEXT: &str =
     "This device was removed from your Krunk account (on another device or on the website). Its sync keys were deleted here; your data on this device stays. Sign in again to sync.";
 
@@ -262,7 +262,7 @@ fn sync_text(e: &SyncFail) -> String {
             "Sync's keys on the server don't check out. Krunk stopped syncing to keep your data safe.".into()
         }
         SyncFail::Reset => "Sync was reset from another device. Sign out and in again on this device.".into(),
-        SyncFail::Api(ApiError::Server(_)) => "Something went wrong on krunk.209.wf. Try again later.".into(),
+        SyncFail::Api(ApiError::Server(_)) => "Something went wrong on krunk.kruxsys.com. Try again later.".into(),
         _ => "Something went wrong with sync. Try again later.".into(),
     }
 }
@@ -627,7 +627,7 @@ impl Engine {
     fn ids(&self) -> R<(String, lb_core::sync::AccountId, String)> {
         let a = self.account.as_ref().ok_or_else(|| SyncFfiError::SignedOut { text: "Sign in first.".into() })?;
         let acc = parse_account_id(&a.account_id).ok_or_else(|| SyncFfiError::Server {
-            text: "Something went wrong on krunk.209.wf. Try again later.".into(),
+            text: "Something went wrong on krunk.kruxsys.com. Try again later.".into(),
         })?;
         Ok((a.account_id.clone(), acc, a.device_id.clone()))
     }
@@ -876,7 +876,7 @@ impl Engine {
         };
         if !reached {
             self.message =
-                Some("Signed out on this device. Krunk couldn't reach krunk.209.wf, so the device may still be listed on your account page.".into());
+                Some("Signed out on this device. Krunk couldn't reach krunk.kruxsys.com, so the device may still be listed on your account page.".into());
         }
         reached
     }
@@ -1730,7 +1730,7 @@ impl KrunkSync {
 impl KrunkSync {
     /// `dir`: the app-private `files/krunk-sync`; `db`: browser.db; `wrapper`: the Keystore key
     /// `krunk-sync-state`; `vault`: the app's vault (passwords sync while it is unlocked);
-    /// `label`: "Krunk on Android 16"; `verify_base`: the site (release: `https://krunk.209.wf`),
+    /// `label`: "Krunk on Android 16"; `verify_base`: the site (release: `https://krunk.kruxsys.com`),
     /// `None` only in test builds.
     #[uniffi::constructor]
     #[allow(clippy::too_many_arguments)]

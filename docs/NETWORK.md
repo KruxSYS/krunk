@@ -223,8 +223,8 @@ The check runs only when the user starts it, at two moments:
 
 | When | Requests | Sent |
 |---|---|---|
-| The user taps **Settings › About › Check for updates** | `GET https://krunk.209.wf/updates/android-arm64/latest.json`, then `GET …/latest.json.sig` | the request line, `Host`, `User-Agent: Krunk-Android/<version>`, `Accept-Encoding: identity`, `Cache-Control: no-cache`, `Connection` |
-| The user taps **Download and install** on an offered version | `GET https://krunk.209.wf/download/android/<version>/Krunk-android-<version>-<abi>-release.apk`, just the one APK for this device | the same headers |
+| The user taps **Settings › About › Check for updates** | `GET https://krunk.kruxsys.com/updates/android-arm64/latest.json`, then `GET …/latest.json.sig` | the request line, `Host`, `User-Agent: Krunk-Android/<version>`, `Accept-Encoding: identity`, `Cache-Control: no-cache`, `Connection` |
+| The user taps **Download and install** on an offered version | `GET https://krunk.kruxsys.com/download/android/<version>/Krunk-android-<version>-<abi>-release.apk`, just the one APK for this device | the same headers |
 
 - No query string and no identifiers: no installation id, device model, Android version or
   settings. No cookies: the requests go through Android's own HTTP stack, not the engine, so no

@@ -167,17 +167,17 @@ val signingProps = file(signingPropsPath)
 val allowDebugSignedRelease =
     providers.gradleProperty("krunk.allowDebugSignedRelease").map { it.toBoolean() }.getOrElse(false)
 
-// The update check (direct flavour, 0.5.0): release builds ask https://krunk.209.wf and nothing
+// The update check (direct flavour, 0.5.0): release builds ask https://krunk.kruxsys.com and nothing
 // else. Only the qa build type (and debug builds) take another address, for the end-to-end tests
 // against a staging copy of the site: -Pkrunk.qaUpdateBase=http://10.250.136.3:18090. Setting it
 // while a release variant is built fails the build, so a published APK never carries one.
-val releaseUpdateBase = "https://krunk.209.wf"
+val releaseUpdateBase = "https://krunk.kruxsys.com"
 val qaUpdateBase: String? = providers.gradleProperty("krunk.qaUpdateBase").orNull?.takeIf { it.isNotBlank() }
-// Krunk account and sync (0.6.0): release builds talk to https://krunk.209.wf only (HTTPS, the
+// Krunk account and sync (0.6.0): release builds talk to https://krunk.kruxsys.com only (HTTPS, the
 // approval page must be on that site). The qa build type (and debug builds) take a staging stack
 // for the end-to-end tests: -Pkrunk.qaSyncBase=http://10.250.136.3:18082. Like qaUpdateBase it
 // fails any release build, so a published APK never carries one.
-val releaseSyncBase = "https://krunk.209.wf"
+val releaseSyncBase = "https://krunk.kruxsys.com"
 val qaSyncBase: String? = providers.gradleProperty("krunk.qaSyncBase").orNull?.takeIf { it.isNotBlank() }
 // The QA build of the 0.6.0 code: lower than 0.6.0 (8), installs over 0.5.0 (7) with -r.
 val qaVersionCode = 7
@@ -301,8 +301,8 @@ android {
         applicationId = "org.krunk.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "0.13.0"
+        versionCode = 23
+        versionName = "0.13.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Devices (arm64-v8a; armeabi-v7a since 0.12.0 for 32-bit Android TV devices) and the
@@ -310,7 +310,7 @@ android {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
         buildConfigField("String", "GECKOVIEW_VERSION", "\"${libs.versions.geckoview.get()}\"")
-        buildConfigField("String", "SITE_URL", "\"https://krunk.209.wf\"")
+        buildConfigField("String", "SITE_URL", "\"https://krunk.kruxsys.com\"")
         buildConfigField("String", "UBO_VERSION", "\"$uboVersion\"")
         buildConfigField("String", "UBO_ID", "\"${uboProps.getProperty("UBO_ID")}\"")
         buildConfigField("String", "UBO_SOURCE_URL", "\"$uboXpiUrl\"")

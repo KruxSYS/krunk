@@ -73,7 +73,7 @@ impl HttpClient for Srv {
                 let n = self.next_code.get();
                 ok(serde_json::json!({
                     "device_code": format!("dc{n}"), "user_code": "ABCD-EFGH",
-                    "verification_uri_complete": "https://krunk.209.wf/link?code=ABCD-EFGH",
+                    "verification_uri_complete": "https://krunk.kruxsys.com/link?code=ABCD-EFGH",
                     "expires_in": 600, "interval": 5
                 }))
             }
@@ -140,7 +140,7 @@ impl Phone {
             Some(vault.clone()),
             "Krunk on Android 16".into(),
             "0.6.0".into(),
-            Some("https://krunk.209.wf".into()),
+            Some("https://krunk.kruxsys.com".into()),
         );
         Phone { root, engine, vault }
     }
@@ -532,7 +532,7 @@ impl SyncTransport for AccountFront {
         let r = match (method.as_str(), path.as_str()) {
             ("POST", "link/authorize") => ok(serde_json::json!({
                 "device_code": "dc1", "user_code": "ABCD-EFGH",
-                "verification_uri_complete": "https://krunk.209.wf/link?code=ABCD-EFGH",
+                "verification_uri_complete": "https://krunk.kruxsys.com/link?code=ABCD-EFGH",
                 "expires_in": 600, "interval": 5
             })),
             ("POST", "link/token") if self.approved.load(SeqCst) => ok(serde_json::json!({
@@ -588,8 +588,8 @@ fn a_signed_in_phone_signs_the_website_in() {
             site.map(str::to_string),
         )
     };
-    let login = "https://krunk.209.wf/account/login?next=%2Faccount%2F".to_string();
-    let k = make(Some("https://krunk.209.wf"));
+    let login = "https://krunk.kruxsys.com/account/login?next=%2Faccount%2F".to_string();
+    let k = make(Some("https://krunk.kruxsys.com"));
     assert_eq!(k.status().stage, SyncStage::SignedOut);
     assert_eq!(k.auto_sign_in_check(login.clone(), false), None, "signed out: never");
     assert!(matches!(k.web_sign_in_url(None), Err(SyncFfiError::SignedOut { .. })));
@@ -600,18 +600,18 @@ fn a_signed_in_phone_signs_the_website_in() {
     assert_eq!(k.link_poll().unwrap(), LinkPoll::SignedIn { email: "fx@example.com".into() });
     // Signed in (sync off): the check knows without another status call.
     assert_eq!(k.auto_sign_in_check(login.clone(), true), None, "private tab: never");
-    assert_eq!(k.auto_sign_in_check("https://krunk.209.wf/account/".into(), false), None, "other pages: no");
+    assert_eq!(k.auto_sign_in_check("https://krunk.kruxsys.com/account/".into(), false), None, "other pages: no");
     assert_eq!(k.auto_sign_in_check(login.clone(), false), Some(AutoSignInTarget { next: Some("/account/".into()) }));
     assert_eq!(k.auto_sign_in_check(login.clone(), false), None, "once per 30 s");
     // The real path through the transport (Kotlin's allowlist has to pass it as well).
     let url = k.web_sign_in_url(Some("/account/".into())).unwrap();
-    assert_eq!(url, "https://krunk.209.wf/account/login?auto=c0de-w_x&next=%2Faccount%2F");
+    assert_eq!(url, "https://krunk.kruxsys.com/account/login?auto=c0de-w_x&next=%2Faccount%2F");
     assert_eq!(srv.count("device/web-sign-in"), 1);
     // A sign-out on the website keeps it signed out until the app restarts.
-    assert_eq!(k.auto_sign_in_check("https://krunk.209.wf/account/login?signed_out=1".into(), false), None);
+    assert_eq!(k.auto_sign_in_check("https://krunk.kruxsys.com/account/login?signed_out=1".into(), false), None);
 
     // An app restart: a new object (the account is read by the first status call).
-    let k = make(Some("https://krunk.209.wf"));
+    let k = make(Some("https://krunk.kruxsys.com"));
     assert_eq!(k.auto_sign_in_check(login.clone(), false), None, "before the first status call");
     k.status();
     assert!(k.auto_sign_in_check(login.clone(), false).is_some(), "after a restart");

@@ -73,7 +73,7 @@ Shot "$P-8b-page-customized"
 Click (X 318) (Y 350) 1200
 Shot "$P-9-add-dialog"
 Click (X 640) (Y 394) 300; Keys 'Krunk site' 200
-Click (X 640) (Y 458) 300; Keys 'https://krunk.209.wf/' 200
+Click (X 640) (Y 458) 300; Keys 'https://krunk.kruxsys.com/' 200
 Click (X 778) (Y 534) 1500
 Shot "$P-10-added"
 Click (X 456) (Y 350) 1200

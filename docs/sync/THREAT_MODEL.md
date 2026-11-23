@@ -29,7 +29,7 @@ in `PROTOCOL.md` (§ references below); architecture is in `PLAN.md`.
    modify, withhold or replay anything stored, and serve arbitrary API responses.
 2. **DB thief:** a copy of the Postgres volume or of a backup.
 3. **Network attacker** between the client and Cloudflare, or between Cloudflare and the origin.
-4. **Compromised website, serving malicious JS** on krunk.209.wf: via a server compromise,
+4. **Compromised website, serving malicious JS** on krunk.kruxsys.com: via a server compromise,
    Cloudflare, or a malicious deploy.
 5. **Stolen or lost device.** Before revocation it holds AK and maybe PAK in its vault. After
    revocation it is the "revoked device".

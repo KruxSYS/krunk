@@ -16,8 +16,8 @@ default language to match (en-GB) or change the spelling for en-US.
 | Category | Communication (where Play lists web browsers; confirm in the Console) |
 | Tags | Web browser (pick from Play's tag list) |
 | Contact email | **TODO (operator).** Must be a real, monitored address; it is shown publicly. The website's privacy page names `privacy@209.wf` for privacy questions; use it only if that is the intended public contact. |
-| Website | https://krunk.209.wf |
-| Privacy policy | https://krunk.209.wf/privacy (exists; does not cover Android yet, see `CHECKLIST.md`) |
+| Website | https://krunk.kruxsys.com |
+| Privacy policy | https://krunk.kruxsys.com/privacy (exists; does not cover Android yet, see `CHECKLIST.md`) |
 | Contains ads | No |
 
 ## Short description (≤80)

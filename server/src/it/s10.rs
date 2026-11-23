@@ -10,7 +10,7 @@ use uuid::Uuid;
 /// The token in a pairing's `url` (`<base>/pair#<token>`).
 fn token_of(start: &Resp) -> String {
     let url = start.body["url"].as_str().expect("a url");
-    assert!(url.starts_with("https://krunk.209.wf/pair#"), "{url}");
+    assert!(url.starts_with("https://krunk.kruxsys.com/pair#"), "{url}");
     url.split_once('#').unwrap().1.to_string()
 }
 

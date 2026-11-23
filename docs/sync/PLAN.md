@@ -15,7 +15,7 @@ Optional Krunk accounts let a user sync these between their Krunk browsers:
 - history, bookmarks, passwords, settings and open tabs;
 - new-tab pins, the ad-block allowlist and the never-save list.
 
-The user registers on https://krunk.209.wf and links each browser with a short code. Everything
+The user registers on https://krunk.kruxsys.com and links each browser with a short code. Everything
 is **end-to-end encrypted** on the device. The server stores ciphertext and authenticated key
 directories, and can't read the data. A database leak or a compromised website can't read it
 either.
@@ -65,7 +65,7 @@ The UI says so plainly.
  │ sync.json (DPAPI)  vault.json │   /api/v1/…     │      /api/* → reverse_proxy api:8081)                 │
  └───────────────────────────────┘                 │ api  krunk-sync (axum, distroless, non-root) :8081    │
  User's normal browser (any) ── HTTPS ──────────▶  │      → db:5432 ; → SMTP (external) ; → Turnstile      │
-   krunk.209.wf/account/*, /link?code=…            │ db   PostgreSQL 18.6 (volume krunk-db)                │
+   krunk.kruxsys.com/account/*, /link?code=…            │ db   PostgreSQL 18.6 (volume krunk-db)                │
                                                    └───────────────────────────────────────────────────────┘
 ```
 
@@ -307,7 +307,7 @@ Docs:
     request (up to 2 retries with back-off, 3 s timeout each).
 - **Acceptance** needs all of:
   - `success == true`;
-  - `hostname == TURNSTILE_EXPECTED_HOSTNAME` (`krunk.209.wf`);
+  - `hostname == TURNSTILE_EXPECTED_HOSTNAME` (`krunk.kruxsys.com`);
   - `action` equal to the expected action for the endpoint;
   - `challenge_ts` no more than 300 s old.
 - **Single use:**
@@ -470,7 +470,7 @@ deletes everything in one statement (§7).
 | `TRUSTED_PROXIES_EXTRA` | The hop in front of Caddy (default `10.250.137.4/32`, OPEN_QUESTIONS Q8) |
 | `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, `TURNSTILE_EXPECTED_HOSTNAME` | Turnstile |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_TLS` (`starttls`/`tls`), `MAIL_FROM` | Email |
-| `PUBLIC_BASE_URL` | `https://krunk.209.wf` (links in emails) |
+| `PUBLIC_BASE_URL` | `https://krunk.kruxsys.com` (links in emails) |
 | `IP_RETENTION_DAYS` | Default 90 |
 | `QUOTA_MAX_BYTES`, `QUOTA_MAX_RECORDS`, `QUOTA_MAX_HISTORY`, `QUOTA_MAX_DEVICES` | Defaults: 50 MiB, 100000, 25000 (server hard cap; the client keeps 20000), 10 |
 | `INACTIVITY_DELETE_DAYS` | Default off (OPEN_QUESTIONS Q9) |

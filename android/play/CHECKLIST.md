@@ -20,7 +20,7 @@ splits for `arm64-v8a` and `x86_64`, minSdk 26, targetSdk 35, applicationId
       **Not** present: `REQUEST_INSTALL_PACKAGES` (direct flavour only) and
       `com.google.android.gms.permission.AD_ID`. Anything else: find where it comes from before
       upload; each extra sensitive permission needs its own declaration.
-- [ ] The `play` build contacts nothing of Krunk's own (no update check, no krunk.209.wf). A
+- [ ] The `play` build contacts nothing of Krunk's own (no update check, no krunk.kruxsys.com). A
       packet capture of a fresh start, as in the release routine (`a3.sh gate idle10`), confirms it.
 - [ ] **Target API level.** Play raises the required targetSdk every year (API 35 for new apps and
       updates since 31 August 2025). **Not verified:** whether API 36 has been required since
@@ -77,7 +77,7 @@ only when it is signed with the same certificate as the installed app.
       created after 13 November 2023** must run a **closed test with at least 12 testers for 14
       days** before they may apply for production; organisation accounts (D-U-N-S number) are
       exempt. Plan for that time.
-- [ ] Developer contact email (public): **TODO**. Developer website: https://krunk.209.wf.
+- [ ] Developer contact email (public): **TODO**. Developer website: https://krunk.kruxsys.com.
 - [ ] Note for the direct APK: Google's Android developer verification (registering package names
       and signing keys for apps installed outside Play) was announced for 2026–2027. **Not
       verified** for this project's countries; check whether `org.krunk.browser` and the
@@ -92,7 +92,7 @@ only when it is signed with the same certificate as the installed app.
 
 ## 4. Privacy policy (must be fixed before review)
 
-https://krunk.209.wf/privacy exists (`dist/server/site/privacy.html`, served by the Caddy rule
+https://krunk.kruxsys.com/privacy exists (`dist/server/site/privacy.html`, served by the Caddy rule
 `handle /privacy`; last updated 10 November 2026). Gaps for Play:
 - [ ] It does not mention Android at all. It says the browser "contacts this site once a day to
       check for an update" and describes the agent "from your PC": true for Windows, wrong for
@@ -130,7 +130,7 @@ https://krunk.209.wf/privacy exists (`dist/server/site/privacy.html`, served by 
 
 ## 6. App content (Policy › App content)
 
-- [ ] **Privacy policy:** https://krunk.209.wf/privacy (after step 4).
+- [ ] **Privacy policy:** https://krunk.kruxsys.com/privacy (after step 4).
 - [ ] **App access:** all functionality is available without special access (no sign-in).
 - [ ] **Ads:** No, the app contains no ads.
 - [ ] **Content rating:** IARC questionnaire per `content-rating.md`.

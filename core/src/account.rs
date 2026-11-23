@@ -6,7 +6,7 @@
 //! website), and on **Sign out**. There is no background traffic and no sync yet.
 //!
 //! **Linking** (RFC 8628 pattern): `link/authorize` gives a device code (kept in memory only) and
-//! a user code the user confirms on `https://krunk.209.wf/link?code=…`; Krunk polls `link/token`
+//! a user code the user confirms on `https://krunk.kruxsys.com/link?code=…`; Krunk polls `link/token`
 //! every `interval` seconds (5 s more after `slow_down`) until it gets tokens, `access_denied`
 //! or `expired_token`, or the 10 minutes run out. Since 0.13.0 the answer may carry the sign-in
 //! link as a QR code (`qr_svg`), which the card shows next to the code after [`qr_data_url`]
@@ -215,12 +215,14 @@ impl Failure {
     /// The one sentence the Account card shows.
     pub fn text(self) -> &'static str {
         match self {
-            Failure::Offline => "Krunk couldn't reach krunk.209.wf. Check your connection and try again.",
-            Failure::NotAvailable => "Signing in isn't available on krunk.209.wf yet. Try again with a later version.",
-            Failure::Closed => "Accounts are closed on krunk.209.wf at the moment. Try again later.",
+            Failure::Offline => "Krunk couldn't reach krunk.kruxsys.com. Check your connection and try again.",
+            Failure::NotAvailable => {
+                "Signing in isn't available on krunk.kruxsys.com yet. Try again with a later version."
+            }
+            Failure::Closed => "Accounts are closed on krunk.kruxsys.com at the moment. Try again later.",
             Failure::RateLimited => "Too many attempts. Wait a few minutes and try again.",
             Failure::SignedOut => "This device was signed out of your account (for example, removed on the website).",
-            Failure::Server => "Something went wrong on krunk.209.wf. Try again later.",
+            Failure::Server => "Something went wrong on krunk.kruxsys.com. Try again later.",
         }
     }
 }
@@ -546,8 +548,8 @@ mod tests {
 
     fn authorized() -> Authorized {
         serde_json::from_str(
-            r#"{"device_code":"dc-secret","user_code":"ABCD-EFGH","verification_uri":"https://krunk.209.wf/link",
-               "verification_uri_complete":"https://krunk.209.wf/link?code=ABCD-EFGH","expires_in":600,"interval":5}"#,
+            r#"{"device_code":"dc-secret","user_code":"ABCD-EFGH","verification_uri":"https://krunk.kruxsys.com/link",
+               "verification_uri_complete":"https://krunk.kruxsys.com/link?code=ABCD-EFGH","expires_in":600,"interval":5}"#,
         )
         .unwrap()
     }
@@ -556,7 +558,7 @@ mod tests {
     fn labels_and_endpoints() {
         assert_eq!(device_label(26100), "Krunk on Windows 11");
         assert_eq!(device_label(19045), "Krunk on Windows 10");
-        assert_eq!(endpoint("https://krunk.209.wf/", TOKEN), "https://krunk.209.wf/api/v1/link/token");
+        assert_eq!(endpoint("https://krunk.kruxsys.com/", TOKEN), "https://krunk.kruxsys.com/api/v1/link/token");
         let b: serde_json::Value = serde_json::from_str(&authorize_body("Krunk on Windows 11", "0.11.0")).unwrap();
         assert_eq!(
             b,
@@ -625,7 +627,7 @@ mod tests {
 
     #[test]
     fn linking_waits_slows_down_and_expires() {
-        let mut l = Linking::start(authorized(), Some("https://krunk.209.wf"), 1_000_000).unwrap();
+        let mut l = Linking::start(authorized(), Some("https://krunk.kruxsys.com"), 1_000_000).unwrap();
         assert_eq!((l.user_code.as_str(), l.interval_s, l.expires_at_ms), ("ABCD-EFGH", 5, 1_600_000));
         assert!(matches!(l.next(Poll::Pending, 1_005_000), Next::Poll(5000)));
         assert!(matches!(l.next(Poll::SlowDown, 1_010_000), Next::Poll(10000)));
@@ -643,21 +645,21 @@ mod tests {
         // A server that asks for silly intervals is clamped.
         let mut a = authorized();
         a.interval = 0;
-        assert_eq!(Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap().interval_s, 1);
+        assert_eq!(Linking::start(a, Some("https://krunk.kruxsys.com"), 0).unwrap().interval_s, 1);
         let mut a = authorized();
         a.interval = 999;
-        let mut l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
+        let mut l = Linking::start(a, Some("https://krunk.kruxsys.com"), 0).unwrap();
         assert!(matches!(l.next(Poll::SlowDown, 0), Next::Poll(60000)));
     }
 
     #[test]
     fn linking_waits_past_the_code_while_the_server_says_pending() {
         let start = 1_000_000;
-        let mut l = Linking::start(authorized(), Some("https://krunk.209.wf"), start).unwrap();
+        let mut l = Linking::start(authorized(), Some("https://krunk.kruxsys.com"), start).unwrap();
         assert_eq!(l.give_up_at_ms, start + MAX_LINK_WAIT_S * 1000);
         // A hiccup near the code's end doesn't stretch it: only the server's "pending" does.
         assert!(matches!(l.next(Poll::Failed(Failure::Offline), 1_598_000), Next::Stop(EXPIRED_TEXT)));
-        let mut l = Linking::start(authorized(), Some("https://krunk.209.wf"), start).unwrap();
+        let mut l = Linking::start(authorized(), Some("https://krunk.kruxsys.com"), start).unwrap();
         assert!(matches!(l.next(Poll::Pending, 1_598_000), Next::Poll(5000)), "past the 10 minutes: wait on");
         assert_eq!(l.expires_at_ms, l.give_up_at_ms);
         assert!(matches!(l.next(Poll::Pending, 3_000_000), Next::Poll(5000)));
@@ -672,22 +674,22 @@ mod tests {
 
     #[test]
     fn the_website_is_signed_in_on_its_sign_in_page_only() {
-        let site = "https://krunk.209.wf";
+        let site = "https://krunk.kruxsys.com";
         let mut a = AutoSignIn::default();
-        let login = "https://krunk.209.wf/account/login?next=%2Faccount%2F%23add-device";
+        let login = "https://krunk.kruxsys.com/account/login?next=%2Faccount%2F%23add-device";
         assert_eq!(a.check(login, site, 0, true, false), Some(Some("/account/#add-device".into())));
         // Once per 30 s: a failed attempt can't loop.
         assert_eq!(a.check(login, site, 10_000, true, false), None);
-        assert_eq!(a.check("https://krunk.209.wf/account/login", site, 40_000, true, false), Some(None));
+        assert_eq!(a.check("https://krunk.kruxsys.com/account/login", site, 40_000, true, false), Some(None));
         let mut a = AutoSignIn::default();
         for (url, why) in [
-            ("https://krunk.209.wf/account/", "not the sign-in page"),
-            ("https://krunk.209.wf/account/login/", "not exactly the sign-in page"),
-            ("http://krunk.209.wf/account/login", "not https"),
+            ("https://krunk.kruxsys.com/account/", "not the sign-in page"),
+            ("https://krunk.kruxsys.com/account/login/", "not exactly the sign-in page"),
+            ("http://krunk.kruxsys.com/account/login", "not https"),
             ("https://evil.example/account/login", "another site"),
-            ("https://krunk.209.wf.evil.example/account/login", "a look-alike host"),
-            ("https://krunk.209.wf:8443/account/login", "another port"),
-            ("https://krunk.209.wf/account/login?auto=abc", "already carries a code"),
+            ("https://krunk.kruxsys.com.evil.example/account/login", "a look-alike host"),
+            ("https://krunk.kruxsys.com:8443/account/login", "another port"),
+            ("https://krunk.kruxsys.com/account/login?auto=abc", "already carries a code"),
             ("not a url", "junk"),
         ] {
             assert_eq!(a.check(url, site, 0, true, false), None, "{why}");
@@ -695,7 +697,7 @@ mod tests {
         assert_eq!(a.check(login, site, 0, false, false), None, "signed out of the account");
         assert_eq!(a.check(login, site, 0, true, true), None, "a private tab");
         // A sign-out on the website keeps it signed out (until Krunk restarts: a new guard).
-        assert_eq!(a.check("https://krunk.209.wf/account/login?signed_out=1", site, 0, true, false), None);
+        assert_eq!(a.check("https://krunk.kruxsys.com/account/login?signed_out=1", site, 0, true, false), None);
         assert_eq!(a.check(login, site, 100_000, true, false), None);
         assert_eq!(
             AutoSignIn::default().check(login, site, 100_000, true, false),
@@ -710,10 +712,13 @@ mod tests {
     #[test]
     fn the_auto_sign_in_address() {
         assert_eq!(
-            auto_sign_in_url("https://krunk.209.wf", "c0de_-x", Some("/link?code=ABCD-EFGH")),
-            "https://krunk.209.wf/account/login?auto=c0de_-x&next=%2Flink%3Fcode%3DABCD-EFGH"
+            auto_sign_in_url("https://krunk.kruxsys.com", "c0de_-x", Some("/link?code=ABCD-EFGH")),
+            "https://krunk.kruxsys.com/account/login?auto=c0de_-x&next=%2Flink%3Fcode%3DABCD-EFGH"
         );
-        assert_eq!(auto_sign_in_url("https://krunk.209.wf/", "c", None), "https://krunk.209.wf/account/login?auto=c");
+        assert_eq!(
+            auto_sign_in_url("https://krunk.kruxsys.com/", "c", None),
+            "https://krunk.kruxsys.com/account/login?auto=c"
+        );
         let c: WebSignInCode = parse(&Ok((200, br#"{"code":"secret-code","expires_in":60}"#.to_vec()))).unwrap();
         assert_eq!(&*c.code, "secret-code");
         assert!(!format!("{:?}", c.code).contains("secret-code"));
@@ -723,17 +728,17 @@ mod tests {
     fn the_page_to_open_is_the_builds_own_site() {
         let mut a = authorized();
         a.verification_uri_complete = "https://evil.example/link?code=ABCD-EFGH".into();
-        assert_eq!(Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap_err(), Failure::Server);
+        assert_eq!(Linking::start(a, Some("https://krunk.kruxsys.com"), 0).unwrap_err(), Failure::Server);
         let mut a = authorized();
-        a.verification_uri_complete = "https://krunk.209.wf.evil.example/link?code=X".into();
-        assert!(Linking::start(a, Some("https://krunk.209.wf"), 0).is_err());
+        a.verification_uri_complete = "https://krunk.kruxsys.com.evil.example/link?code=X".into();
+        assert!(Linking::start(a, Some("https://krunk.kruxsys.com"), 0).is_err());
         let a = authorized();
-        assert!(Linking::start(a.clone(), Some("https://krunk.209.wf/"), 0).is_ok());
+        assert!(Linking::start(a.clone(), Some("https://krunk.kruxsys.com/"), 0).is_ok());
         // A test build against staging: any https page with a code.
         let mut staging = a;
         staging.verification_uri_complete = "https://krunk.test/link?code=ABCD-EFGH".into();
         assert!(Linking::start(staging.clone(), None, 0).is_ok());
-        assert!(Linking::start(staging.clone(), Some("https://krunk.209.wf"), 0).is_err());
+        assert!(Linking::start(staging.clone(), Some("https://krunk.kruxsys.com"), 0).is_err());
         staging.verification_uri_complete = "http://krunk.test/link?code=ABCD-EFGH".into();
         assert!(Linking::start(staging, None, 0).is_err(), "never a plain http page");
     }
@@ -762,13 +767,13 @@ mod tests {
     fn card_states_serialize_for_the_page() {
         let s = CardState::Linking {
             user_code: "ABCD-EFGH".into(),
-            verify_url: "https://krunk.209.wf/link?code=ABCD-EFGH".into(),
+            verify_url: "https://krunk.kruxsys.com/link?code=ABCD-EFGH".into(),
             expires_at_ms: 5,
             qr: None,
         };
         assert_eq!(
             serde_json::to_value(&s).unwrap(),
-            serde_json::json!({"state": "linking", "userCode": "ABCD-EFGH", "verifyUrl": "https://krunk.209.wf/link?code=ABCD-EFGH", "expiresAtMs": 5})
+            serde_json::json!({"state": "linking", "userCode": "ABCD-EFGH", "verifyUrl": "https://krunk.kruxsys.com/link?code=ABCD-EFGH", "expiresAtMs": 5})
         );
         let s = CardState::SignedIn {
             email: "a@b.c".into(),
@@ -784,13 +789,13 @@ mod tests {
         // 0.13.0: the QR only when there is one.
         let s = CardState::Linking {
             user_code: "ABCD-EFGH".into(),
-            verify_url: "https://krunk.209.wf/link?code=ABCD-EFGH".into(),
+            verify_url: "https://krunk.kruxsys.com/link?code=ABCD-EFGH".into(),
             expires_at_ms: 5,
             qr: Some("data:image/svg+xml;base64,PHN2Zz4=".into()),
         };
         assert_eq!(
             serde_json::to_value(&s).unwrap(),
-            serde_json::json!({"state": "linking", "userCode": "ABCD-EFGH", "verifyUrl": "https://krunk.209.wf/link?code=ABCD-EFGH", "expiresAtMs": 5, "qr": "data:image/svg+xml;base64,PHN2Zz4="})
+            serde_json::json!({"state": "linking", "userCode": "ABCD-EFGH", "verifyUrl": "https://krunk.kruxsys.com/link?code=ABCD-EFGH", "expiresAtMs": 5, "qr": "data:image/svg+xml;base64,PHN2Zz4="})
         );
     }
 
@@ -819,7 +824,7 @@ mod tests {
         // An older server: no QR, the code alone (and the rest exactly as before).
         let a = authorized();
         assert!(a.qr_svg.is_none());
-        let l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
+        let l = Linking::start(a, Some("https://krunk.kruxsys.com"), 0).unwrap();
         assert!(l.qr.is_none());
 
         let svg = server_qr_svg();
@@ -828,12 +833,12 @@ mod tests {
         assert_eq!(Base64::decode_vec(b64).unwrap(), svg.as_bytes());
         // Through the authorize answer to the card.
         let body = serde_json::json!({
-            "device_code": "dc", "user_code": "ABCD-EFGH", "verification_uri": "https://krunk.209.wf/link",
-            "verification_uri_complete": "https://krunk.209.wf/link?code=ABCD-EFGH", "expires_in": 600,
+            "device_code": "dc", "user_code": "ABCD-EFGH", "verification_uri": "https://krunk.kruxsys.com/link",
+            "verification_uri_complete": "https://krunk.kruxsys.com/link?code=ABCD-EFGH", "expires_in": 600,
             "interval": 5, "qr_svg": svg,
         });
         let a: Authorized = serde_json::from_value(body).unwrap();
-        let l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
+        let l = Linking::start(a, Some("https://krunk.kruxsys.com"), 0).unwrap();
         assert_eq!(l.qr.as_deref(), Some(url.as_str()));
         // Without the declaration, with whitespace around, too.
         let bare = svg.split_once("?>").unwrap().1;
@@ -873,7 +878,7 @@ mod tests {
             // The sign-in still works, with the code alone.
             let mut a = authorized();
             a.qr_svg = Some(bad);
-            let l = Linking::start(a, Some("https://krunk.209.wf"), 0).unwrap();
+            let l = Linking::start(a, Some("https://krunk.kruxsys.com"), 0).unwrap();
             assert!(l.qr.is_none(), "{why}");
         }
         // Words that merely contain "on" are fine.

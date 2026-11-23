@@ -143,8 +143,8 @@ async fn link_flow_in_every_state() {
         crate::devices::normalize_user_code(&uc).map(|n| crate::devices::display_user_code(&n)),
         Some(uc.clone())
     );
-    assert_eq!(r.body["verification_uri"], "https://krunk.209.wf/link");
-    assert_eq!(r.body["verification_uri_complete"], format!("https://krunk.209.wf/link?code={uc}"));
+    assert_eq!(r.body["verification_uri"], "https://krunk.kruxsys.com/link");
+    assert_eq!(r.body["verification_uri_complete"], format!("https://krunk.kruxsys.com/link?code={uc}"));
     // Only hashes are stored.
     let (dh, uh): (Vec<u8>, Vec<u8>) =
         sqlx::query_as("SELECT device_code_hash, user_code_hash FROM link_grants").fetch_one(&e.db).await.unwrap();

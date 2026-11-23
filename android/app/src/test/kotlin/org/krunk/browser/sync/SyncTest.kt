@@ -42,7 +42,7 @@ class SyncTest {
 
     @Test
     fun releaseBuildsTalkHttpsOnly() {
-        assertTrue(SyncHttp.baseAllowed("https://krunk.209.wf", allowHttp = false))
+        assertTrue(SyncHttp.baseAllowed("https://krunk.kruxsys.com", allowHttp = false))
         assertFalse(SyncHttp.baseAllowed("http://10.250.136.3:18082", allowHttp = false))
         assertTrue(SyncHttp.baseAllowed("http://10.250.136.3:18082", allowHttp = true))
         assertFalse(SyncHttp.baseAllowed("ftp://x", allowHttp = true))

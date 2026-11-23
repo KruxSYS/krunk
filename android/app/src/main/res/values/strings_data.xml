@@ -201,7 +201,7 @@
     <string name="about_version">Krunk for Android %1$s</string>
     <string name="about_engine">GeckoView %1$s</string>
     <string name="about_core">Shared core %1$s</string>
-    <string name="about_site">krunk.209.wf</string>
+    <string name="about_site">krunk.kruxsys.com</string>
     <string name="about_site_help">Website, downloads and source</string>
     <string name="about_tagline">The browser that keeps quiet: no telemetry, no background chatter.</string>
     <string name="about_licenses">Open-source licences</string>

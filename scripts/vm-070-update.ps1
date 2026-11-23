@@ -23,8 +23,8 @@ switch ($Phase) {
   'install' {
     Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force
     $setup = "$K\Krunk-Setup-0.6.0.exe"
-    if (-not (Test-Path $setup)) { Invoke-WebRequest -UseBasicParsing 'https://krunk.209.wf/download/0.6.0/Krunk-Setup-0.6.0.exe' -OutFile $setup }
-    $sums = (Invoke-WebRequest -UseBasicParsing 'https://krunk.209.wf/download/0.6.0/SHA256SUMS').Content
+    if (-not (Test-Path $setup)) { Invoke-WebRequest -UseBasicParsing 'https://krunk.kruxsys.com/download/0.6.0/Krunk-Setup-0.6.0.exe' -OutFile $setup }
+    $sums = (Invoke-WebRequest -UseBasicParsing 'https://krunk.kruxsys.com/download/0.6.0/SHA256SUMS').Content
     $want = ($sums -split "`n" | Where-Object { $_ -match 'Krunk-Setup-0.6.0.exe' }) -split ' ' | Select-Object -First 1
     Log "[$P] 0.6.0 installer matches the site: $($want -eq (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower())"
     Log "[$P] vault bytes before: $((Get-Item "$data\vault.json").Length)"

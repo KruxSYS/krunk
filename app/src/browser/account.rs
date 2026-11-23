@@ -25,7 +25,8 @@ const TIMEOUT_MS: i32 = 15_000;
 const CHECK_EVERY_MS: i64 = 10 * 60 * 1000;
 /// The access token is renewed this long before it runs out.
 const ACCESS_MARGIN_MS: i64 = 60 * 1000;
-const SIGNED_OUT_OFFLINE: &str = "Signed out on this device. Krunk couldn't reach krunk.209.wf, so the device may \
+const SIGNED_OUT_OFFLINE: &str =
+    "Signed out on this device. Krunk couldn't reach krunk.kruxsys.com, so the device may \
      still be listed on your account page: you can remove it there.";
 const SOCKS_TEXT: &str = "Krunk can't sign in through a SOCKS proxy. Change the proxy in Settings → Advanced.";
 
@@ -70,7 +71,7 @@ impl Default for AccountHost {
     }
 }
 
-/// The site of this build (`build.rs`: https://krunk.209.wf in a release).
+/// The site of this build (`build.rs`: https://krunk.kruxsys.com in a release).
 fn base() -> &'static str {
     env!("KRUNK_UPDATE_BASE_URL")
 }
@@ -246,7 +247,7 @@ impl Browser {
         };
         let gen = self.next_generation();
         info!("account: sign-in started");
-        self.set_account_stage(Stage::Working("Asking krunk.209.wf for a code…".into()));
+        self.set_account_stage(Stage::Working("Asking krunk.kruxsys.com for a code…".into()));
         let label = acct::device_label(crate::ffi::window::windows_build());
         let body = acct::authorize_body(&label, env!("CARGO_PKG_VERSION"));
         self.spawn_job(

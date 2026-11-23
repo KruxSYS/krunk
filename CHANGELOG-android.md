@@ -3,6 +3,12 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## 0.13.1 — 2026-11-23
+
+- **Krunk's website moved to krunk.kruxsys.com.** Updates, signing in and sync now use the new
+  address; krunk.209.wf no longer answers. Earlier versions can't find this update by
+  themselves: download it from https://krunk.kruxsys.com.
+
 ## 0.13.0 — 2026-11-21
 
 - **Strong passwords when you sign up.** Tap the password field of a sign-up or change-password

@@ -518,7 +518,7 @@ Use a dev build that points at a test server:
    and Krunk keeps running.
 5. Turn off "Check for updates automatically" and restart: no request reaches the server
    within 2 minutes. "Check for updates" still works.
-6. A release build checks `https://krunk.209.wf` (live). It reports "Krunk is up to date" in
+6. A release build checks `https://krunk.kruxsys.com` (live). It reports "Krunk is up to date" in
    About, or offers the published version when it is newer. With no network it says "The update
    check failed: … the server name could not be resolved", and nothing else happens.
 
@@ -915,7 +915,7 @@ Scripted on the VM: `scripts/vm-060-*.ps1` with the pages in `scripts/vm-www/809
     krunk://newtab and a private tab get nothing; Disable removes the button; uBlock Origin Lite
     and Dark Reader install from their Web Store addresses.
 ### Website (M16)
-17. On the site (`https://krunk.209.wf`) Krunk shows "You're using Krunk 0.6.0 — up to date";
+17. On the site (`https://krunk.kruxsys.com`) Krunk shows "You're using Krunk 0.6.0 — up to date";
     other browsers get the download box; `view-source:` of another site never has `window.krunk`.
 
 ## Krunk 0.7.0 (round 7)
@@ -1031,7 +1031,7 @@ Scripted on the VM: `scripts/vm-071-*.ps1` (evidence in `.pipeline/evidence-0.7.
    enabled and right-click Forward lists the later pages in order. Arrows and Enter work; on a new
    tab a right-click on the disabled Back shows nothing. In a private window the same, and
    krunk://history shows none of those pages. Dark theme at 125 %: the menu fits.
-3. **Account:** Settings → Account → Sign in: a code and a new tab with krunk.209.wf/link; sign in
+3. **Account:** Settings → Account → Sign in: a code and a new tab with krunk.kruxsys.com/link; sign in
    there, approve (password again): within seconds the card says "Signed in as …" and the ⋮ menu
    too; the device is in the website's device list. Sign out on this device: the card offers Sign
    in again and the website lists the device as removed. Without a network: one clear sentence.
@@ -1107,7 +1107,7 @@ subdomains). Nothing else was rerun (the engine and the rest of the host are 0.1
    lists only its own logins), never the other subdomain's or the other site's.
 2. **Sister subdomain:** on a third subdomain without logins, the dropdown lists the domain's
    logins, each with its host.
-3. **Account page (server):** after an update, krunk.209.wf → Account → Devices shows the new
+3. **Account page (server):** after an update, krunk.kruxsys.com → Account → Devices shows the new
    version for the device once it has synced (the server takes it from the `Krunk/<version>`
    user agent at most once a minute; it used to keep the version from the time of linking).
 

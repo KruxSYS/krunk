@@ -295,7 +295,7 @@ function InstalledVersion { (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\
 if ($Phase -eq 'install') {
   StopKrunk
   $setup = "$K\Krunk-Setup-0.15.0-live.exe"
-  $t = Measure-Command { Invoke-WebRequest -UseBasicParsing 'https://krunk.209.wf/download/0.15.0/Krunk-Setup-0.15.0.exe' -OutFile $setup }
+  $t = Measure-Command { Invoke-WebRequest -UseBasicParsing 'https://krunk.kruxsys.com/download/0.15.0/Krunk-Setup-0.15.0.exe' -OutFile $setup }
   $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
   Log "[$P] downloaded in $([int]$t.TotalSeconds) s, sha256 $hash (published 91811ec8c16646387807ea1702715fd85a864bed0bf1f4ce1e25ace3da3308fa)"
   Log "[$P] installed before: $(InstalledVersion)"

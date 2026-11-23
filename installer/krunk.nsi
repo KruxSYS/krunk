@@ -28,7 +28,7 @@
   !define SIDE_IMAGE "..\assets\brand\installer-side.bmp"
 !endif
 !ifndef HOMEPAGE
-  !define HOMEPAGE "https://krunk.209.wf"
+  !define HOMEPAGE "https://krunk.kruxsys.com"
 !endif
 
 Unicode true

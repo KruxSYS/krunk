@@ -64,8 +64,8 @@ switch ($Phase) {
     }
     Log "[$P] uninstalled: $(-not (Test-Path "$inst\Krunk.exe")); registered version: '$(Version)'"
     $setup = "$K\Krunk-Setup-$From.exe"
-    if (-not (Test-Path $setup)) { Invoke-WebRequest -UseBasicParsing "https://krunk.209.wf/download/$From/Krunk-Setup-$From.exe" -OutFile $setup }
-    $sums = (Invoke-WebRequest -UseBasicParsing "https://krunk.209.wf/download/$From/SHA256SUMS").Content
+    if (-not (Test-Path $setup)) { Invoke-WebRequest -UseBasicParsing "https://krunk.kruxsys.com/download/$From/Krunk-Setup-$From.exe" -OutFile $setup }
+    $sums = (Invoke-WebRequest -UseBasicParsing "https://krunk.kruxsys.com/download/$From/SHA256SUMS").Content
     $want = ($sums -split "`n" | Where-Object { $_ -match "Krunk-Setup-$From.exe" }) -split ' ' | Select-Object -First 1
     Log "[$P] $From installer matches the site: $($want -eq (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower())"
     $proc = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru; $proc.WaitForExit(300000) | Out-Null

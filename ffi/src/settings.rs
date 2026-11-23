@@ -614,8 +614,8 @@ mod tests {
         assert_eq!(settings_search_template(s.clone()), "https://search.example/?q=%s");
         assert_eq!(settings_search_name(s.clone()), "search.example");
         s.new_tab_page = NewTabMode::Homepage;
-        s.homepage = "https://krunk.209.wf/".into();
-        assert_eq!(settings_new_tab_target(s), Some("https://krunk.209.wf/".into()));
+        s.homepage = "https://krunk.kruxsys.com/".into();
+        assert_eq!(settings_new_tab_target(s), Some("https://krunk.kruxsys.com/".into()));
     }
 
     /// F-69: values Android can't read (a newer Windows', a desktop-only field it refuses)

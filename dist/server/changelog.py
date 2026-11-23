@@ -473,8 +473,8 @@ def selftest():
     expect(inline("**bold over\na line**") == "<strong>bold over\na line</strong>", "bold across lines")
 
     # Links: https and site-relative only; everything else is text.
-    expect(inline("[site](https://krunk.209.wf/x?a=1&b=2)") ==
-           '<a href="https://krunk.209.wf/x?a=1&amp;b=2">site</a>', "https link")
+    expect(inline("[site](https://krunk.kruxsys.com/x?a=1&b=2)") ==
+           '<a href="https://krunk.kruxsys.com/x?a=1&amp;b=2">site</a>', "https link")
     expect(inline("[c](/changelog#0.12.4)") == '<a href="/changelog#0.12.4">c</a>', "relative link")
     for bad in ("javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x", "//evil.example",
                 "/\\evil.example", "http://plain.example", "https:///x", "mailto:a@b", 'https://a"onclick=x'):

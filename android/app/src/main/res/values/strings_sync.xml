@@ -6,7 +6,7 @@
     <string name="sync_settings_row_help">Sign in to your Krunk account and sync bookmarks, history, settings, open tabs and passwords with your other devices</string>
     <string name="sync_signed_out_text">Sign in to the Krunk account you use on Windows. Your data is encrypted on this device before it leaves; the server can\'t read it. Nothing is sent until you sign in.</string>
     <string name="sync_sign_in">Sign in</string>
-    <string name="sync_linking_text">Approve this device on krunk.209.wf: open the page below (or go to krunk.209.wf/link on another device), sign in there and check this code:</string>
+    <string name="sync_linking_text">Approve this device on krunk.kruxsys.com: open the page below (or go to krunk.kruxsys.com/link on another device), sign in there and check this code:</string>
     <string name="sync_open_approval">Open approval page</string>
     <string name="sync_cancel">Cancel</string>
     <string name="sync_signed_in_as">Signed in as %1$s</string>

@@ -155,9 +155,9 @@ class UpdateVerifyTest {
 
     @Test
     fun releaseAddressesAreHttpsOnly() {
-        val urls = updateUrls("https://krunk.209.wf", false)
-        assertEquals("https://krunk.209.wf/updates/android-arm64/latest.json", urls.manifest)
-        assertEquals("https://krunk.209.wf/updates/android-arm64/latest.json.sig", urls.signature)
+        val urls = updateUrls("https://krunk.kruxsys.com", false)
+        assertEquals("https://krunk.kruxsys.com/updates/android-arm64/latest.json", urls.manifest)
+        assertEquals("https://krunk.kruxsys.com/updates/android-arm64/latest.json.sig", urls.signature)
         refused<UpdateFailure.NotOnServer> { updateUrls("http://10.250.136.3:18090", false) }
     }
 

@@ -32,7 +32,7 @@ class SwitcherLogicTest {
 
     @Test
     fun searchMatchesTitleOrUrlIgnoringCase() {
-        val t = tab("Krunk Browser", "https://krunk.209.wf/docs")
+        val t = tab("Krunk Browser", "https://krunk.kruxsys.com/docs")
         assertTrue(tabMatches(t, ""))
         assertTrue(tabMatches(t, "  "))
         assertTrue(tabMatches(t, "browser"))

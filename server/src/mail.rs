@@ -274,11 +274,11 @@ mod tests {
                 &serde_json::json!({"link": "https://x/account/verify?token=T", "label": "Krunk 0.8.0 on Windows 11",
                                     "platform": "Windows", "country": "DE", "time": "2026-11-08 12:00 UTC",
                                     "browser": "Chrome on Android", "records": "12", "devices": "2", "sessions": "1"}),
-                "https://krunk.209.wf",
+                "https://krunk.kruxsys.com",
             );
             assert!(!subject.is_empty() && !subject.contains('\n') && subject.len() < 80, "{t:?}");
             assert!(!body.contains("{{"), "{t:?} leaves a placeholder: {body}");
-            assert!(body.contains("https://krunk.209.wf/privacy"));
+            assert!(body.contains("https://krunk.kruxsys.com/privacy"));
             assert!(!body.contains("<") && !body.contains("http://"), "plain text, https links only");
             assert_eq!(Template::from_name(t.name()), Some(t));
         }

@@ -165,6 +165,6 @@ val LICENSES: List<LicenseEntry> = listOf(
         "Rust crates of the shared core",
         "MIT or Apache-2.0 unless noted",
         "serde, serde_json, url, psl, RustCrypto argon2 and chacha20poly1305 and the rest of Cargo.lock.",
-        "https://krunk.209.wf",
+        "https://krunk.kruxsys.com",
     ),
 )

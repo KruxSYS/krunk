@@ -80,7 +80,7 @@ flow_suggestions() {
 }
 
 flow_open_link_new_tab() {
-  echo "== open-link-new-tab"; go "krunk.209.wf"; longpress 696 $((230 + PAGE_SHIFT)); shot flow-context-menu
+  echo "== open-link-new-tab"; go "krunk.kruxsys.com"; longpress 696 $((230 + PAGE_SHIFT)); shot flow-context-menu
   tap 300 1465; wait_s 3; shot flow-open-in-new-tab   # "Open in new tab" row; counter shows 2
 }
 

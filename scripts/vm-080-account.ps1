@@ -1,6 +1,6 @@
 # Krunk 0.8.0 (C, items 16-17): Settings → Account. $Phase:
 #   release  the release build: an idle start with Settings → Account open (signed out) under a
-#            pktmon capture of port 443: no packet to krunk.209.wf's addresses. Then Sign in once:
+#            pktmon capture of port 443: no packet to krunk.kruxsys.com's addresses. Then Sign in once:
 #            live has no link endpoints before S3 → the card says sign-in isn't available (404).
 #   offline  the --dev build (site http://127.0.0.1:18080) with the tunnel down: Sign in → "couldn't
 #            reach".
@@ -46,8 +46,8 @@ function Finish {
 }
 
 if ($Phase -eq 'release') {
-  $ips = @(Resolve-DnsName krunk.209.wf -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress } | ForEach-Object { $_.IPAddress })
-  Log "[$P] krunk.209.wf resolves to $($ips -join ', ')"
+  $ips = @(Resolve-DnsName krunk.kruxsys.com -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress } | ForEach-Object { $_.IPAddress })
+  Log "[$P] krunk.kruxsys.com resolves to $($ips -join ', ')"
   pktmon filter remove | Out-Null
   pktmon filter add -p 443 | Out-Null
   pktmon start --capture --pkt-size 0 -f "$Shots\$P-idle.etl" | Out-Null
@@ -73,7 +73,7 @@ if ($Phase -eq 'release') {
     if (-not ($ips | Where-Object { $l -match ([regex]::Escape($_) + '\.443') })) { continue }
     if ($ts -lt $t1) { $idle++ } else { $after++ }
   }
-  Log "[$P] idle 75 s with Settings > Account open: $idle packets to krunk.209.wf; after Sign in: $after (the capture works); $all packet lines on port 443 in total"
+  Log "[$P] idle 75 s with Settings > Account open: $idle packets to krunk.kruxsys.com; after Sign in: $after (the capture works); $all packet lines on port 443 in total"
   Remove-Item "$Shots\$P-idle.etl" -Force -ErrorAction SilentlyContinue
   Log "[$P] release sign-in against live: $(KLog 'account:')"
   Finish

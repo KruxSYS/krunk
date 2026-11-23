@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn acceptance_rules() {
         let now = Utc::now();
-        let h = "krunk.209.wf";
+        let h = "krunk.kruxsys.com";
         assert_eq!(check_response(&ok_response("login", h, now), "login", h, false, now), Ok(()));
         assert!(check_response(&SiteverifyResponse::default(), "login", h, false, now).is_err());
         assert_eq!(check_response(&ok_response("register", h, now), "login", h, false, now), Err("action mismatch"));
@@ -236,7 +236,7 @@ mod tests {
                     s2.lock().unwrap().push(f);
                     let status = { let mut g = sc.lock().unwrap(); if g.is_empty() { 200 } else { g.remove(0) } };
                     let body = format!(
-                        r#"{{"success":true,"hostname":"krunk.209.wf","action":"login","challenge_ts":"{}","error-codes":[]}}"#,
+                        r#"{{"success":true,"hostname":"krunk.kruxsys.com","action":"login","challenge_ts":"{}","error-codes":[]}}"#,
                         Utc::now().to_rfc3339()
                     );
                     (StatusCode::from_u16(status).unwrap(), body)
@@ -252,7 +252,7 @@ mod tests {
     #[tokio::test]
     async fn siteverify_sends_the_fields_and_retries_with_the_same_key() {
         let (url, seen) = mock(vec![500, 503]).await;
-        let t = Turnstile::with_url(&url, "sekrit", "krunk.209.wf", false).unwrap();
+        let t = Turnstile::with_url(&url, "sekrit", "krunk.kruxsys.com", false).unwrap();
         let r = t.siteverify("tok", "203.0.113.9".parse().unwrap()).await.unwrap();
         assert!(r.success);
         let forms = seen.lock().unwrap().clone();
@@ -273,7 +273,7 @@ mod tests {
     #[tokio::test]
     async fn siteverify_down_fails_closed() {
         let (url, _) = mock(vec![500, 500, 500]).await;
-        let t = Turnstile::with_url(&url, "s", "krunk.209.wf", false).unwrap();
+        let t = Turnstile::with_url(&url, "s", "krunk.kruxsys.com", false).unwrap();
         let e = t.siteverify("tok", "203.0.113.9".parse().unwrap()).await.unwrap_err();
         assert_eq!(e.status, StatusCode::SERVICE_UNAVAILABLE);
         // Nothing listening at all.

@@ -56,7 +56,7 @@ async fn mock_siteverify() -> String {
             let action = parts.next().unwrap_or("");
             let now = chrono::Utc::now();
             let ts = if kind == "old" { now - chrono::Duration::seconds(400) } else { now };
-            let host = if kind == "badhost" { "evil.example" } else { "krunk.209.wf" };
+            let host = if kind == "badhost" { "evil.example" } else { "krunk.kruxsys.com" };
             axum::Json(json!({
                 "success": kind != "fail",
                 "hostname": host,
@@ -91,13 +91,13 @@ async fn env() -> Option<Env> {
     crate::db::migrate(&db).await.unwrap();
     let env = [
         ("DATABASE_URL", url.as_str()),
-        ("PUBLIC_BASE_URL", "https://krunk.209.wf"),
+        ("PUBLIC_BASE_URL", "https://krunk.kruxsys.com"),
         ("TURNSTILE_SITE_KEY", "0x4AAAsite"),
         ("TURNSTILE_SECRET_KEY", "0x4AAAsecret"),
         ("SMTP_HOST", "smtp.example.org"),
     ];
     let config = Config::from_lookup(&|k| env.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())).unwrap();
-    let turnstile = Turnstile::with_url(&mock_siteverify().await, "0x4AAAsecret", "krunk.209.wf", false).unwrap();
+    let turnstile = Turnstile::with_url(&mock_siteverify().await, "0x4AAAsecret", "krunk.kruxsys.com", false).unwrap();
     let state = AppState {
         config: Arc::new(config),
         db: db.clone(),
@@ -149,7 +149,7 @@ impl Browser {
             .uri(format!("/api/v1/web/{path}"))
             .header(header::USER_AGENT, self.ua);
         if method != Method::GET {
-            b = b.header(header::ORIGIN, "https://krunk.209.wf").header(header::CONTENT_TYPE, "application/json");
+            b = b.header(header::ORIGIN, "https://krunk.kruxsys.com").header(header::CONTENT_TYPE, "application/json");
         }
         let cookies: Vec<String> = [(sessions::COOKIE, &self.cookie), (sessions::REG_COOKIE, &self.reg)]
             .iter()
@@ -262,7 +262,7 @@ async fn register_verify_login_logout() {
     assert_eq!(mails.len(), 1);
     assert_eq!((mails[0].0.as_str(), mails[0].1.as_str()), ("Alice@example.org", "verify"));
     let token = link_token(&e.db, "Alice@example.org", "verify").await;
-    assert!(mails[0].2["link"].as_str().unwrap().starts_with("https://krunk.209.wf/account/verify?token="));
+    assert!(mails[0].2["link"].as_str().unwrap().starts_with("https://krunk.kruxsys.com/account/verify?token="));
     // Another browser (no registration cookie) needs the password.
     let mut other = Browser::new();
     let r = other.post(&e, "verify-email", json!({"token": token})).await;

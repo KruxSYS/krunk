@@ -13,7 +13,7 @@ Conventions: "MUST" etc. as in RFC 2119. `‖` is concatenation. `lp(x)` = 2-byt
 - The **server** stores opaque ciphertext and authenticated key directories. It authenticates
   accounts (email + password) and devices (tokens). It never receives a key, a passphrase or a
   recovery key.
-- The **website** (krunk.209.wf) handles registration, login, device approval of *links*, and
+- The **website** (krunk.kruxsys.com) handles registration, login, device approval of *links*, and
   device/session management. It never handles keys. Key material is entered only in the browser's
   trusted `krunk://` pages.
 - The **client** (desktop now, Android later) runs the shared Rust sync core (`core::sync`).
@@ -253,11 +253,11 @@ This is the OAuth 2.0 Device Authorization Grant used as a pattern, not full OAu
 ```mermaid
 sequenceDiagram
     participant B as Krunk (new device N)
-    participant S as API (krunk.209.wf/api)
+    participant S as API (krunk.kruxsys.com/api)
     participant W as Website (user's browser tab)
     B->>S: POST /api/v1/link/authorize {platform, label, client_version}
     S-->>B: {device_code (32 B), user_code "ABCD-EFGH", verification_uri_complete, expires_in 600, interval 5}
-    B->>W: opens https://krunk.209.wf/link?code=ABCD-EFGH (and shows the code)
+    B->>W: opens https://krunk.kruxsys.com/link?code=ABCD-EFGH (and shows the code)
     W->>S: (signed in, cookie+CSRF) GET /api/v1/web/link/ABCD-EFGH
     S-->>W: {label "Krunk 0.3 on Windows 11", platform, country "DE", age_s}
     W->>S: POST /api/v1/web/link/ABCD-EFGH/approve {confirm_code: "ABCD-EFGH"} (typed or confirmed, re-auth within 10 min required)
@@ -407,10 +407,10 @@ app exists) or a phone browser, which gets an ordinary website session.
 ```mermaid
 sequenceDiagram
     participant W as Website (signed-in browser)
-    participant S as API (krunk.209.wf/api)
+    participant S as API (krunk.kruxsys.com/api)
     participant P as Phone (native app or browser)
     W->>S: POST /api/v1/web/pair/start {} (re-auth within 10 min required)
-    S-->>W: {pair_id, url "https://krunk.209.wf/pair#TOKEN", qr_svg, expires_in 300}
+    S-->>W: {pair_id, url "https://krunk.kruxsys.com/pair#TOKEN", qr_svg, expires_in 300}
     W-->>P: shows the QR code · P scans it (the token stays in the URL fragment)
     alt native app
         P->>S: POST /api/v1/link/pair/claim {token, platform, label, client_version}
@@ -748,7 +748,7 @@ The test vectors include 30 tricky URLs, and both desktop and Android must produ
 - **Retention:** the history kept on the server is capped at 20,000 URLs. Older entries are
   evicted by the client with tombstones, oldest `last visit` first.
 
-## 11. API (all under `https://krunk.209.wf/api/v1/`)
+## 11. API (all under `https://krunk.kruxsys.com/api/v1/`)
 
 ### 11.1 Common rules
 - **Format:** JSON only (`Content-Type: application/json`).

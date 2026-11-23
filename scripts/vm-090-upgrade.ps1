@@ -8,7 +8,7 @@
 #   upgrade  0.9.0 (appdev090) on that profile: browser.db v5 → v6 with every count equal, the
 #            vault opens unchanged (format kept), browsing works; then idle with Settings →
 #            Account/Sync open, signed in, sync off, until 10 minutes after the start, under a
-#            pktmon capture of port 443 (krunk.209.wf); the DPAPI test binary runs meanwhile.
+#            pktmon capture of port 443 (krunk.kruxsys.com); the DPAPI test binary runs meanwhile.
 #            Positive control at the end: Turn on sync… → krunk://sync → Turn on (the first
 #            sync request); the page is left at the setup step for 090-sync.
 param([string]$Phase = 'prep080')
@@ -104,8 +104,8 @@ if ($Phase -eq 'prep080') {
   Copy-Item "$profile\Krunk\krunk.log" "$Shots\$P-krunk.log"
 } else {
   $before = Get-Content "$K\p090u-counts-080.txt"
-  $ips = @(Resolve-DnsName krunk.209.wf -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress } | ForEach-Object { $_.IPAddress })
-  Log "[$P] krunk.209.wf resolves to $($ips -join ', ')"
+  $ips = @(Resolve-DnsName krunk.kruxsys.com -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress } | ForEach-Object { $_.IPAddress })
+  Log "[$P] krunk.kruxsys.com resolves to $($ips -join ', ')"
   pktmon filter remove | Out-Null
   pktmon filter add -p 443 | Out-Null
   pktmon start --capture --pkt-size 0 -f "$Shots\$P-idle.etl" | Out-Null
@@ -149,7 +149,7 @@ if ($Phase -eq 'prep080') {
     if (-not ($ips | Where-Object { $l -match ([regex]::Escape($_) + '\.443') })) { continue }
     if ($ts -lt $t1) { $idle++ } else { $after++ }
   }
-  Log "[$P] port 443 to krunk.209.wf: $idle packets in the 10-minute window, $after after; $all packet lines on 443 in total (filter lists etc.)"
+  Log "[$P] port 443 to krunk.kruxsys.com: $idle packets in the 10-minute window, $after after; $all packet lines on 443 in total (filter lists etc.)"
   Remove-Item "$Shots\$P-idle.etl" -Force -ErrorAction SilentlyContinue
   Log "[$P] counts before (0.8.0): $before"
   Log "[$P] counts after  (0.9.0): $(Counts)"

@@ -11,7 +11,7 @@ pub fn svg(data: &str) -> Option<String> {
 mod tests {
     #[test]
     fn renders_a_link() {
-        let s = super::svg("https://krunk.209.wf/pair#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
+        let s = super::svg("https://krunk.kruxsys.com/pair#AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap();
         assert!(s.contains("<svg") && s.ends_with("</svg>"), "{s}");
         assert!(!s.contains("<script"));
     }

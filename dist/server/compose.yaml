@@ -12,7 +12,7 @@ services:
       SITE_ADDRESS: ${SITE_ADDRESS:-:8080}
       CADDY_GLOBAL_OPTIONS: ${CADDY_GLOBAL_OPTIONS:-}
       # The hop in front of Caddy whose CF-Connecting-IP is trusted (OPEN_QUESTIONS Q8): on
-      # krunk.209.wf that is ai-pipe's proxy. Standalone deployments set their own, or "" for none.
+      # krunk.kruxsys.com that is ai-pipe's proxy. Standalone deployments set their own, or "" for none.
       TRUSTED_PROXIES_EXTRA: ${TRUSTED_PROXIES_EXTRA-10.250.137.4/32}
     volumes:
       - krunk-releases:/srv/releases:ro

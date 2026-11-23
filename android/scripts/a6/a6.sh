@@ -207,9 +207,9 @@ t_quiet() {
   save quiet; stop_clean
 }
 
-# 9e with the published APK itself (it can only talk to https://krunk.209.wf): two captures, one
+# 9e with the published APK itself (it can only talk to https://krunk.kruxsys.com): two captures, one
 # from the start through 3 minutes idle and two pages, one around the Check tap. The first may not
-# name krunk.209.wf (TLS SNI) at all; the second must.
+# name krunk.kruxsys.com (TLS SNI) at all; the second must.
 t_quietlive() {
   fresh "$APK"; A "input keyevent KEYCODE_HOME"; sleep 3; A "am force-stop $PKG"
   cap_start quietlive1
@@ -219,11 +219,11 @@ t_quietlive() {
   view "$B/index.html?ql1" 10; view "$B/storage.html?ql2" 10
   shot quietlive-browsed
   cap_stop quietlive1
-  check "9e (published APK): no connection to krunk.209.wf before Check" '! grep -q "krunk.209.wf" "$EV/quietlive1-pcap-summary.txt"'
+  check "9e (published APK): no connection to krunk.kruxsys.com before Check" '! grep -q "krunk.kruxsys.com" "$EV/quietlive1-pcap-summary.txt"'
   cap_start quietlive2
   checktap; sleep 8; shot quietlive-after-check; dump; nodes quietlive-after-check
   cap_stop quietlive2
-  check "9e (published APK): Check reached krunk.209.wf" 'grep -q "krunk.209.wf" "$EV/quietlive2-pcap-summary.txt"'
+  check "9e (published APK): Check reached krunk.kruxsys.com" 'grep -q "krunk.kruxsys.com" "$EV/quietlive2-pcap-summary.txt"'
   check "9e (published APK): Check says up to date" 'has text "is up to date" --contains'
   save quietlive; stop_clean
 }

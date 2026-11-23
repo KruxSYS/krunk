@@ -49,7 +49,7 @@ cd android
 
 | Flavour | For | Update check | `REQUEST_INSTALL_PACKAGES` | Output |
 |---|---|---|---|---|
-| `direct` | the website APK (krunk.209.wf) | yes, only when the user taps it (`src/direct/`) | yes (`src/direct/AndroidManifest.xml`) | per-ABI + universal APKs |
+| `direct` | the website APK (krunk.kruxsys.com) | yes, only when the user taps it (`src/direct/`) | yes (`src/direct/AndroidManifest.xml`) | per-ABI + universal APKs |
 | `play` | Google Play (built, not uploaded) | none: `src/play/` has an empty `UpdateChannel` | no | AAB with per-ABI splits |
 
 `main` code reaches the update check only through `org.krunk.browser.update.UpdateChannel`
@@ -61,7 +61,7 @@ library also carries the FFI verify functions in the Play build, where nothing c
 7) and versionName `0.5.0-qa`, so it installs over 0.4.0 and can update itself to 0.5.0. Only it
 and the debug builds take `-Pkrunk.qaUpdateBase=<url>`, and only they allow plain http to the
 test server (`src/{qa,debug}/res/xml/update_test_network.xml`). With that property set, any
-release task fails the build, so the published APKs always carry `https://krunk.209.wf`. Build the
+release task fails the build, so the published APKs always carry `https://krunk.kruxsys.com`. Build the
 release variants and the qa variant in separate Gradle runs. Never publish a qa APK.
 
 `cargoBuildDebug` / `cargoBuildRelease` run `android/scripts/build-rust.sh <profile>`: a host build
@@ -286,7 +286,7 @@ relative to `.pipeline/evidence-android-0.5.0/`.
 | 9c tampered manifest (one byte; another key) | pass 6/6 | pass 6/6 (warm rerun; the first try failed before the check, on the first cold start after install) | m6/9bcd-a94a728.log, final/9c-api29-rerun.log, final/9cd-api29.log |
 | 9d tampered APK (hash; other certificate) | pass 6/6 | pass 6/6 | m6/9bcd-a94a728.log, final/9cd-api29.log |
 | 9e no unprompted traffic, qa build + updserver log + pcap (start, 3 min idle, 2 pages, Check = exactly 2 requests) | pass 2/2, pcap: the first packets to the update host come with Check | not run | final/9e.log, final/A/quiet* |
-| 9e with the **published** direct APK (pcap SNI: no krunk.209.wf before Check; Check reaches it, "up to date") | pass 3/3 | not run | final/9e-live.log, final/A/quietlive* |
+| 9e with the **published** direct APK (pcap SNI: no krunk.kruxsys.com before Check; Check reaches it, "up to date") | pass 3/3 | not run | final/9e-live.log, final/A/quietlive* |
 | 9f Play AAB via bundletool over 0.4.0 (no update UI, no REQUEST_INSTALL_PACKAGES) | pass 12/12 | not run | final/9f.log, final/9f-aab.sha256 |
 | Round 1 flows (flows.sh) | pass (screenshots; frames after the private flow are black because of FLAG_SECURE, which is correct) | partly: page load, restore, tabs and menu by hand; the script's 1080×2400 coordinates don't fit | qa-a/flows-contact.png, m7/SETUP.md |
 | Round 2 a3 gate idle/allow/blocked | pass 4/4 (2 debug-only skipped) | not run: harness needs page nodes, which arrive late on TCG | qa-a/a3-gate.log |
