@@ -3,7 +3,7 @@
 # instead. The probe server (probe-serve.py, port 18111) is started when it isn't running.
 #   -Dev: KRUNK_DEVTOOLS_PORT=9222 (fast builds only; diagnostic runs, never the clean ones).
 param([string]$App = 'app271r', [string]$Prof = 'x', [string]$Level = 'standard', [string]$Url = 'about:blank',
-  [switch]$Chrome, [switch]$Dev, [switch]$KeepProfile, [string]$Set = '')
+  [switch]$Chrome, [switch]$Dev, [switch]$KeepProfile, [string]$Set = '', [string]$PerfOff = '')
 . C:\pipeline\krunk\lib.ps1
 $K = 'C:\pipeline\krunk'; $V = "$K\v0280"; $Py = 'C:\Program Files\Python312\python.exe'
 if (-not (Get-NetTCPConnection -LocalPort 18111 -State Listen -ErrorAction SilentlyContinue)) {
@@ -29,6 +29,8 @@ if ($Chrome) {
 }
 function StartKrunk {
   $env:LOCALAPPDATA = $P
+  # perf-probe builds: page scripts to leave out (KRUNK_PERF_OFF, e.g. pointer,notify).
+  if ($PerfOff) { $env:KRUNK_PERF_OFF = $PerfOff } else { Remove-Item Env:KRUNK_PERF_OFF -ErrorAction SilentlyContinue }
   if ($Dev) { $env:KRUNK_DEVTOOLS_PORT = '9222' } else { Remove-Item Env:KRUNK_DEVTOOLS_PORT -ErrorAction SilentlyContinue }
   Start-Process -FilePath "$K\$App\Krunk.exe" -WorkingDirectory "$K\$App"
   for ($i = 0; $i -lt 80 -and (MainWindow) -eq [IntPtr]::Zero; $i++) { Start-Sleep -Milliseconds 500 }
@@ -44,7 +46,9 @@ if (-not $KeepProfile) {
   Start-Sleep 4; Get-Process Krunk -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 1
   $args2 = @("protection.level=`"$Level`"", "blockThirdPartyCookies=$(if ($Level -eq 'strict') { 'true' } else { 'false' })")
   if ($Set) { $args2 += $Set.Split(' ') }
-  & $Py "$V\setprof.py" "$P\Krunk\browser.db" @args2 | Out-Null
+  $out = & $Py "$V\setprof.py" "$P\Krunk\browser.db" @args2 2>&1
+  $chk = & $Py "$V\setprof.py" "$P\Krunk\browser.db" show protection
+  Log "setprof: $out / settings now: $chk"
 }
 StartKrunk
 Click 640 30 300

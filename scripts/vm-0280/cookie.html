@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>cookie check</title><pre id="o">…</pre>
+<script>
+// Krunk 0.28.0: are Partitioned (CHIPS) cookies stored and sent back? (GitHub's DataDome cookie)
+(async () => {
+  const q = new URLSearchParams(location.search), tag = q.get('tag') || 'x';
+  await fetch('/setcookies', { cache: 'no-store' });
+  document.cookie = 'jschips=1; Path=/; Secure; SameSite=Lax; Partitioned';
+  document.cookie = 'jsplain=1; Path=/; SameSite=Lax';
+  const h = await (await fetch('/headers', { cache: 'no-store' })).json();
+  const cookie = (h.find(([k]) => k.toLowerCase() === 'cookie') || [, '(none)'])[1];
+  const r = { tag, documentCookie: document.cookie, sentCookie: cookie };
+  document.getElementById('o').textContent = JSON.stringify(r, null, 1);
+  await fetch('/report?tag=' + tag + '&role=cookie', { method: 'POST', body: JSON.stringify(r) });
+})();
+</script>

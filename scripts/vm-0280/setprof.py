@@ -18,7 +18,12 @@ for kv in sys.argv[2:]:
     o = s
     for p in parts[:-1]:
         o = o.setdefault(p, {})
-    o[parts[-1]] = json.loads(v)
+    # PowerShell 5.1 drops the quotes of `key="text"` on its way to a native program: a value
+    # that isn't JSON is taken as a string.
+    try:
+        o[parts[-1]] = json.loads(v)
+    except ValueError:
+        o[parts[-1]] = v
 db.execute("insert or replace into kv(key,value) values('settings',?)", (json.dumps(s),))
 db.commit()
 print("ok")

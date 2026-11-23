@@ -33,7 +33,8 @@ case "${1:-}" in
   --dev) dist="$root/target/dev-dist"; features=(--features dev-updates) ;;
   --probe) dist="$root/target/probe-dist"; features=(--features perf-probe) ;;
   --harness) dist="$root/target/harness-dist"; features=(--features perf-harness) ;;
-  --fast) profile=fast; dist="$root/target/fast-dist"; features=(--features devtools-port) ;;
+  # KRUNK_FAST_FEATURES: more features for a fast build (e.g. perf-probe for an A/B check).
+  --fast) profile=fast; dist="$root/target/fast-dist"; features=(--features "devtools-port${KRUNK_FAST_FEATURES:+,$KRUNK_FAST_FEATURES}") ;;
   "") ;;
   *) echo "usage: $0 [--debug | --dev | --probe | --harness | --fast]" >&2; exit 2 ;;
 esac

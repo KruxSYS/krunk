@@ -36,6 +36,12 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         self._log()
         u = urlparse(self.path)
+        if u.path == "/setcookies":
+            # A plain cookie, a Partitioned (CHIPS) one and one set later by script (cookie.html).
+            return self._send(200, b"set", "text/plain", extra=(
+                ("Set-Cookie", "plain=1; Path=/; SameSite=Lax"),
+                ("Set-Cookie", "chips=1; Path=/; Secure; SameSite=Lax; Partitioned"),
+            ))
         if u.path == "/headers":
             return self._send(200, json.dumps(list(self.headers.items())).encode(), "application/json")
         name = os.path.normpath(u.path.lstrip("/") or "probe.html")

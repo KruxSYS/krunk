@@ -1,0 +1,227 @@
+--- a/libcef/browser/net_service/cookie_helper.h
++++ b/libcef/browser/net_service/cookie_helper.h
+@@ -7,6 +7,10 @@
+ 
+ #include "base/functional/callback_forward.h"
+ #include "cef/libcef/browser/browser_context.h"
++#include "base/memory/ref_counted.h"
++#include "base/synchronization/lock.h"
++#include "content/public/browser/global_routing_id.h"
++#include "net/base/isolation_info.h"
+ #include "net/cookies/canonical_cookie.h"
+ 
+ namespace net {
+@@ -40,8 +44,37 @@
+ // both retrieved and allowed by |allow_cookie_callback|. The loaded cookies
+ // will not be set on |request|; that should be done in |done_callback|. Must be
+ // called on the IO thread.
++// Krunk: the requesting frame's isolation for its subresources, looked up on the
++// UI thread when cookies are loaded (after the document committed) and read on
++// the IO thread when cookies are saved. Requests without trusted params (all
++// renderer-initiated ones) take their cookie partition key (CHIPS) from it, as
++// the network service does, so partitioned cookies are sent and saved.
++class FrameCookiePartition
++    : public base::RefCountedThreadSafe<FrameCookiePartition> {
++ public:
++  explicit FrameCookiePartition(const content::GlobalRenderFrameHostId& id)
++      : frame_id_(id) {}
++  const content::GlobalRenderFrameHostId& frame_id() const { return frame_id_; }
++  void Set(const net::IsolationInfo& info) {
++    base::AutoLock lock(lock_);
++    info_ = info;
++  }
++  net::IsolationInfo Get() const {
++    base::AutoLock lock(lock_);
++    return info_;
++  }
++
++ private:
++  friend class base::RefCountedThreadSafe<FrameCookiePartition>;
++  ~FrameCookiePartition() = default;
++  const content::GlobalRenderFrameHostId frame_id_;
++  mutable base::Lock lock_;
++  net::IsolationInfo info_;
++};
++
+ void LoadCookies(const CefBrowserContext::Getter& browser_context_getter,
+                  const network::ResourceRequest& request,
++                 scoped_refptr<FrameCookiePartition> frame_partition,
+                  const AllowCookieCallback& allow_cookie_callback,
+                  DoneCookieCallback done_callback);
+ 
+@@ -53,6 +86,7 @@
+ // on the IO thread.
+ void SaveCookies(const CefBrowserContext::Getter& browser_context_getter,
+                  const network::ResourceRequest& request,
++                 scoped_refptr<FrameCookiePartition> frame_partition,
+                  net::HttpResponseHeaders* headers,
+                  const AllowCookieCallback& allow_cookie_callback,
+                  DoneCookieCallback done_callback);
+--- a/libcef/browser/net_service/cookie_helper.cc
++++ b/libcef/browser/net_service/cookie_helper.cc
+@@ -8,9 +8,11 @@
+ #include "cef/libcef/browser/thread_util.h"
+ #include "cef/libcef/common/net_service/net_service_util.h"
+ #include "content/public/browser/browser_context.h"
++#include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/storage_partition.h"
+ #include "content/public/common/url_constants.h"
+ #include "net/base/load_flags.h"
++#include "net/cookies/cookie_partition_key.h"
+ #include "net/cookies/cookie_options.h"
+ #include "net/cookies/cookie_util.h"
+ #include "services/network/cookie_manager.h"
+@@ -37,6 +39,19 @@
+       ->GetCookieManagerForBrowserProcess();
+ }
+ 
++// Krunk: a request's cookie partition key as URLRequestHttpJob computes it.
++std::optional<net::CookiePartitionKey> PartitionKeyFrom(
++    const net::IsolationInfo& info,
++    const net::SiteForCookies& site_for_cookies,
++    const GURL& url) {
++  if (info.IsEmpty()) {
++    return std::nullopt;
++  }
++  return net::CookiePartitionKey::FromNetworkIsolationKey(
++      info.network_isolation_key(), site_for_cookies, net::SchemefulSite(url),
++      info.IsMainFrameRequest());
++}
++
+ net::CookieOptions GetCookieOptions(const network::ResourceRequest& request,
+                                     bool for_loading_cookies) {
+   // Match the logic from InterceptionJob::FetchCookies and
+@@ -114,10 +129,24 @@
+ void LoadCookiesOnUIThread(
+     const CefBrowserContext::Getter& browser_context_getter,
+     const GURL& url,
++    const net::SiteForCookies& site_for_cookies,
+     const net::CookieOptions& options,
+     net::CookiePartitionKeyCollection cookie_partition_key_collection,
++    scoped_refptr<FrameCookiePartition> frame_partition,
+     const AllowCookieCallback& allow_cookie_callback,
+     DoneCookieCallback done_callback) {
++  // Krunk: a renderer-initiated request is partitioned like its frame's
++  // subresources (the document has committed by now).
++  if (frame_partition) {
++    if (auto* rfh =
++            content::RenderFrameHost::FromID(frame_partition->frame_id())) {
++      const net::IsolationInfo& info = rfh->GetIsolationInfoForSubresources();
++      frame_partition->Set(info);
++      cookie_partition_key_collection = net::CookiePartitionKeyCollection(
++          PartitionKeyFrom(info, site_for_cookies, url));
++    }
++  }
++
+   auto cef_browser_context = GetBrowserContext(browser_context_getter);
+   auto browser_context =
+       cef_browser_context ? cef_browser_context->AsBrowserContext() : nullptr;
+@@ -238,6 +267,7 @@
+ 
+ void LoadCookies(const CefBrowserContext::Getter& browser_context_getter,
+                  const network::ResourceRequest& request,
++                 scoped_refptr<FrameCookiePartition> frame_partition,
+                  const AllowCookieCallback& allow_cookie_callback,
+                  DoneCookieCallback done_callback) {
+   CEF_REQUIRE_IOT();
+@@ -253,24 +283,27 @@
+   net::CookiePartitionKeyCollection partition_key_collection;
+   if (request.trusted_params.has_value() &&
+       !request.trusted_params->isolation_info.IsEmpty()) {
+-    const auto& isolation_info = request.trusted_params->isolation_info;
+-    partition_key_collection = net::CookiePartitionKeyCollection(
+-        net::CookiePartitionKey::FromNetworkIsolationKey(
+-            isolation_info.network_isolation_key(), request.site_for_cookies,
+-            net::SchemefulSite(request.url),
+-            isolation_info.IsMainFrameRequest()));
++    partition_key_collection =
++        net::CookiePartitionKeyCollection(PartitionKeyFrom(
++            request.trusted_params->isolation_info, request.site_for_cookies,
++            request.url));
++    // Krunk: the request's own isolation decides, not the frame's.
++    frame_partition = nullptr;
+   }
+ 
+   CEF_POST_TASK(
+       CEF_UIT,
+       base::BindOnce(LoadCookiesOnUIThread, browser_context_getter, request.url,
++                     request.site_for_cookies,
+                      GetCookieOptions(request, /*for_loading_cookies=*/true),
+-                     std::move(partition_key_collection), allow_cookie_callback,
++                     std::move(partition_key_collection),
++                     std::move(frame_partition), allow_cookie_callback,
+                      std::move(done_callback)));
+ }
+ 
+ void SaveCookies(const CefBrowserContext::Getter& browser_context_getter,
+                  const network::ResourceRequest& request,
++                 scoped_refptr<FrameCookiePartition> frame_partition,
+                  net::HttpResponseHeaders* headers,
+                  const AllowCookieCallback& allow_cookie_callback,
+                  DoneCookieCallback done_callback) {
+@@ -293,6 +326,17 @@
+   size_t iter = 0;
+   net::CookieList allowed_cookies;
+   int total_count = 0;
++  // Krunk: partitioned (CHIPS) cookies keep their partition.
++  std::optional<net::CookiePartitionKey> partition_key;
++  if (request.trusted_params.has_value() &&
++      !request.trusted_params->isolation_info.IsEmpty()) {
++    partition_key =
++        PartitionKeyFrom(request.trusted_params->isolation_info,
++                         request.site_for_cookies, request.url);
++  } else if (frame_partition) {
++    partition_key = PartitionKeyFrom(frame_partition->Get(),
++                                     request.site_for_cookies, request.url);
++  }
+ 
+   while (headers->EnumerateHeader(&iter, name, &cookie_string)) {
+     total_count++;
+@@ -300,7 +344,7 @@
+     net::CookieInclusionStatus returned_status;
+     std::unique_ptr<net::CanonicalCookie> cookie = net::CanonicalCookie::Create(
+         request.url, cookie_string, base::Time::Now(), response_date,
+-        /*cookie_partition_key=*/std::nullopt, net::CookieSourceType::kHTTP,
++        partition_key, net::CookieSourceType::kHTTP,
+         &returned_status);
+     if (!returned_status.IsInclude()) {
+       continue;
+--- a/libcef/browser/net_service/resource_request_handler_wrapper.cc
++++ b/libcef/browser/net_service/resource_request_handler_wrapper.cc
+@@ -281,6 +281,8 @@
+       }
+ 
+       global_id_ = global_id;
++      frame_partition_ =
++          base::MakeRefCounted<cookie_helper::FrameCookiePartition>(global_id);
+       is_navigation_ = is_navigation;
+       is_download_ = is_download;
+       request_initiator_ = request_initiator.Serialize();
+@@ -321,6 +323,7 @@
+     scoped_refptr<CefIOThreadState> iothread_state_;
+     CefBrowserContext::CookieableSchemes cookieable_schemes_;
+     content::GlobalRenderFrameHostId global_id_;
++    scoped_refptr<cookie_helper::FrameCookiePartition> frame_partition_;
+     bool is_navigation_ = true;
+     bool is_download_ = false;
+     CefString request_initiator_;
+@@ -666,7 +669,8 @@
+         &InterceptedRequestHandlerWrapper::ContinueWithLoadedCookies,
+         weak_ptr_factory_.GetWeakPtr(), request_id, std::move(callback));
+     cookie_helper::LoadCookies(init_state_->browser_context_getter_,
+-                               *(state->request_), allow_cookie_callback,
++                               *(state->request_), init_state_->frame_partition_,
++                               allow_cookie_callback,
+                                std::move(done_cookie_callback));
+   }
+ 
+@@ -1041,7 +1045,8 @@
+         &InterceptedRequestHandlerWrapper::ContinueWithSavedCookies,
+         weak_ptr_factory_.GetWeakPtr(), request_id, std::move(callback));
+     cookie_helper::SaveCookies(
+-        init_state_->browser_context_getter_, *(state->request_), headers,
++        init_state_->browser_context_getter_, *(state->request_),
++        init_state_->frame_partition_, headers,
+         allow_cookie_callback, std::move(done_cookie_callback));
+   }
+ 

@@ -17,8 +17,6 @@ pub(super) fn off(name: &str) -> bool {
 }
 
 pub(super) fn apply(s: &mut Scripts) {
-    s.gpc &= !off("gpc");
-    s.dnt &= !off("dnt");
     s.page_tokens &= !off("tokens");
     s.login &= !off("login");
     s.audio &= !off("audio");
