@@ -336,7 +336,7 @@ PAGE_FOOT = """</div>
     </div>
     <nav aria-label="Footer"><h2>Krunk</h2><a href="/#install">Download</a><a class="opt" href="/#features">Features</a><a href="/changelog">Changelog</a></nav>
     <nav aria-label="Account"><h2>Account</h2><a href="/account/login">Sign in</a><a href="/account/register">Create an account</a></nav>
-    <nav aria-label="About"><h2>About</h2><a href="/privacy">Privacy</a><a href="mailto:privacy@209.wf">Contact</a></nav>
+    <nav aria-label="About"><h2>About</h2><a href="/privacy">Privacy</a><a href="mailto:privacy@kruxsys.com">Contact</a></nav>
   </div>
 </footer>
 </body>

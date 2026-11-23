@@ -105,7 +105,7 @@ https://krunk.kruxsys.com/privacy exists (`dist/server/site/privacy.html`, serve
       stay on the device; how to delete (clear data / uninstall); passkeys handled by Google
       Play services.
 - [ ] The website APK's update check (direct flavour, 0.5.0) needs a line too (what it sends).
-- [ ] "Contact" names `privacy@209.wf`: decide whether that is also the Play contact address.
+- [ ] "Contact" names `privacy@kruxsys.com`: decide whether that is also the Play contact address.
 - [ ] Publish the site change before submitting (Cloudflare caches assets 4 h; the page itself
       should be checked live).
 

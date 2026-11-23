@@ -6,7 +6,7 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 ## 0.28.1 — 2026-11-23
 
 - **Krunk's website moved to krunk.kruxsys.com.** Updates, signing in and sync now use the new
-  address; krunk.209.wf no longer answers. Earlier versions can't find this update by
+  address; the old address no longer answers. Earlier versions can't find this update by
   themselves: download it from https://krunk.kruxsys.com and install it over your current
   version; your settings, passwords and tabs stay as they are.
 
@@ -185,8 +185,8 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 
 ## 0.24.0 — 2026-11-17
 
-- **Krunk signs you in to krunk.209.wf.** When Krunk is signed in to your Krunk account (with or
-  without sync), opening krunk.209.wf signs the website in too: you land on your account page with
+- **Krunk signs you in to krunk.kruxsys.com.** When Krunk is signed in to your Krunk account (with or
+  without sync), opening krunk.kruxsys.com signs the website in too: you land on your account page with
   no password. The website lists it as "Signed in by Krunk" in your activity and marks the browser
   in Signed-in browsers.
 - **Signing out on the website sticks.** If you sign out on the website, Krunk leaves it signed
@@ -929,7 +929,7 @@ Not tested: dragging across monitors with different scaling. The engine is the s
   - you can sort by cookies, and "Clear all shown" says how many sites it clears.
 - **Your device's name** no longer carries the version from the day you signed in. Settings and
   the website show the version it runs now.
-- **Website** (krunk.209.wf): your account page has a card for each topic: profile and email,
+- **Website** (krunk.kruxsys.com): your account page has a card for each topic: profile and email,
   password, two-step verification, devices and sync, signed-in browsers.
 
 **Testing note:** tested on Windows 11 (one monitor, 100 % scaling). The new features were each
@@ -960,7 +960,7 @@ YouTube history. The engine is 0.10.0's.
   the same domain (for example all your `*.example.com` services), without saying which site
   they were for. A site with no logins of its own still offers those of its domain, each with its
   site's name.
-- **Account page:** the devices list on krunk.209.wf now shows the version each device runs
+- **Account page:** the devices list on krunk.kruxsys.com now shows the version each device runs
   after an update, not the one it had when it was linked (a server fix; it shows up once the
   device has synced).
 
@@ -984,7 +984,7 @@ tested on Windows 11 before and after the fix, and the full regression was not r
 - **Smoother tab strip:** pages that change their title or icon all the time (mail, chat) no
   longer make Krunk redraw the whole tab strip or the toolbar, and page titles are written to
   your history in the background.
-- **A new look for the website** (krunk.209.wf): the home page, the download box, the privacy
+- **A new look for the website** (krunk.kruxsys.com): the home page, the download box, the privacy
   notice and the error pages.
 
 **Engine note:** 0.10.0 changes the engine itself. Krunk's `libcef.dll` (Chromium 156.0.8078.80
@@ -1016,7 +1016,7 @@ as Chrome on that PC.
   - Choose per device what syncs; Sync now; turn sync off (keeping or removing what it brought).
   - Your passwords are protected by the vault as before: the key that encrypts synced passwords is
     kept only inside the vault.
-- **A redesigned account website** (krunk.209.wf/account): a clearer dashboard with your devices
+- **A redesigned account website** (krunk.kruxsys.com/account): a clearer dashboard with your devices
   and their sync state, "Sign out everywhere else", rename and remove, two-step sign-in with a
   copyable key, backup codes you can copy or download, a dark theme, and better keyboard and
   screen-reader support. Signing in a device shows the code large, with Approve and Deny apart.
@@ -1036,7 +1036,7 @@ media-only flows that 0.9.0 doesn't touch didn't run within the test time: 070-f
 ## 0.8.0 — 2026-11-09
 
 - **Krunk account:** Settings → Account signs the browser in to your Krunk account. Sign in shows
-  a code and opens krunk.209.wf, where you approve this device; the card then shows who you are
+  a code and opens krunk.kruxsys.com, where you approve this device; the card then shows who you are
   signed in as, with Manage account and Sign out on this device. There is no sync yet. Krunk
   sends nothing to the account server until you click Sign in, and keeps the sign-in protected
   for your Windows user in `account.json`. Private windows show nothing of the account.
@@ -1195,7 +1195,7 @@ knows Krunk.
   a download animation, speeds and segments; new-tab shortcuts, backgrounds and sections;
   appearance options (accent, colours, density, font, tab shape, toolbar items); cookie and
   site-data management by size; no page-visible page bridge any more.
-- **Website:** krunk.209.wf tells Krunk users whether they are up to date.
+- **Website:** krunk.kruxsys.com tells Krunk users whether they are up to date.
 - **Package:** the installer removes a stale `v8_context_snapshot.bin` from older installs.
   Krunk.dll grew from 8.3 to about 11.6 MB (the DNS and extension code).
 
@@ -1333,9 +1333,9 @@ Tabs in as many windows as you like, and DevTools inside the tab's window.
 
 ## 0.2.1 — 2026-11-05
 
-The first release published on Krunk's website, https://krunk.209.wf.
+The first release published on Krunk's website, https://krunk.kruxsys.com.
 
-- The update check now asks https://krunk.209.wf, so this and later versions update themselves
+- The update check now asks https://krunk.kruxsys.com, so this and later versions update themselves
   (Settings → About; Update now installs silently and restarts Krunk). Krunk 0.2.0 pointed at a
   placeholder server: install 0.2.1 over it once by hand.
 - Update-check errors are readable ("the server name could not be resolved" instead of a code).

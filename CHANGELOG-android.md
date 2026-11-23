@@ -6,7 +6,7 @@ What changed in each Krunk for Android release, newest first. The Windows browse
 ## 0.13.1 — 2026-11-23
 
 - **Krunk's website moved to krunk.kruxsys.com.** Updates, signing in and sync now use the new
-  address; krunk.209.wf no longer answers. Earlier versions can't find this update by
+  address; the old address no longer answers. Earlier versions can't find this update by
   themselves: download it from https://krunk.kruxsys.com.
 
 ## 0.13.0 — 2026-11-21
@@ -54,7 +54,7 @@ What changed in each Krunk for Android release, newest first. The Windows browse
 ## 0.11.0 — 2026-11-17
 
 - **Signed in to Krunk, signed in to the website.** While Krunk is signed in to your Krunk
-  account (with or without sync), opening krunk.209.wf signs the website in for you: no password,
+  account (with or without sync), opening krunk.kruxsys.com signs the website in for you: no password,
   no code to type. The website lists it under your signed-in browsers as "Signed in by" this
   phone.
 - **Signing out stays signed out.** If you sign out on the website, Krunk leaves it signed out
@@ -133,7 +133,7 @@ What changed in each Krunk for Android release, newest first. The Windows browse
 ## 0.7.2 — 2026-11-15
 
 - **Sync works again after the account's keys change.** Since a device switched sync to the
-  vault password, this phone said "Krunk couldn't reach krunk.209.wf" when it synced or added
+  vault password, this phone said "Krunk couldn't reach krunk.kruxsys.com" when it synced or added
   passwords: it refused one of its own requests (an address with a comma in it) and called that
   "offline". Nothing ever reached the server.
 - **No more long waits.** When sync has to wait (too many attempts, the server busy), it waits a
@@ -199,7 +199,7 @@ history, settings, the password vault and downloads.
 
 - **Sign in** (Settings › Account & sync) to the Krunk account you use on Windows. Krunk shows a
   code and opens the approval page in a tab; you approve this phone there with your account
-  password. Nothing is sent to krunk.209.wf before you tap Sign in.
+  password. Nothing is sent to krunk.kruxsys.com before you tap Sign in.
 - **Turn on sync** and get the keys in one of three ways:
   - from a device that already syncs: Windows shows 6 digits, you type them on the phone;
   - with your sync passphrase or recovery key: a wrong one is refused with a clear message, and
@@ -236,9 +236,9 @@ bookmarks, history, settings, the password vault and downloads.
 
 - **Coming from 0.4.0 or older? Install this APK over it once.** Those versions cannot check
   for updates, so the step to 0.5.0 is the same as before: download the APK from
-  krunk.209.wf and install it over the installed Krunk. Your data stays. From 0.5.0 on the app
+  krunk.kruxsys.com and install it over the installed Krunk. Your data stays. From 0.5.0 on the app
   can fetch later versions itself.
-- **Check for updates** (Settings › About). Krunk contacts krunk.209.wf only when you tap it,
+- **Check for updates** (Settings › About). Krunk contacts krunk.kruxsys.com only when you tap it,
   and fetches two small files: the update information and its signature. If a newer version is
   there, Krunk shows it with its notes; **Download and install** fetches the one APK for your
   device, with progress and Cancel. Nothing is checked at start-up, on a timer or in the
