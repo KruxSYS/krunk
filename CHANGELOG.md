@@ -3,7 +3,7 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
-## Unreleased
+## 0.29.0 — 2026-11-24
 
 - **Krunk is now a KruxSYS project.** KruxSYS (https://kruxsys.com) publishes Krunk: the website
   at krunk.kruxsys.com has the KruxSYS look and links, the installer and Krunk.exe name KruxSYS

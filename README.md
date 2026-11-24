@@ -20,8 +20,8 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20Android-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="Platforms: Windows | Android">
-  <img src="https://img.shields.io/badge/Windows-0.28.1-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="Windows 0.28.1">
-  <img src="https://img.shields.io/badge/Android-0.13.1%20preview-ffb547?labelColor=0c1016&amp;style=flat-square" alt="Android 0.13.1 preview">
+  <img src="https://img.shields.io/badge/Windows-0.29.0-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="Windows 0.29.0">
+  <img src="https://img.shields.io/badge/Android-0.14.0%20preview-ffb547?labelColor=0c1016&amp;style=flat-square" alt="Android 0.14.0 preview">
   <img src="https://img.shields.io/badge/license-MIT-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="License: MIT">
 </p>
 
@@ -44,12 +44,12 @@ used. It installs per user without administrator rights, or runs portable from a
 - a VPN for Krunk only (WireGuard and OpenVPN files from your provider), with a kill switch
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.28.1.exe` (about 142 MB), from `https://krunk.kruxsys.com`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.29.0.exe` (about 142 MB), from `https://krunk.kruxsys.com`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.28.1.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.29.0.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
@@ -57,7 +57,7 @@ used. It installs per user without administrator rights, or runs portable from a
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.28.1.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.29.0.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:

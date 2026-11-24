@@ -3,7 +3,7 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
-## Unreleased
+## 0.14.0 — 2026-11-24
 
 - **Krunk is now a KruxSYS project, with a new icon.** The launcher icon and the Android TV banner
   show Krunk's "K" in the KruxSYS style (a dark square with cyan corners), and Settings › About

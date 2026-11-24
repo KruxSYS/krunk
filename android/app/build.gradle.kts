@@ -301,8 +301,8 @@ android {
         applicationId = "org.krunk.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 23
-        versionName = "0.13.1"
+        versionCode = 24
+        versionName = "0.14.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Devices (arm64-v8a; armeabi-v7a since 0.12.0 for 32-bit Android TV devices) and the
