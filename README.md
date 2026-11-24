@@ -1,4 +1,30 @@
-# Krunk
+<p align="center">
+  <img src="assets/brand/krunk.svg" width="96" alt="Krunk">
+  &nbsp;&nbsp;
+  <img src="assets/brand/kruxsys.svg" width="96" alt="KruxSYS">
+</p>
+
+<h1 align="center">Krunk</h1>
+
+<p align="center">
+  A lightweight, privacy-minded web browser for Windows and Android: no telemetry, no background chatter.<br>
+  A <a href="https://kruxsys.com/">KruxSYS</a> project
+</p>
+
+<p align="center">
+  <a href="https://krunk.kruxsys.com">Website</a> ·
+  <a href="https://krunk.kruxsys.com/#download">Download</a> ·
+  <a href="https://krunk.kruxsys.com/changelog">Changelog</a> ·
+  <a href="https://kruxsys.com/projects/krunk/">KruxSYS project page</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20Android-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="Platforms: Windows | Android">
+  <img src="https://img.shields.io/badge/Windows-0.28.1-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="Windows 0.28.1">
+  <img src="https://img.shields.io/badge/Android-0.13.1%20preview-ffb547?labelColor=0c1016&amp;style=flat-square" alt="Android 0.13.1 preview">
+  <img src="https://img.shields.io/badge/license-MIT-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="License: MIT">
+</p>
+
 
 Krunk is a lightweight, privacy-minded web browser for Windows 10/11 (x64), written in
 Rust. It brings its own engine: **Chromium 156.0.8078.80** through the Chromium Embedded
@@ -12,23 +38,26 @@ used. It installs per user without administrator rights, or runs portable from a
 - downloads, find, zoom, print and DevTools docked next to the page
 - session restore
 - background-tab sleep, to save memory
-- a Krunk account to sign the browser in (0.8.0; sync comes in a later version)
+- a Krunk account with end-to-end encrypted sync (bookmarks, history, settings, open tabs and,
+  with the vault unlocked, passwords) between your computers and Krunk for Android
+- Chrome extensions from the Chrome Web Store
+- a VPN for Krunk only (WireGuard and OpenVPN files from your provider), with a kill switch
 
 ## Download and requirements
-- **Installer:** `Krunk-Setup-0.8.0.exe` (about 138 MB), from `https://krunk.kruxsys.com`. It installs for the current user
+- **Installer:** `Krunk-Setup-0.28.1.exe` (about 142 MB), from `https://krunk.kruxsys.com`. It installs for the current user
   only, without administrator rights:
   - to `%LOCALAPPDATA%\Programs\Krunk`, with a Start Menu shortcut and, if you tick it, one on
     the desktop;
   - with an entry in Settings → Apps → Installed apps (per user, `HKCU`).
-  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.8.0.exe /S` installs
+  If Krunk is running, the installer asks you to close it. `Krunk-Setup-0.28.1.exe /S` installs
   silently; it then closes a running Krunk itself and waits up to 30 s for it.
   **Uninstalling** removes the program and the shortcuts. Your data (`%LOCALAPPDATA%\Krunk`) is
   kept unless you tick "Also delete my Krunk data"; a silent uninstall (`/S`) always keeps it.
-- **Portable:** `Krunk-win-x64.zip` (about 185 MB; 426 MB unpacked). Extract it anywhere and
+- **Portable:** `Krunk-win-x64.zip` (about 189 MB; 432 MB unpacked). Extract it anywhere and
   run `Krunk.exe`. Keep all files of the folder together; if one is missing, Krunk says so at
   startup. The portable copy uses the same data folder as the installed one.
 - **Verify:** check `SHA256SUMS` (the installer, the zip and the three main binaries):
-  - PowerShell: `Get-FileHash Krunk-Setup-0.8.0.exe`
+  - PowerShell: `Get-FileHash Krunk-Setup-0.28.1.exe`
   - Linux: `sha256sum -c SHA256SUMS`
 - **System:** Windows 10 or 11, 64-bit. No runtime is needed.
 - **Data location:** everything is stored in `%LOCALAPPDATA%\Krunk`:
@@ -1895,9 +1924,10 @@ network traffic it starts itself is the daily filter-list update and the daily u
   not be replaced, stops before changing anything (exit code 3); Krunk shows the reason at its
   next start and offers Repair.
 - **The server** is set when Krunk is built (`UPDATE_BASE_URL`). Builds use
-  **`https://krunk.kruxsys.com`**, the project's website and update server for now (a temporary
-  domain while Krunk is tested). Moving to the final domain takes one release from this server
-  whose build points at the new one. Krunk 0.2.0 builds pointed at the placeholder
+  **`https://krunk.kruxsys.com`**, Krunk's website and update server on KruxSYS's permanent
+  domain (since 0.28.1; earlier builds used krunk.209.wf, which no longer answers, so they must
+  be updated by hand from the website). A build always checks the server it was built with; a
+  build for another server sets `UPDATE_BASE_URL`. Krunk 0.2.0 builds pointed at the placeholder
   `https://krunk.example` and can't update themselves; reinstall them from the website. The
   server itself (Docker, Caddy, behind Cloudflare) is in `dist/server/`; see its README.
 - **Release notes:** `CHANGELOG.md` is their one source. The website's
@@ -2551,10 +2581,10 @@ Page-load harness (0.26.0; details and every option in
 - **The engine is bundled.** Chromium security fixes reach users only with a new Krunk
   release with a newer CEF. Krunk checks for one daily and offers it, but installs only when you
   choose Update now. Releases should follow CEF security releases promptly.
-- **The update server is on a temporary domain** (`https://krunk.kruxsys.com`). When the final
-  domain exists, one release from it must point Krunk at the new domain
-  (`UPDATE_BASE_URL=https://<domain> scripts/build-dist.sh`). 0.2.0 copies (placeholder server)
-  must be reinstalled by hand.
+- **The update server is fixed at build time** (`https://krunk.kruxsys.com`, KruxSYS's
+  permanent domain for Krunk). Another server needs a build that points at it
+  (`UPDATE_BASE_URL=https://<domain> scripts/build-dist.sh`). Copies older than 0.28.1 (the
+  former krunk.209.wf server) and 0.2.0 copies (placeholder server) must be reinstalled by hand.
 - **No certificate revocation or CT list updates by default.** With "Download engine security
   components" off, the CRLSet and Certificate Transparency list are those built into the
   release. Chromium relaxes CT enforcement about 10 weeks after its build date. Turning the
@@ -2727,3 +2757,14 @@ Page-load harness (0.26.0; details and every option in
 - **No third-party editor or Markdown library (0.12.0).** The code editor of `krunk://scripts`
   (`ui/shared/editor.js`, `jstok.js`), the agent panel's Markdown renderer
   (`ui/shell/markdown.js`) and the SSE parser are Krunk's own code. Nothing new is bundled.
+
+## About KruxSYS
+Krunk is a [KruxSYS](https://kruxsys.com/) project. KruxSYS builds privacy-minded software for
+Windows and Android:
+- **Krunk**: this browser ([project page](https://kruxsys.com/projects/krunk/), [website](https://krunk.kruxsys.com))
+- **Screvia**: [kruxsys.com/projects/screvia](https://kruxsys.com/projects/screvia/)
+- **Plexdio**: [kruxsys.com/projects/plexdio](https://kruxsys.com/projects/plexdio/)
+
+Contact: [privacy@kruxsys.com](mailto:privacy@kruxsys.com)
+
+<p align="center"><sub>© 2026 KruxSYS · Krunk is MIT licensed</sub></p>
