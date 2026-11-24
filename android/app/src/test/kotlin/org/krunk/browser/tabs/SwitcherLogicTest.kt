@@ -36,7 +36,7 @@ class SwitcherLogicTest {
         assertTrue(tabMatches(t, ""))
         assertTrue(tabMatches(t, "  "))
         assertTrue(tabMatches(t, "browser"))
-        assertTrue(tabMatches(t, "209.WF"))
+        assertTrue(tabMatches(t, "KRUXSYS.com"))
         assertTrue(tabMatches(t, " docs "))
         assertFalse(tabMatches(t, "firefox"))
     }
