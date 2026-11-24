@@ -83,6 +83,48 @@ pub fn client_info(peer: IpAddr, headers: &HeaderMap, trusted: &TrustedPeers) ->
     ClientInfo { ip, country }
 }
 
+impl ClientInfo {
+    /// The client's address, but only when it is publicly routable (see [`is_public`]).
+    pub fn public_ip(&self) -> Option<IpAddr> {
+        is_public(self.ip).then_some(self.ip)
+    }
+}
+
+/// Whether an address is one a client of the public site can have. Private, loopback,
+/// link-local, unspecified, multicast and carrier-grade-NAT addresses are not: in a sign-in's
+/// history they can only mean the request reached the service on its own host network — a test
+/// or a proxy that isn't configured to pass the client on — not the account owner. Such
+/// addresses are not stored in the account's history, devices or sessions, and rows written
+/// before this rule are shown as unknown ([`shown`]).
+pub fn is_public(ip: IpAddr) -> bool {
+    match canonical(ip) {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            o[0] != 0
+                && !v4.is_private()
+                && !v4.is_loopback()
+                && !v4.is_link_local()
+                && !v4.is_multicast()
+                && !v4.is_broadcast()
+                && !(o[0] == 100 && (0x40..=0x7f).contains(&o[1])) // 100.64.0.0/10
+        }
+        IpAddr::V6(v6) => {
+            let s = v6.segments();
+            !v6.is_unspecified()
+                && !v6.is_loopback()
+                && (s[0] & 0xff00) != 0xff00 // ff00::/8, multicast
+                && (s[0] & 0xfe00) != 0xfc00 // fc00::/7, unique local
+                && (s[0] & 0xffc0) != 0xfe80 // fe80::/10, link-local
+        }
+    }
+}
+
+/// A stored address for a listing: `None` for one that isn't public, so an old row holding the
+/// address of a test or an internal proxy shows as unknown instead of exposing it.
+pub fn shown(stored: Option<&str>) -> Option<String> {
+    stored.filter(|s| s.parse::<IpAddr>().is_ok_and(is_public)).map(str::to_owned)
+}
+
 /// The address with its host part removed, for logs and listings: /24 for IPv4, /48 for IPv6.
 pub fn masked(ip: IpAddr) -> String {
     match canonical(ip) {
@@ -144,5 +186,42 @@ mod tests {
         assert_eq!(masked("203.0.113.9".parse().unwrap()), "203.0.113.0/24");
         assert_eq!(masked("2001:db8:abcd:12::1".parse().unwrap()), "2001:db8:abcd::/48");
         assert_eq!(masked("::ffff:10.1.2.3".parse().unwrap()), "10.1.2.0/24");
+    }
+
+    #[test]
+    fn only_public_addresses_are_kept() {
+        for public in
+            ["146.70.197.175", "80.4.209.23", "203.0.113.9", "2001:4860:4860::8888", "::ffff:146.70.197.175"]
+        {
+            assert!(is_public(public.parse().unwrap()), "{public}");
+        }
+        for private in [
+            "10.250.137.3",
+            "172.28.0.9",
+            "192.168.1.5",
+            "127.0.0.1",
+            "169.254.1.1",
+            "100.64.0.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "224.0.0.1",
+            "::1",
+            "::",
+            "fd12:3456::1",
+            "fe80::1",
+            "ff02::1",
+            "::ffff:10.1.2.3",
+        ] {
+            assert!(!is_public(private.parse().unwrap()), "{private}");
+        }
+        let info = ClientInfo { ip: "10.250.137.3".parse().unwrap(), country: Some("GB".into()) };
+        assert_eq!(info.public_ip(), None);
+        let info = ClientInfo { ip: "80.4.209.23".parse().unwrap(), country: Some("GB".into()) };
+        assert_eq!(info.public_ip(), Some("80.4.209.23".parse().unwrap()));
+        // Old rows: a private address is not shown, a public one and junk are handled.
+        assert_eq!(shown(Some("10.250.137.3")), None);
+        assert_eq!(shown(Some("80.4.209.23")).as_deref(), Some("80.4.209.23"));
+        assert_eq!(shown(Some("not an address")), None);
+        assert_eq!(shown(None), None);
     }
 }

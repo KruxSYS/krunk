@@ -4,6 +4,7 @@
 
 use crate::accounts::{self, check_lengths, CODE_MAX, EMAIL_MAX, PASSWORD_MAX, TURNSTILE_MAX};
 use crate::api::{ApiError, ApiResult, Client, JsonBody};
+use crate::client_ip;
 use crate::crypto;
 use crate::devices::{display_label, reauth_required};
 use crate::events::{self, Source};
@@ -85,8 +86,12 @@ pub async fn usage(State(state): State<AppState>, s: WebSession) -> ApiResult {
     .bind(s.account_id)
     .fetch_all(&state.db)
     .await?;
-    let devices: Vec<DeviceUse> =
-        devices.into_iter().map(|d| DeviceUse { label: display_label(&d.label), ..d }).collect();
+    let devices: Vec<DeviceUse> = devices
+        .into_iter()
+        .map(|d| {
+            DeviceUse { label: display_label(&d.label), last_ip: client_ip::shown(d.last_ip.as_deref()), ..d }
+        })
+        .collect();
     let a: AccountFacts = sqlx::query_as(
         "SELECT a.created_at AS created, a.pw_changed_at AS password_changed, a.totp_enabled AS totp,
                 a.email_verified_at IS NOT NULL AS email_verified,
@@ -170,7 +175,8 @@ pub async fn activity(State(state): State<AppState>, s: WebSession, Query(q): Qu
                 _ => false,
             };
             json!({
-                "id": r.id, "kind": r.kind, "at": r.at, "ip": r.ip, "country": r.country,
+                "id": r.id, "kind": r.kind, "at": r.at,
+                "ip": client_ip::shown(r.ip.as_deref()), "country": r.country,
                 "source": {
                     "kind": r.source_kind, "id": r.source_id, "label": label, "removed": removed,
                     "current": r.source_kind.as_deref() == Some("web") && r.source_id == Some(s.id),
@@ -315,6 +321,12 @@ async fn export_head(db: &PgPool, s: &WebSession) -> Result<String, sqlx::Error>
     .bind(id)
     .fetch_all(db)
     .await?;
+    // An address that isn't public came from the service's own network, not from the account
+    // (server/src/client_ip.rs is_public); a row written before that rule still holds one.
+    let devices: Vec<ExportDevice> = devices
+        .into_iter()
+        .map(|d| ExportDevice { last_ip: client_ip::shown(d.last_ip.as_deref()), ..d })
+        .collect();
     let sessions: Vec<ExportSession> = sqlx::query_as(
         "SELECT id, created_at, last_used_at, host(ip) AS ip, country, user_agent, coalesce(via, 'password') AS via,
                 revoked_at
@@ -323,8 +335,10 @@ async fn export_head(db: &PgPool, s: &WebSession) -> Result<String, sqlx::Error>
     .bind(id)
     .fetch_all(db)
     .await?;
-    let sessions: Vec<ExportSession> =
-        sessions.into_iter().map(|x| ExportSession { current: x.id == s.id, ..x }).collect();
+    let sessions: Vec<ExportSession> = sessions
+        .into_iter()
+        .map(|x| ExportSession { current: x.id == s.id, ip: client_ip::shown(x.ip.as_deref()), ..x })
+        .collect();
     let activity: Vec<ExportEvent> = sqlx::query_as(
         "SELECT id, kind, at, host(ip) AS ip, country, source_kind, source_id
          FROM ip_events WHERE account_id = $1 ORDER BY id",
@@ -332,6 +346,8 @@ async fn export_head(db: &PgPool, s: &WebSession) -> Result<String, sqlx::Error>
     .bind(id)
     .fetch_all(db)
     .await?;
+    let activity: Vec<ExportEvent> =
+        activity.into_iter().map(|x| ExportEvent { ip: client_ip::shown(x.ip.as_deref()), ..x }).collect();
     let link_grants: Vec<ExportGrant> = sqlx::query_as(
         "SELECT platform, label, client_version, host(ip) AS ip, country, user_agent, created_at, expires_at, status
          FROM link_grants
@@ -341,6 +357,8 @@ async fn export_head(db: &PgPool, s: &WebSession) -> Result<String, sqlx::Error>
     .bind(id)
     .fetch_all(db)
     .await?;
+    let link_grants: Vec<ExportGrant> =
+        link_grants.into_iter().map(|x| ExportGrant { ip: client_ip::shown(x.ip.as_deref()), ..x }).collect();
     let pair_grants: Vec<PairExport> = sqlx::query_as(
         "SELECT created_at, expires_at, status, claim_kind, claimed_at, platform, label, client_version,
                 host(ip) AS ip, country, user_agent
@@ -349,6 +367,8 @@ async fn export_head(db: &PgPool, s: &WebSession) -> Result<String, sqlx::Error>
     .bind(id)
     .fetch_all(db)
     .await?;
+    let pair_grants: Vec<PairExport> =
+        pair_grants.into_iter().map(|x| PairExport { ip: client_ip::shown(x.ip.as_deref()), ..x }).collect();
     let emails: Vec<ExportMail> =
         sqlx::query_as("SELECT template, queued_at FROM email_log WHERE account_id = $1 ORDER BY id")
             .bind(id)

@@ -362,7 +362,7 @@ pub async fn token(State(state): State<AppState>, client: Client, JsonBody(req):
                 "UPDATE devices SET last_used_at = now(), last_ip = $2::inet, last_country = $3, user_agent = $4 WHERE id = $1",
             )
             .bind(device_id)
-            .bind(client.ip().to_string())
+            .bind(client.info.public_ip().map(|ip| ip.to_string()))
             .bind(client.info.country.as_deref())
             .bind(client.user_agent.as_deref())
             .execute(&mut *tx)
@@ -578,7 +578,7 @@ impl FromRequestParts<AppState> for DeviceAuth {
                  WHERE id = $1",
             )
             .bind(row.device_id)
-            .bind(client.ip().to_string())
+            .bind(client.info.public_ip().map(|ip| ip.to_string()))
             .bind(client.info.country.as_deref())
             .bind(client.user_agent.as_deref())
             .bind(agent_version(client.user_agent.as_deref()))
@@ -949,7 +949,12 @@ pub async fn list_devices(db: &sqlx::PgPool, account_id: Uuid) -> Result<Vec<Dev
     .bind(account_id)
     .fetch_all(db)
     .await?;
-    Ok(rows.into_iter().map(|d| DeviceItem { label: display_label(&d.label), ..d }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|d| {
+            DeviceItem { label: display_label(&d.label), last_ip: client_ip::shown(d.last_ip.as_deref()), ..d }
+        })
+        .collect())
 }
 
 /// `GET web/devices`: the account's devices (linked ones and those revoked in the last 30 days).
@@ -1127,8 +1132,8 @@ pub async fn list_sessions(
             kind,
             created: r.created_at,
             last_used: r.last_used_at,
-            ip_masked: mask(r.ip.clone()),
-            ip: r.ip,
+            ip: client_ip::shown(r.ip.as_deref()),
+            ip_masked: mask(client_ip::shown(r.ip.as_deref())),
             via: r.via,
             country: r.country,
             user_agent: r.user_agent,

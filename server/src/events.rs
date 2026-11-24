@@ -39,7 +39,7 @@ pub async fn record(
     )
     .bind(account_id)
     .bind(kind)
-    .bind(client.ip().to_string())
+    .bind(client.info.public_ip().map(|ip| ip.to_string()))
     .bind(client.info.country.as_deref())
     .bind(source_kind)
     .bind(source_id)

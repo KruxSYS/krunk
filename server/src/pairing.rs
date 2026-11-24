@@ -280,7 +280,7 @@ pub async fn status(State(state): State<AppState>, s: WebSession) -> ApiResult {
         platform: p.platform.clone(),
         label: p.label.as_deref().map(devices::display_label),
         client_version: p.client_version.clone(),
-        ip: p.ip.clone(),
+        ip: crate::client_ip::shown(p.ip.as_deref()),
         country: p.country.clone(),
         age_s: p.claimed_age.unwrap_or(0.0).max(0.0) as i64,
     });

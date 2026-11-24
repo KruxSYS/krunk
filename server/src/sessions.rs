@@ -125,7 +125,7 @@ pub async fn create(
     .bind(id)
     .bind(account_id)
     .bind(token_hash(keys, &token).as_slice())
-    .bind(client.ip().to_string())
+    .bind(client.info.public_ip().map(|ip| ip.to_string()))
     .bind(client.info.country.as_deref())
     .bind(client.user_agent.as_deref())
     .bind(via.name())
@@ -200,7 +200,7 @@ impl FromRequestParts<AppState> for WebSession {
             let client = Client::from_request_parts(parts, state).await?;
             sqlx::query("UPDATE web_sessions SET last_used_at = now(), ip = $2::inet, country = $3 WHERE id = $1")
                 .bind(row.id)
-                .bind(client.ip().to_string())
+                .bind(client.info.public_ip().map(|ip| ip.to_string()))
                 .bind(client.info.country.as_deref())
                 .execute(&state.db)
                 .await?;

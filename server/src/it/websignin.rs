@@ -85,6 +85,59 @@ async fn codes_expire_and_die_with_the_device() {
 }
 
 #[tokio::test]
+async fn an_address_from_the_host_network_is_not_kept_or_shown() {
+    let Some(e) = env().await else { return };
+    let mut owner = signed_in(&e, "lan@example.org").await;
+    let d = Device::new();
+    let (_, access, _, _) = linked(&e, &mut owner, &d).await;
+    let c = code(&e, &d, &access).await.body["code"].as_str().unwrap().to_string();
+    // The site opened from the service's own network (a test, an unconfigured proxy).
+    let mut site = Browser::at("10.250.137.3".parse().unwrap());
+    assert_eq!(site.post(&e, "device-sign-in", json!({"code": c})).await.status, StatusCode::OK);
+    // Neither the event nor the session holds the address.
+    let ip: Option<String> =
+        sqlx::query_scalar("SELECT host(ip) FROM ip_events WHERE kind = 'device_sign_in'").fetch_one(&e.db).await.unwrap();
+    assert_eq!(ip, None);
+    let ip: Option<String> =
+        sqlx::query_scalar("SELECT host(ip) FROM web_sessions WHERE via = 'device'").fetch_one(&e.db).await.unwrap();
+    assert_eq!(ip, None);
+    // A public sign-in still keeps its address.
+    let mut public = Browser::new();
+    let c = code(&e, &d, &access).await.body["code"].as_str().unwrap().to_string();
+    assert_eq!(public.post(&e, "device-sign-in", json!({"code": c})).await.status, StatusCode::OK);
+    let ips: Vec<Option<String>> = sqlx::query_scalar("SELECT host(ip) FROM web_sessions WHERE via = 'device' ORDER BY created_at")
+        .fetch_all(&e.db)
+        .await
+        .unwrap();
+    assert_eq!(ips, vec![None, Some(public.ip.to_string())]);
+    // Rows written before this rule are hidden too (the activity and the session list).
+    sqlx::query(
+        "INSERT INTO ip_events (account_id, kind, ip, country)
+         SELECT id, 'login', '10.250.137.3', 'GB' FROM accounts WHERE email = 'lan@example.org'",
+    )
+    .execute(&e.db)
+    .await
+    .unwrap();
+    let activity = owner.get(&e, "activity").await;
+    assert_eq!(activity.body["events"][0]["kind"], "login");
+    assert!(activity.body["events"][0]["ip"].is_null());
+    let old: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO web_sessions (id, account_id, token_hash, ip, country)
+         SELECT gen_random_uuid(), id, '\\x09', '192.168.1.9', 'GB' FROM accounts WHERE email = 'lan@example.org'
+         RETURNING id",
+    )
+    .fetch_one(&e.db)
+    .await
+    .unwrap();
+    let list = owner.get(&e, "sessions").await;
+    let row = list.body.as_array().unwrap().iter().find(|s| s["id"] == json!(old)).unwrap();
+    assert!(row["ip"].is_null(), "{}", row);
+    assert!(row["ip_masked"].is_null(), "{}", row);
+    // The public session keeps its address and its mask.
+    assert!(list.body.as_array().unwrap().iter().any(|s| s["ip"] == json!(public.ip.to_string())));
+}
+
+#[tokio::test]
 async fn a_foreign_page_cant_use_either_side() {
     let Some(e) = env().await else { return };
     // The device side refuses another site's Origin (no_foreign_origin), the web side needs ours.
