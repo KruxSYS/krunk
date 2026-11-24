@@ -14,13 +14,13 @@ CEF_CRATE=156.3.0+156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 CEF_SOURCE=self-built
-CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips.tar.bz2
-CEF_SHA256=8ba1f9ac27f63bf03e6d208adc6db66d2b421fc53dd26eb07db6a1441ca33ec4
+CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx.tar.bz2
+CEF_SHA256=40e2a148219ce6f231780b229cbcec497003b040eb95702d011b49402668e048
 # Where the archive is kept (outside git, with the release artifacts): the pipeline's artifact
 # store and the GitHub release of 0.12.3 (dist/). 0.5.2-0.9.0 shipped the unpatched ..._krunk-codecs
 # archive (a8bb5c42…), 0.10.0-0.12.0 ..._krunk-codecs-hidden (5aab8496…), 0.12.1-0.12.2
 # ..._krunk-codecs-hidden-brand (29d97fa8…).
-CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips.tar.bz2
+CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx.tar.bz2
 # scripts/cef-build/cross-build.sh (is_official_build proprietary_codecs ffmpeg_branding=Chrome
 # enable_platform_hevc enable_platform_ac3_eac3_audio), MSVC 14.51.36231 / SDK 10.0.28000.0.
 # Krunk's CEF patches (0.10.0), applied by cross-build.sh build:
@@ -30,6 +30,9 @@ CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156
 # Krunk's logo (0.12.1, cross-build.sh brand): assets/brand/krunk-256.png replaces Chromium's
 #   product_logo_256.png, the artwork of the Windows media overlay when a site gives none. Only
 #   resources.pak changes (dd784546…); libcef.dll stays d9f4549b….
+#   2026-11-24: the KruxSYS-style Krunk logo (archive ..._audible-chips-kx, 40e2a148…; only
+#   resources.pak changes, to 06ccd767…; libcef.dll stays 1faf09ee…). 0.28.0-0.28.1 shipped
+#   ..._audible-chips (8ba1f9ac…) with the earlier logo.
 #   scripts/cef-build/patches/chromium-private-media.patch (0.12.3, applied to the Chromium checkout)
 #     sha256 1316748dc6ffb7d76d16aa02b3c8d4de7e9f4c102dd2565f42332c04e52452d6
 #     media of private tabs never reaches Windows' media controls (Now Playing); libcef.dll aefc93eb…
