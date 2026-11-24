@@ -1,0 +1,45 @@
+diff --git a/third_party/blink/renderer/core/xml/document_xml_tree_viewer.cc b/third_party/blink/renderer/core/xml/document_xml_tree_viewer.cc
+index 2b2726e88693e..0a9332c47dad5 100644
+--- a/third_party/blink/renderer/core/xml/document_xml_tree_viewer.cc
++++ b/third_party/blink/renderer/core/xml/document_xml_tree_viewer.cc
+@@ -9,6 +9,9 @@
+ #include "third_party/blink/renderer/bindings/core/v8/to_v8_traits.h"
+ #include "third_party/blink/renderer/bindings/core/v8/v8_binding_for_core.h"
+ #include "third_party/blink/renderer/bindings/core/v8/v8_microtasks_scope.h"
++#include "third_party/blink/renderer/core/css/parser/css_parser_context.h"
++#include "third_party/blink/renderer/core/css/style_engine.h"
++#include "third_party/blink/renderer/core/css/style_sheet_contents.h"
+ #include "third_party/blink/renderer/core/dom/document.h"
+ #include "third_party/blink/renderer/core/dom/element.h"
+ #include "third_party/blink/renderer/core/dom/shadow_root.h"
+@@ -43,6 +46,20 @@ void SetXMLViewerStyle(Element* style_element) {
+   }
+ }
+ 
++// Krunk: in a main frame the viewer is ordinary document content, so a <style> element would
++// be subject to the page's CSP: a site that sends `style-src 'self'` (common for sitemaps)
++// got an unstyled tree with the source text run together on top, in Chrome too. Inject the
++// viewer's own stylesheet the way extensions' insertCSS does instead; page CSP doesn't apply
++// to injected sheets. (Iframes use a user-agent shadow root, which is exempt already.)
++void InjectXMLViewerStyle(Document& document) {
++  auto* sheet = MakeGarbageCollected<StyleSheetContents>(
++      MakeGarbageCollected<CSSParserContext>(document));
++  sheet->ParseString(
++      UncompressResourceAsASCIIString(IDR_DOCUMENTXMLTREEVIEWER_CSS));
++  document.GetStyleEngine().InjectSheet(
++      StyleSheetKey("krunk-xml-tree-viewer"), sheet, WebCssOrigin::kAuthor);
++}
++
+ bool SetShadowRootGlobal(Document& document, ShadowRoot& shadow_root) {
+   LocalFrame* frame = document.GetFrame();
+   if (!frame) {
+@@ -82,8 +99,7 @@ void TransformDocumentToXMLTreeView(Document& document,
+                                     bool preserve_document_element) {
+   if (!preserve_document_element) {
+     RunXMLTreeViewerScript(document, /*use_shadow_root=*/false);
+-    SetXMLViewerStyle(
+-        document.getElementById(AtomicString(kXMLViewerStyleElementId)));
++    InjectXMLViewerStyle(document);
+     return;
+   }
+ 

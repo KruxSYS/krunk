@@ -9,6 +9,11 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
   at krunk.kruxsys.com has the KruxSYS look and links, the installer and Krunk.exe name KruxSYS
   as the publisher (Settings → Apps shows "KruxSYS"), and About Krunk links to kruxsys.com. Krunk's
   name, address, account and updates stay the same.
+- **XML files display properly on sites with a strict security policy.** A sitemap or feed
+  from a site whose Content-Security-Policy allows only its own stylesheets (for example
+  https://kruxsys.com/sitemap.xml) showed as unstyled text run together instead of the
+  collapsible XML tree. Chrome shows these pages the same broken way; Krunk's engine now keeps
+  the XML viewer's own styling there.
 - **A new Krunk icon in the KruxSYS style:** Krunk's "K" on KruxSYS's dark square with cyan
   corners, its offset lower arm still in Krunk's orange. It is the icon of Krunk.exe, the
   installer, the taskbar and the Windows media controls.

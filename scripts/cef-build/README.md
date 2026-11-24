@@ -126,6 +126,15 @@ outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `
   request filter, so without the set a blocked tracker would still see DNS, TCP and TLS (SNI)
   from the user. Krunk hands over the plain `||host^` rules of its active lists
   (`core::preconnect_block`).
+- `chromium-xml-viewer-csp.patch` (2026-11-24, Chromium checkout): the XML tree viewer
+  ("This XML file does not appear to have any style information…") keeps its styling on pages
+  whose CSP has `style-src 'self'`, like many sitemaps (https://kruxsys.com/sitemap.xml). In a main
+  frame Blink builds the viewer as ordinary document content and styles it with a `<style>`
+  element, which the page's CSP blocks ("Applying inline style violates … style-src"): the tree
+  showed unstyled, with all text values run together on top. Chrome 158 shows it the same broken
+  way. `document_xml_tree_viewer.cc` now injects the viewer's stylesheet with
+  `StyleEngine::InjectSheet` (what extensions' insertCSS uses; page CSP doesn't apply to it).
+  Iframes already used a user-agent shadow root, which is exempt. Only libcef.dll changes.
 - `krunk-preconnect-pref.patch` (0.26.0, CEF checkout): three pseudo-preferences in
   `CefRequestContextImpl::CanSetPreference` / `SetPreference`. They are never registered or
   stored and reach the engine through the existing API, so the C API is unchanged:

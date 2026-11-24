@@ -23,8 +23,9 @@ TOOLCHAIN_HASH_KEY=3bfcb536c8      # TOOLCHAIN_HASH in src/build/vs_toolchain.py
 # (patches/chromium-preconnect-blocked-hosts.patch, krunk-preconnect-pref.patch); -ua since 0.27.0
 # (patches/chromium-ua-brand.patch); -audible-chips since 0.28.0 (patches/krunk-audible-state.patch,
 # patches/krunk-chips-cookies.patch); -kx since 2026-11-24 (the KruxSYS-style Krunk logo as the
-# product logo, brand(); only resources.pak changes).
-CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx${CEF_FLAVOR_SUFFIX:-}
+# product logo, brand(); only resources.pak changes); -xml since 2026-11-24
+# (patches/chromium-xml-viewer-csp.patch: the XML tree viewer keeps its style under a strict CSP).
+CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx-xml${CEF_FLAVOR_SUFFIX:-}
 PATCHES=$(cd "$(dirname "$0")" && pwd)/patches
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SRC=$ROOT/chromium_git/chromium/src
