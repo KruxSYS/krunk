@@ -47,6 +47,9 @@ class Section:
 class Changelog:
     def __init__(self):
         self.title, self.intro, self.sections, self.errors = None, [], [], []
+        # An optional "## Unreleased" section above the newest version: what the next release
+        # will contain. It is checked like a version's body but never rendered or published.
+        self.unreleased = None
 
 
 def semver_key(v):
@@ -80,6 +83,13 @@ def parse(text):
         if re.match(r"^#(?!#)", line):
             err(f"line {n}: only line 1 may be a '#' heading")
             continue
+        if line == "## Unreleased":
+            if doc.sections or doc.unreleased:
+                err(f"line {n}: '## Unreleased' may only come once, above the newest version")
+                current = None
+                continue
+            current = doc.unreleased = Section("Unreleased", None, n)
+            continue
         if re.match(r"^##(?!#)", line):
             m = HEADING.match(line)
             if not m:
@@ -101,6 +111,11 @@ def check(doc):
     err = doc.errors.append
     if not doc.sections:
         err("no version sections")
+    if doc.unreleased is not None:
+        where = f"line {doc.unreleased.lineno} (Unreleased)"
+        if not doc.unreleased.body().strip():
+            err(f"{where}: empty section")
+        blocks(doc.unreleased.lines, lambda m: err(f"{where}: {m}"))
     seen = {}
     prev = None
     for s in doc.sections:
@@ -305,7 +320,9 @@ PAGE_HEAD = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Changelog · Krunk</title>
 <meta name="description" content="What changed in each Krunk release, newest first.">
-<meta name="theme-color" content="#c2185b">
+<meta name="theme-color" content="#07090c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
+<meta property="og:site_name" content="Krunk · KruxSYS">
 <link rel="icon" type="image/png" href="/krunk-64.png">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -314,7 +331,10 @@ PAGE_HEAD = """<!doctype html>
 <a class="skip" href="#main">Skip to content</a>
 <header class="bar site-bar">
   <div class="wrap">
-    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <div class="brandset">
+      <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+      <a class="by-kx" href="https://kruxsys.com/"><span class="by-text">by </span><img src="/kruxsys.svg" width="22" height="22" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+    </div>
     <nav aria-label="Site">
       <a class="opt" href="/#features">Features</a>
       <a class="opt" href="/#install">Install</a>
@@ -329,15 +349,40 @@ PAGE_HEAD = """<!doctype html>
 
 PAGE_FOOT = """</div>
 <footer class="site-foot">
+  <div class="wrap kx-row">
+    <a class="kx-brand" href="https://kruxsys.com/"><img src="/kruxsys.svg" width="28" height="28" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+    <p>Krunk is a KruxSYS project.</p>
+    <nav aria-label="KruxSYS">
+      <a href="https://kruxsys.com/">kruxsys.com</a>
+      <a href="https://kruxsys.com/projects/krunk/">Krunk project page</a>
+      <a href="https://kruxsys.com/projects/screvia/">Screvia</a>
+      <a href="https://kruxsys.com/projects/plexdio/">Plexdio</a>
+    </nav>
+  </div>
   <div class="wrap foot-grid">
     <div>
       <a class="brand" href="/"><img src="/krunk.svg" width="24" height="24" alt=""> Krunk</a>
-      <p>Open source (MIT). A browser that keeps out of your business.</p>
+      <p>Open source (MIT). Bundles Chromium through the Chromium Embedded Framework, and filter
+        lists by EasyList and uBlock Origin; see the notices in the download.</p>
     </div>
-    <nav aria-label="Footer"><h2>Krunk</h2><a href="/#install">Download</a><a class="opt" href="/#features">Features</a><a href="/changelog">Changelog</a></nav>
-    <nav aria-label="Account"><h2>Account</h2><a href="/account/login">Sign in</a><a href="/account/register">Create an account</a></nav>
-    <nav aria-label="About"><h2>About</h2><a href="/privacy">Privacy</a><a href="mailto:privacy@kruxsys.com">Contact</a></nav>
+    <nav aria-label="Footer">
+      <h2>Krunk</h2>
+      <a href="/#install">Download</a>
+      <a class="opt" href="/#features">Features</a>
+      <a href="/changelog">Changelog</a>
+    </nav>
+    <nav aria-label="Account">
+      <h2>Account</h2>
+      <a href="/account/login">Sign in</a>
+      <a href="/account/register">Create an account</a>
+    </nav>
+    <nav aria-label="About">
+      <h2>About</h2>
+      <a href="/privacy">Privacy</a>
+      <a href="mailto:privacy@kruxsys.com">Contact</a>
+    </nav>
   </div>
+  <div class="wrap foot-bottom"><p>© 2026 KruxSYS</p><p>Krunk · MIT licence</p></div>
 </footer>
 </body>
 </html>
@@ -512,6 +557,16 @@ def selftest():
     expect('<section id="0.10.0">' in page and '<a href="#0.10.0">Krunk 0.10.0</a>' in page
            and '<time datetime="2026-11-09">9 November 2026</time>' in page and "<script" not in page
            and "style=" not in page and '<p class="lead">Intro.</p>' in page, "page markup")
+    # Unreleased: checked, kept out of the sections, the page and section/date lookups.
+    doc = parse("# T\n\n## Unreleased\n\n- next\n\n" + good.split("\n\n", 2)[2])
+    expect(not check(doc), f"unreleased file: {doc.errors}")
+    expect(doc.unreleased.body() == "- next" and doc.sections[0].version == "0.10.0", "unreleased parsed")
+    expect("next" not in render_page(doc) and "Unreleased" not in render_page(doc), "unreleased not rendered")
+    for bad in ("# T\n## Unreleased\n\n## 0.9.0 — 2026-11-09\nx\n",
+                "# T\n## 0.9.0 — 2026-11-09\nx\n## Unreleased\n- y\n",
+                "# T\n## Unreleased\n- a\n## Unreleased\n- b\n## 0.9.0 — 2026-11-09\nx\n"):
+        d = parse(bad)
+        expect(check(d), f"bad unreleased accepted: {bad!r}")
     bad_cases = {
         "ascending": "# T\n## 0.9.0 — 2026-11-09\nx\n## 0.10.0 — 2026-11-09\nx\n",
         "duplicate": "# T\n## 0.9.0 — 2026-11-09\nx\n## 0.9.0 — 2026-11-09\nx\n",

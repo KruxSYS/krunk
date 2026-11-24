@@ -1,5 +1,7 @@
 # Krunk download and update server
 
+The site is Krunk's product site, a KruxSYS project (https://kruxsys.com/), styled with the KruxSYS look.
+
 A single Caddy container (`caddy:2.11.8-alpine`, pinned by digest) that serves:
 
 | Path | What | Caching |

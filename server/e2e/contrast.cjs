@@ -11,9 +11,10 @@ function tokens(block) {
   for (const m of block.matchAll(/--([a-z0-9-]+):\s*(#[0-9a-fA-F]{6})/g)) t[m[1]] = m[2].toLowerCase();
   return t;
 }
-const light = tokens(css.slice(css.indexOf(':root {'), css.indexOf('}', css.indexOf(':root {'))));
-const darkStart = css.indexOf(':root {', css.indexOf('@media (prefers-color-scheme: dark)'));
-const dark = Object.assign({}, light, tokens(css.slice(darkStart, css.indexOf('}', darkStart))));
+// Since the KruxSYS restyle (2026-11-24) dark is the default (:root) and light overrides it.
+const dark = tokens(css.slice(css.indexOf(':root {'), css.indexOf('}', css.indexOf(':root {'))));
+const lightStart = css.indexOf(':root {', css.indexOf('@media (prefers-color-scheme: light)'));
+const light = Object.assign({}, dark, tokens(css.slice(lightStart, css.indexOf('}', lightStart))));
 
 function lum(hex) {
   const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));

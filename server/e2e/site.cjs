@@ -168,7 +168,7 @@ const PAGES = [
   { name: 'resend', url: '/account/resend', ready: '#form:not([hidden])' },
   { name: 'reset-request', url: '/account/reset', ready: '#form:not([hidden])' },
   { name: 'reset-new-password', url: '/account/reset?token=' + 'A'.repeat(43), ready: '#form-new:not([hidden])' },
-  { name: 'verify', url: '/account/verify?token=' + 'A'.repeat(43), ready: '#form:not([hidden])' },
+  { name: 'verify', url: '/account/verify?token=' + 'A'.repeat(43), ready: '#status:not(:empty)' }, // an unknown token shows only the status (one-step registration)
   { name: 'account', url: '/account/', ready: '#devices-active li', signed: true },
   { name: 'link', url: '/link?code=', ready: '#approve-form:not([hidden])', signed: true, code: true },
   // 0.13.0: the changelog, the phone's pairing page (without a token: its explanation) and the

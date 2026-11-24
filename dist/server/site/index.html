@@ -5,7 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Krunk: a fast, private browser for Windows</title>
 <meta name="description" content="Krunk is a fast, privacy-minded web browser for Windows 10 and 11 with built-in ad blocking, an encrypted password vault, end-to-end encrypted sync and no telemetry.">
-<meta name="theme-color" content="#c2185b">
+<meta name="theme-color" content="#07090c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
+<meta property="og:site_name" content="Krunk · KruxSYS">
 <link rel="icon" type="image/png" href="/krunk-64.png">
 <link rel="apple-touch-icon" href="/krunk-180.png">
 <link rel="stylesheet" href="/style.css">
@@ -15,7 +17,10 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="bar site-bar">
   <div class="wrap">
-    <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+    <div class="brandset">
+      <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
+      <a class="by-kx" href="https://kruxsys.com/"><span class="by-text">by </span><img src="/kruxsys.svg" width="22" height="22" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+    </div>
     <nav aria-label="Site">
       <a class="opt" href="#features">Features</a>
       <a class="opt" href="#install">Install</a>
@@ -173,6 +178,16 @@
 </main>
 
 <footer class="site-foot">
+  <div class="wrap kx-row">
+    <a class="kx-brand" href="https://kruxsys.com/"><img src="/kruxsys.svg" width="28" height="28" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+    <p>Krunk is a KruxSYS project.</p>
+    <nav aria-label="KruxSYS">
+      <a href="https://kruxsys.com/">kruxsys.com</a>
+      <a href="https://kruxsys.com/projects/krunk/">Krunk project page</a>
+      <a href="https://kruxsys.com/projects/screvia/">Screvia</a>
+      <a href="https://kruxsys.com/projects/plexdio/">Plexdio</a>
+    </nav>
+  </div>
   <div class="wrap foot-grid">
     <div>
       <a class="brand" href="/"><img src="/krunk.svg" width="24" height="24" alt=""> Krunk</a>
@@ -196,6 +211,7 @@
       <a href="mailto:privacy@kruxsys.com">Contact</a>
     </nav>
   </div>
+  <div class="wrap foot-bottom"><p>© 2026 KruxSYS</p><p>Krunk · MIT licence</p></div>
 </footer>
 </body>
 </html>
