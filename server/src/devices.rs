@@ -951,9 +951,7 @@ pub async fn list_devices(db: &sqlx::PgPool, account_id: Uuid) -> Result<Vec<Dev
     .await?;
     Ok(rows
         .into_iter()
-        .map(|d| {
-            DeviceItem { label: display_label(&d.label), last_ip: client_ip::shown(d.last_ip.as_deref()), ..d }
-        })
+        .map(|d| DeviceItem { label: display_label(&d.label), last_ip: client_ip::shown(d.last_ip.as_deref()), ..d })
         .collect())
 }
 

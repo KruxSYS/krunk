@@ -95,8 +95,10 @@ async fn an_address_from_the_host_network_is_not_kept_or_shown() {
     let mut site = Browser::at("10.250.137.3".parse().unwrap());
     assert_eq!(site.post(&e, "device-sign-in", json!({"code": c})).await.status, StatusCode::OK);
     // Neither the event nor the session holds the address.
-    let ip: Option<String> =
-        sqlx::query_scalar("SELECT host(ip) FROM ip_events WHERE kind = 'device_sign_in'").fetch_one(&e.db).await.unwrap();
+    let ip: Option<String> = sqlx::query_scalar("SELECT host(ip) FROM ip_events WHERE kind = 'device_sign_in'")
+        .fetch_one(&e.db)
+        .await
+        .unwrap();
     assert_eq!(ip, None);
     let ip: Option<String> =
         sqlx::query_scalar("SELECT host(ip) FROM web_sessions WHERE via = 'device'").fetch_one(&e.db).await.unwrap();
@@ -105,10 +107,11 @@ async fn an_address_from_the_host_network_is_not_kept_or_shown() {
     let mut public = Browser::new();
     let c = code(&e, &d, &access).await.body["code"].as_str().unwrap().to_string();
     assert_eq!(public.post(&e, "device-sign-in", json!({"code": c})).await.status, StatusCode::OK);
-    let ips: Vec<Option<String>> = sqlx::query_scalar("SELECT host(ip) FROM web_sessions WHERE via = 'device' ORDER BY created_at")
-        .fetch_all(&e.db)
-        .await
-        .unwrap();
+    let ips: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT host(ip) FROM web_sessions WHERE via = 'device' ORDER BY created_at")
+            .fetch_all(&e.db)
+            .await
+            .unwrap();
     assert_eq!(ips, vec![None, Some(public.ip.to_string())]);
     // Rows written before this rule are hidden too (the activity and the session list).
     sqlx::query(

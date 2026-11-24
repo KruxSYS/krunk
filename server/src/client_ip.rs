@@ -190,8 +190,7 @@ mod tests {
 
     #[test]
     fn only_public_addresses_are_kept() {
-        for public in
-            ["146.70.197.175", "80.4.209.23", "203.0.113.9", "2001:4860:4860::8888", "::ffff:146.70.197.175"]
+        for public in ["146.70.197.175", "80.4.209.23", "203.0.113.9", "2001:4860:4860::8888", "::ffff:146.70.197.175"]
         {
             assert!(is_public(public.parse().unwrap()), "{public}");
         }

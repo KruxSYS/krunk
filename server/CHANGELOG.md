@@ -3,6 +3,16 @@
 Changes to the account and sync service (`server/`, the site's account pages). The app's
 release notes are in the repository's `CHANGELOG.md` and `CHANGELOG-android.md`.
 
+## 2026-11-24: no internal addresses in the account's history
+
+- A sign-in that reached the service from its own host network (a test run, or a proxy hop that
+  doesn't pass the client on) showed that network's address, e.g. `10.250.137.3`, in Activity
+  and the lists of devices and signed-in browsers. Private, loopback, link-local and CGNAT
+  addresses are no longer stored as the client's address; such entries show no address.
+- Migration `0012_private_client_ips.sql` clears those addresses (and their missing country)
+  from existing Activity, session and device rows. Listings and the data download also hide
+  any that remain in pending link and pairing grants.
+
 ## 2026-11-17: signed in to Krunk = signed in to the website
 
 - Opening the Krunk website in a Krunk browser that is signed in to your account signs the

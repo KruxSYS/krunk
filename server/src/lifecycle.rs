@@ -88,9 +88,7 @@ pub async fn usage(State(state): State<AppState>, s: WebSession) -> ApiResult {
     .await?;
     let devices: Vec<DeviceUse> = devices
         .into_iter()
-        .map(|d| {
-            DeviceUse { label: display_label(&d.label), last_ip: client_ip::shown(d.last_ip.as_deref()), ..d }
-        })
+        .map(|d| DeviceUse { label: display_label(&d.label), last_ip: client_ip::shown(d.last_ip.as_deref()), ..d })
         .collect();
     let a: AccountFacts = sqlx::query_as(
         "SELECT a.created_at AS created, a.pw_changed_at AS password_changed, a.totp_enabled AS totp,
@@ -323,10 +321,8 @@ async fn export_head(db: &PgPool, s: &WebSession) -> Result<String, sqlx::Error>
     .await?;
     // An address that isn't public came from the service's own network, not from the account
     // (server/src/client_ip.rs is_public); a row written before that rule still holds one.
-    let devices: Vec<ExportDevice> = devices
-        .into_iter()
-        .map(|d| ExportDevice { last_ip: client_ip::shown(d.last_ip.as_deref()), ..d })
-        .collect();
+    let devices: Vec<ExportDevice> =
+        devices.into_iter().map(|d| ExportDevice { last_ip: client_ip::shown(d.last_ip.as_deref()), ..d }).collect();
     let sessions: Vec<ExportSession> = sqlx::query_as(
         "SELECT id, created_at, last_used_at, host(ip) AS ip, country, user_agent, coalesce(via, 'password') AS via,
                 revoked_at
