@@ -60,11 +60,12 @@ UninstallIcon "${ICON}"
 
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "${APP}"
-VIAddVersionKey "CompanyName" "${APP}"
+VIAddVersionKey "CompanyName" "KruxSYS"
 VIAddVersionKey "FileDescription" "${APP} setup"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
-VIAddVersionKey "LegalCopyright" "Krunk (MIT); bundled components under their own licences"
+; ${U+00A9} keeps this file ASCII; NSIS (Unicode true) writes the real copyright sign.
+VIAddVersionKey "LegalCopyright" "${U+00A9} 2026 KruxSYS. Krunk is MIT licensed; bundled components under their own licences"
 
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
@@ -286,7 +287,7 @@ Section "Krunk" SecMain
 
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "${APP}"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
-  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "${APP}"
+  WriteRegStr HKCU "${UNINST_KEY}" "Publisher" "KruxSYS"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayIcon" "$INSTDIR\Krunk.exe,0"
   WriteRegStr HKCU "${UNINST_KEY}" "InstallLocation" "$INSTDIR"
   WriteRegStr HKCU "${UNINST_KEY}" "UninstallString" '"$INSTDIR\uninstall.exe"'

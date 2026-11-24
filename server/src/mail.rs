@@ -106,7 +106,8 @@ pub fn render(t: Template, params: &Value, site: &str) -> (String, String) {
     let (first, rest) = src.split_once('\n').unwrap_or((src, ""));
     let subject = first.strip_prefix("Subject: ").unwrap_or(first).trim().to_string();
     let mut body = rest.trim_start_matches('\n').to_string();
-    body.push_str("\n-- \nKrunk · {{site}}\nPrivacy: {{site}}/privacy\n");
+    // The one signature of every template (a KruxSYS project since 2026-11-24).
+    body.push_str("\n-- \nKrunk, a KruxSYS project · {{site}}\nPrivacy: {{site}}/privacy\n");
     if let Some(map) = params.as_object() {
         for (k, v) in map {
             if let Some(s) = v.as_str() {

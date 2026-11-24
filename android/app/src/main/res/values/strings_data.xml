@@ -204,6 +204,9 @@
     <string name="about_site">krunk.kruxsys.com</string>
     <string name="about_site_help">Website, downloads and source</string>
     <string name="about_tagline">The browser that keeps quiet: no telemetry, no background chatter.</string>
+    <string name="about_by">Krunk by KruxSYS</string>
+    <string name="about_publisher">KruxSYS</string>
+    <string name="about_publisher_help">kruxsys.com — the publisher of Krunk</string>
     <string name="about_licenses">Open-source licences</string>
-    <string name="about_licenses_intro">Krunk for Android is MIT-licensed and built on:</string>
+    <string name="about_licenses_intro">Krunk for Android (Krunk by KruxSYS) is MIT-licensed and built on:</string>
 </resources>

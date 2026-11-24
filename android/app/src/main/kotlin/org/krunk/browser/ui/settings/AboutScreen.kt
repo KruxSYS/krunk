@@ -12,6 +12,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.Business
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -40,7 +41,10 @@ import org.krunk.browser.ui.theme.KrunkColors
 import org.krunk.browser.update.UpdateChannel
 import org.krunk.ffi.coreVersion
 
-/** About: the app, engine and core versions, the website, and the open-source licences. */
+/** The publisher's website (Krunk is a KruxSYS project). */
+private const val KRUXSYS_URL = "https://kruxsys.com/"
+
+/** About: the app, engine and core versions, the website, the publisher, and the open-source licences. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(vm: BrowserViewModel) {
@@ -76,6 +80,11 @@ fun AboutScreen(vm: BrowserViewModel) {
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(stringResource(R.string.about_tagline), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    stringResource(R.string.about_by),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(16.dp))
                 Text(
                     stringResource(R.string.about_version, BuildConfig.VERSION_NAME),
@@ -99,6 +108,14 @@ fun AboutScreen(vm: BrowserViewModel) {
                 trailingContent = { Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null) },
                 colors = ListItemDefaults.colors(containerColor = Color.Transparent),
                 modifier = Modifier.fillMaxWidth().clickable { open(BuildConfig.SITE_URL) },
+            )
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.about_publisher)) },
+                supportingContent = { Text(stringResource(R.string.about_publisher_help)) },
+                leadingContent = { Icon(Icons.Filled.Business, contentDescription = null) },
+                trailingContent = { Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null) },
+                colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                modifier = Modifier.fillMaxWidth().clickable { open(KRUXSYS_URL) },
             )
             // The website APK's update check (direct flavour); nothing in the Play build.
             UpdateChannel.AboutSection()

@@ -26,7 +26,7 @@ object UboSource {
 }
 
 /**
- * What Krunk for Android is made of (shown on the About screen). The Rust crates of the shared
+ * What Krunk for Android (Krunk by KruxSYS) is made of (shown on the About screen). The Rust crates of the shared
  * core are listed in `Cargo.lock`; the main ones are summarised here, as in README's
  * "Third-party components" and in `android/THIRD-PARTY-NOTICES.md` (a test keeps the two equal).
  */

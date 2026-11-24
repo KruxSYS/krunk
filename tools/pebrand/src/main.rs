@@ -47,7 +47,8 @@ fn brand(input: &str, output: &str, manifest: &str, version: &str, icon: Option<
     for table in &mut info.strings {
         let engine = table.strings.get("FileVersion").cloned().unwrap_or_default();
         for (key, value) in [
-            ("CompanyName", "Krunk".to_string()),
+            ("CompanyName", "KruxSYS".to_string()),
+            ("LegalCopyright", "© 2026 KruxSYS".to_string()),
             ("FileDescription", "Krunk web browser".to_string()),
             ("ProductName", "Krunk".to_string()),
             ("InternalName", "Krunk".to_string()),

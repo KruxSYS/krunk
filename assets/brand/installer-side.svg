@@ -1,19 +1,68 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Side image of the installer's welcome and finish pages (164 x 314, NSIS MUI2).
+<!-- Side image of the installer's welcome and finish pages (164 x 314, NSIS MUI2), in the
+     KruxSYS "system" look: dark field, faint grid, cyan corner brackets, the Krunk icon
+     (krunk.svg, unchanged) and wordmark, and "by KruxSYS" with the KruxSYS mark (kruxsys.svg).
      Rendered to installer-side.bmp by make-icons.sh. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="164" height="314" viewBox="0 0 164 314">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0.6" y2="1">
+    <pattern id="grid" width="16" height="16" patternUnits="userSpaceOnUse" x="2" y="5">
+      <path d="M16 0H0V16" fill="none" stroke="#1a212c" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0c1016" stop-opacity="0"/>
+      <stop offset="0.7" stop-color="#0c1016" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#0c1016" stop-opacity="0.85"/>
+    </linearGradient>
+    <!-- krunk.svg gradients -->
+    <linearGradient id="kbg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#ff6a3d"/>
       <stop offset="1" stop-color="#c2185b"/>
     </linearGradient>
+    <linearGradient id="kshine" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
   </defs>
-  <rect width="164" height="314" fill="url(#bg)"/>
-  <g transform="translate(34 46) scale(0.375)" fill="#fff">
-    <rect x="62" y="50" width="44" height="156" rx="10"/>
-    <path d="M106 128 L160 50 L208 50 L144 128 Z"/>
-    <path d="M128 140 L154 116 L212 206 L162 206 Z"/>
+
+  <!-- field and grid -->
+  <rect width="164" height="314" fill="#0c1016"/>
+  <rect width="164" height="314" fill="url(#grid)"/>
+  <rect width="164" height="314" fill="url(#fade)"/>
+
+  <!-- corner brackets -->
+  <path d="M8 26V8h18M138 8h18v18M156 288v18h-18M26 306H8v-18" fill="none" stroke="#22d3ee" stroke-width="2"/>
+
+  <!-- system label -->
+  <text x="82" y="34" text-anchor="middle" fill="#8e9bb0" font-family="DejaVu Sans Mono, Consolas, monospace"
+        font-size="7.5" letter-spacing="1.5">// SETUP</text>
+
+  <!-- Krunk icon: krunk.svg (256 x 256) at 88 x 88 -->
+  <g transform="translate(38 56) scale(0.34375)">
+    <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#kbg)"/>
+    <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#kshine)"/>
+    <rect x="62" y="50" width="44" height="156" rx="10" fill="#fff"/>
+    <path d="M106 128 L160 50 L208 50 L144 128 Z" fill="#fff"/>
+    <path d="M128 140 L154 116 L212 206 L162 206 Z" fill="#fff"/>
   </g>
-  <text x="82" y="178" text-anchor="middle" fill="#fff" font-family="DejaVu Sans, Segoe UI, sans-serif"
-        font-size="26" font-weight="700" letter-spacing="1">Krunk</text>
+
+  <!-- wordmark -->
+  <text x="82" y="180" text-anchor="middle" fill="#e8ecf2" font-family="DejaVu Sans, Segoe UI, sans-serif"
+        font-size="28" font-weight="700" letter-spacing="0.5">Krunk</text>
+  <rect x="62" y="192" width="40" height="2" fill="#22d3ee"/>
+  <text x="82" y="210" text-anchor="middle" fill="#8e9bb0" font-family="DejaVu Sans Mono, Consolas, monospace"
+        font-size="7.5" letter-spacing="1.5">WEB BROWSER</text>
+
+  <!-- by KruxSYS -->
+  <line x1="20" y1="252" x2="144" y2="252" stroke="#2a3442" stroke-width="1"/>
+  <g transform="translate(31 264) scale(0.375)">
+    <rect x="3" y="3" width="58" height="58" fill="#0c1016" stroke="#2a3442" stroke-width="2"/>
+    <path d="M3 19V3h16M45 61h16V45" fill="none" stroke="#22d3ee" stroke-width="3"/>
+    <path d="M21 15v34" stroke="#22d3ee" stroke-width="7"/>
+    <path d="M45 15 31 32l14 17" fill="none" stroke="#e8ecf2" stroke-width="7" stroke-linejoin="miter"/>
+    <rect x="27.5" y="28.5" width="7" height="7" fill="#22d3ee"/>
+  </g>
+  <text x="61" y="281" font-family="DejaVu Sans, Segoe UI, sans-serif" font-size="10" fill="#8e9bb0">by</text>
+  <text x="77" y="281" font-family="DejaVu Sans, Segoe UI, sans-serif" font-size="12"><tspan
+        fill="#e8ecf2" font-weight="700">Krux</tspan><tspan
+        fill="#22d3ee" font-family="DejaVu Sans Mono, Consolas, monospace" font-weight="700">SYS</tspan></text>
 </svg>
