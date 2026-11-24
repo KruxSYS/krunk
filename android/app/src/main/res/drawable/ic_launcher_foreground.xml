@@ -1,18 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The Krunk "K" (assets/brand/krunk.svg), scaled into the 108 dp adaptive-icon canvas
-     (the 256 px art maps to the inner 72 dp: x' = 18 + x * 72/256). -->
+<!-- The Krunk icon (assets/brand/krunk.svg, the KruxSYS-style version of 2026-11-24) for the
+     108 dp adaptive-icon canvas. Launchers mask the icon to a circle or squircle and only the
+     inner 66 dp circle is safe, so the cyan corner brackets sit at 31..77 dp (their corners are
+     32.5 dp from the centre) instead of at the edges, and the "K" (krunk.svg's 256-unit art,
+     x 66..202, y 56..200) is scaled by 0.25 into the middle. The dark field is the background
+     layer (ic_launcher_background.xml). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="256"
-    android:viewportHeight="256">
-    <group android:scaleX="0.5625" android:scaleY="0.5625" android:translateX="56" android:translateY="56">
-        <!-- stem -->
-        <path android:fillColor="#FFFFFF"
-            android:pathData="M72,50 h24 a10,10 0 0 1 10,10 v136 a10,10 0 0 1 -10,10 h-24 a10,10 0 0 1 -10,-10 v-136 a10,10 0 0 1 10,-10 z" />
-        <!-- upper arm -->
-        <path android:fillColor="#FFFFFF" android:pathData="M106,128 L160,50 L208,50 L144,128 Z" />
-        <!-- lower arm, slightly offset: the "crunch" -->
-        <path android:fillColor="#FFFFFF" android:pathData="M128,140 L154,116 L212,206 L162,206 Z" />
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- corner brackets -->
+    <path android:strokeColor="#FF22D3EE" android:strokeWidth="3"
+        android:pathData="M31,43 V31 H43 M77,65 V77 H65" />
+    <group android:scaleX="0.25" android:scaleY="0.25" android:translateX="20.5" android:translateY="22">
+        <!-- stem and upper arm -->
+        <path android:fillColor="#FFE8ECF2" android:pathData="M66,56 h40 v144 h-40 z" />
+        <path android:fillColor="#FFE8ECF2" android:pathData="M106,128 L156,56 L200,56 L142,128 Z" />
+        <!-- lower arm, offset: the "crunch" -->
+        <path android:pathData="M126,140 L150,118 L202,200 L156,200 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient android:startX="126" android:startY="118" android:endX="202" android:endY="200" android:type="linear">
+                    <item android:offset="0" android:color="#FFFF6A3D" />
+                    <item android:offset="1" android:color="#FFC2185B" />
+                </gradient>
+            </aapt:attr>
+        </path>
     </group>
 </vector>

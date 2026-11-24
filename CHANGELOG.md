@@ -8,7 +8,10 @@ What changed in each Krunk release, newest first. Krunk for Android has its own 
 - **Krunk is now a KruxSYS project.** KruxSYS (https://kruxsys.com) publishes Krunk: the website
   at krunk.kruxsys.com has the KruxSYS look and links, the installer and Krunk.exe name KruxSYS
   as the publisher (Settings → Apps shows "KruxSYS"), and About Krunk links to kruxsys.com. Krunk's
-  name, icon, address, account and updates stay the same.
+  name, address, account and updates stay the same.
+- **A new Krunk icon in the KruxSYS style:** Krunk's "K" on KruxSYS's dark square with cyan
+  corners, its offset lower arm still in Krunk's orange. It is the icon of Krunk.exe, the
+  installer, the taskbar and the Windows media controls.
 
 ## 0.28.1 — 2026-11-23
 

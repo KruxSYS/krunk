@@ -1,23 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Krunk logo: a bold "K" whose arms meet at a chevron, on a rounded square.
-     Source of krunk.ico and the PNGs (see make-icons.sh). -->
+<!-- Krunk logo (2026-11-24, in the KruxSYS family): KruxSYS's dark square with cyan corner
+     brackets, and Krunk's own "K" whose lower arm is offset (the "crunch"), in Krunk's
+     orange-to-magenta. Source of krunk.ico, krunk-64/256.png and the site icons (make-icons.sh).
+     Palette: see kruxsys.svg and .pipeline/kruxsys-brand.md. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="crunch" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#ff6a3d"/>
       <stop offset="1" stop-color="#c2185b"/>
     </linearGradient>
-    <linearGradient id="shine" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
-      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
-    </linearGradient>
   </defs>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#bg)"/>
-  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#shine)"/>
-  <!-- stem -->
-  <rect x="62" y="50" width="44" height="156" rx="10" fill="#fff"/>
-  <!-- upper arm -->
-  <path d="M106 128 L160 50 L208 50 L144 128 Z" fill="#fff"/>
-  <!-- lower arm, slightly offset: the "crunch" -->
-  <path d="M128 140 L154 116 L212 206 L162 206 Z" fill="#fff"/>
+  <rect x="12" y="12" width="232" height="232" fill="#0c1016" stroke="#2a3442" stroke-width="8"/>
+  <path d="M12 76V12h64M180 244h64v-64" fill="none" stroke="#22d3ee" stroke-width="12"/>
+  <!-- stem and upper arm -->
+  <rect x="66" y="56" width="40" height="144" fill="#e8ecf2"/>
+  <path d="M106 128 156 56h44l-58 72Z" fill="#e8ecf2"/>
+  <!-- lower arm, offset: the "crunch" -->
+  <path d="M126 140 150 118l52 82h-46Z" fill="url(#crunch)"/>
 </svg>
