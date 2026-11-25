@@ -21,7 +21,7 @@
     <a class="by-kx" href="https://kruxsys.com/projects/krunk/" title="Krunk on kruxsys.com"><span class="by-text">by</span> <img src="/kruxsys.svg" width="18" height="18" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
     <nav class="nav" aria-label="Site">
       <a href="#features">Features</a>
-      <a href="#download">Download</a>
+      <a href="/download">Download</a>
       <a href="/changelog">Changelog</a>
       <a href="/privacy">Privacy</a>
       <a href="/account/">Account</a>
@@ -38,7 +38,7 @@
         <p class="lead">Krunk is a Chromium-based browser for Windows 10 and 11: ads and trackers blocked out of the box,
           an encrypted password vault, end-to-end encrypted sync and nothing phoning home.</p>
         <div class="actions">
-          <a class="btn primary" href="#download">Download for Windows</a>
+          <a class="btn primary" href="/download">Download for Windows</a>
           <a class="btn" href="/changelog">Read the changelog</a>
         </div>
         <p class="meta"><span id="latest-version">Windows 10 and 11 · x64</span> · Android preview · No telemetry · <a href="/privacy">Privacy</a></p>
@@ -105,27 +105,11 @@
     </div>
   </section>
 
-  <section class="block" aria-labelledby="download-title">
-    <div class="wrap">
-      <p class="kicker"><span>02</span>Download</p>
-      <h2 class="section-title" id="download-title">Get Krunk</h2>
-      <p class="section-sub">Free, for Windows 10 and 11 (64-bit), with a preview for Android phones, tablets and TVs.
-        Every file comes with its SHA-256 checksum.</p>
-      <div class="dl-grid">
-        <section id="download" class="dlcard" aria-live="polite" aria-label="Download for Windows">
-          <p class="loading">Looking for the latest release…</p>
-        </section>
-        <section id="download-android" class="dlcard android" aria-live="polite" aria-label="Download for Android" hidden>
-          <p class="loading">Looking for the Android release…</p>
-        </section>
-      </div>
-    </div>
-  </section>
 
   <section class="block alt">
     <div class="wrap">
-      <p class="kicker"><span>03</span>Privacy and updates</p>
-      <div class="showcase">
+      <p class="kicker"><span>02</span>Privacy</p>
+      <div class="showcase last">
         <div>
           <h3>Private by default</h3>
           <p>The settings that protect you are already on. You can change them, but you don't have to.</p>
@@ -139,35 +123,12 @@
           <li>Updates checked with signatures, installed only when you say so</li>
         </ul>
       </div>
-      <div id="install" class="grid-2">
-        <article class="feature">
-          <h3>Install in a minute</h3>
-          <ol class="steps">
-            <li><strong>Installer:</strong> installs for your user only, without administrator rights, to
-              <code>%LOCALAPPDATA%\Programs\Krunk</code>, with a Start menu entry and an uninstaller in
-              Settings → Apps. Your data stays when you uninstall, unless you choose otherwise.</li>
-            <li><strong>Portable:</strong> unzip anywhere and run <code>Krunk.exe</code>.</li>
-            <li><strong>Check the file:</strong> the files aren't code-signed yet, so SmartScreen may warn
-              the first time. Compare the SHA-256 in the download box with
-              <code>Get-FileHash Krunk-Setup-….exe</code> in PowerShell.</li>
-          </ol>
-        </article>
-        <article class="feature">
-          <h3>Updates, quietly</h3>
-          <p>Krunk checks for a new version a minute after it starts and once a day, by fetching
-            <code>/updates/win-x64/latest.json</code> from this site with its version and nothing else.
-            A new version is installed only when you choose <em>Update now</em>, after Krunk has checked
-            its Ed25519 signature and SHA-256. You can turn the check off in Settings → About.</p>
-          <p>This site sets no cookies and loads nothing from other sites (the account pages use a
-            sign-in cookie and Cloudflare's bot check). <a href="/privacy">Read the privacy notice</a>.</p>
-        </article>
-      </div>
     </div>
   </section>
 
   <section class="block faq-block">
     <div class="wrap">
-      <p class="kicker"><span>04</span>Questions</p>
+      <p class="kicker"><span>03</span>Questions</p>
       <div class="faq">
         <details>
           <summary>What does the AI agent send, and where?</summary>
@@ -209,7 +170,7 @@
     <nav class="foot-col" aria-label="Krunk">
       <h2>Krunk</h2>
       <ul>
-        <li><a href="/#download">Download</a></li>
+        <li><a href="/download">Download</a></li>
         <li><a href="/changelog">Changelog</a></li>
         <li><a href="/privacy">Privacy</a></li>
         <li><a href="/account/">Account</a></li>

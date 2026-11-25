@@ -101,7 +101,7 @@ function cliPair(arg, dir, onLine) {
   await shot(page, 'changelog');
   await page.goto(`${BASE}/changelog#0.12.4`);
   ok(await page.$eval('section[id="0.12.4"] h2', (h) => h.textContent.includes('0.12.4')), 'changelog: /changelog#0.12.4 lands on its section');
-  await page.goto(`${BASE}/`);
+  await page.goto(`${BASE}/download`);
   await page.waitForSelector('#download a');
   const full = await page.$('#download a:has-text("Full changelog")');
   ok(full, 'download box: "Full changelog" link');

@@ -2,6 +2,12 @@
 (function () {
   'use strict';
   const box = document.getElementById('download');
+  // Since 2026-11-25 the download boxes live on /download. Old links to the home page's boxes
+  // (kruxsys.com links /#download) land there; the fragment never reaches the server.
+  if (!box && /^#(download|install)$/.test(location.hash)) {
+    location.replace('/download');
+    return;
+  }
 
   function el(tag, attrs, children) {
     const n = document.createElement(tag);
@@ -109,15 +115,17 @@
   fetch('/download/release.json', { cache: 'no-cache' })
     .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
     .then(function (r) {
-      render(r);
-      usingKrunk(String(r.version));
+      if (box) {
+        render(r);
+        usingKrunk(String(r.version));
+      }
       // The hero's mono readout, like the other KruxSYS sites: "Latest: 0.29.0 · Windows 10 and 11 · x64".
       const latest = document.getElementById('latest-version');
       if (latest && /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(String(r.version))) {
         latest.textContent = 'Latest: ' + String(r.version) + ' · Windows 10 and 11 · x64';
       }
     })
-    .catch(function () { none(); usingKrunk(null); });
+    .catch(function () { if (box) { none(); usingKrunk(null); } });
 
   // The Android preview: /download/android.json, written by publish-android.sh. The box
   // stays hidden until a release exists; the device APK is the button, the others are links.

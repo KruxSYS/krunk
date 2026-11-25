@@ -528,7 +528,7 @@ See `dist/server/README.md` → "Checks". After publishing:
 - the downloads' SHA-256s match `SHA256SUMS`;
 - `openssl pkeyutl -verify -pubin -inkey assets/keys/update-signing.pub -rawin -in latest.json -sigfile <(base64 -d latest.json.sig)`
   succeeds;
-- the landing page shows the version, both downloads and their hashes.
+- /download shows the version, both downloads and their hashes (the home page shows the version in the hero).
 
 ## Krunk 0.3 (windows, tab dragging, docked DevTools)
 Last pass: 2026-11-05 on the Windows 11 VM; evidence in the pipeline workspace under

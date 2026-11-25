@@ -13,7 +13,7 @@
 
 <p align="center">
   <a href="https://krunk.kruxsys.com">Website</a> ·
-  <a href="https://krunk.kruxsys.com/#download">Download</a> ·
+  <a href="https://krunk.kruxsys.com/download">Download</a> ·
   <a href="https://krunk.kruxsys.com/changelog">Changelog</a> ·
   <a href="https://kruxsys.com/projects/krunk/">KruxSYS project page</a>
 </p>

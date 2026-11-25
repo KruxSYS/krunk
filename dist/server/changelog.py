@@ -335,7 +335,7 @@ PAGE_HEAD = """<!doctype html>
     <a class="by-kx" href="https://kruxsys.com/projects/krunk/" title="Krunk on kruxsys.com"><span class="by-text">by</span> <img src="/kruxsys.svg" width="18" height="18" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
     <nav class="nav" aria-label="Site">
       <a href="/#features">Features</a>
-      <a href="/#download">Download</a>
+      <a href="/download">Download</a>
       <a href="/changelog" aria-current="page">Changelog</a>
       <a href="/privacy">Privacy</a>
       <a href="/account/">Account</a>
@@ -356,7 +356,7 @@ PAGE_FOOT = """</div>
     <nav class="foot-col" aria-label="Krunk">
       <h2>Krunk</h2>
       <ul>
-        <li><a href="/#download">Download</a></li>
+        <li><a href="/download">Download</a></li>
         <li><a href="/changelog">Changelog</a></li>
         <li><a href="/privacy">Privacy</a></li>
         <li><a href="/account/">Account</a></li>

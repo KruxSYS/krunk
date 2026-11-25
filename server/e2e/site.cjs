@@ -160,7 +160,9 @@ async function axe(page, label) {
 // ---- A + B: every page -------------------------------------------------------------------------
 const PAGES = [
   // 0.10.0: the public pages (restyled) and the HTML 404.
-  { name: 'home', url: '/', ready: '#download .btn.big, #download .none' },
+  { name: 'home', url: '/', ready: '#features' },
+  // 2026-11-25: the download boxes have their own page, like the other KruxSYS sites.
+  { name: 'download', url: '/download', ready: '#download .btn.big, #download .none' },
   { name: 'privacy', url: '/privacy', ready: '.toc a' },
   { name: '404', url: '/no-such-page', ready: '.errcode' },
   { name: 'login', url: '/account/login', ready: '#form:not([hidden])' },
@@ -576,8 +578,8 @@ async function publicSite() {
       ? route.fulfill({ status: c.status, body: '404 Not Found' })
       : route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(c.body) }));
     if (c.krunk) await ctx.addInitScript((v) => { Object.defineProperty(window, 'krunk', { value: Object.freeze({ version: v }) }); }, c.krunk);
-    const page = await watched(ctx, `home ${c.name}`);
-    await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+    const page = await watched(ctx, `download ${c.name}`);
+    await page.goto(BASE + '/download', { waitUntil: 'networkidle' });
     await page.waitForSelector('#download .btn.big, #download .none');
     const got = await page.evaluate(() => {
       const q = (s) => document.querySelector(s);

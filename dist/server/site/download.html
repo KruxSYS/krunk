@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download · Krunk</title>
+<meta name="description" content="Download Krunk for Windows 10 and 11 (installer or portable zip) and the Krunk preview for Android, with SHA-256 checksums.">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#07090c">
+<meta property="og:site_name" content="Krunk · KruxSYS">
+<link rel="icon" type="image/png" href="/krunk-64.png">
+<link rel="apple-touch-icon" href="/krunk-180.png">
+<link rel="stylesheet" href="/style.css">
+<script src="/app.js" defer></script>
+</head>
+<body class="site">
+<a class="skip" href="#main">Skip to content</a>
+<header class="bar site-bar">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/krunk.svg" width="30" height="30" alt=""><span class="wordmark">Krunk</span></a>
+    <a class="by-kx" href="https://kruxsys.com/projects/krunk/" title="Krunk on kruxsys.com"><span class="by-text">by</span> <img src="/kruxsys.svg" width="18" height="18" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+    <nav class="nav" aria-label="Site">
+      <a href="/#features">Features</a>
+      <a href="/download" aria-current="page">Download</a>
+      <a href="/changelog">Changelog</a>
+      <a href="/privacy">Privacy</a>
+      <a href="/account/">Account</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="page-head">
+    <div class="wrap">
+      <p class="eyebrow"><span class="tag">MOD/01</span>Free · open source · no telemetry</p>
+      <h1>Download Krunk</h1>
+      <p>For Windows 10 and 11, 64-bit: the installer sets Krunk up for your user without administrator rights, the
+        portable zip runs from any folder. The Android preview runs on phones, tablets and TVs. Every file is listed with
+        its SHA-256 checksum.</p>
+    </div>
+  </section>
+  <section class="dl-section">
+    <div class="wrap">
+      <div class="dl-grid">
+        <section id="download" class="dlcard" aria-live="polite" aria-label="Download for Windows">
+          <p class="loading">Looking for the latest release…</p>
+        </section>
+        <section id="download-android" class="dlcard android" aria-live="polite" aria-label="Download for Android" hidden>
+          <p class="loading">Looking for the Android release…</p>
+        </section>
+      </div>
+      <noscript><p class="note">Turn on JavaScript to see the latest release, or fetch <a href="/download/release.json">release.json</a> (Windows) and <a href="/download/android.json">android.json</a> (Android).</p></noscript>
+    </div>
+  </section>
+  <section class="block alt">
+    <div id="install" class="wrap grid-2">
+      <article class="feature">
+        <h3>Install in a minute</h3>
+        <ol class="steps">
+          <li><strong>Installer:</strong> installs for your user only, without administrator rights, to
+            <code>%LOCALAPPDATA%\Programs\Krunk</code>, with a Start menu entry and an uninstaller in
+            Settings → Apps. Your data stays when you uninstall, unless you choose otherwise.</li>
+          <li><strong>Portable:</strong> unzip anywhere and run <code>Krunk.exe</code>.</li>
+          <li><strong>Check the file:</strong> the files aren't code-signed yet, so SmartScreen may warn
+            the first time. Compare the SHA-256 in the download box with
+            <code>Get-FileHash Krunk-Setup-….exe</code> in PowerShell.</li>
+        </ol>
+      </article>
+      <article class="feature">
+        <h3>Updates, quietly</h3>
+        <p>Krunk checks for a new version a minute after it starts and once a day, by fetching
+          <code>/updates/win-x64/latest.json</code> from this site with its version and nothing else.
+          A new version is installed only when you choose <em>Update now</em>, after Krunk has checked
+          its Ed25519 signature and SHA-256. You can turn the check off in Settings → About.</p>
+        <p>This site sets no cookies and loads nothing from other sites (the account pages use a
+          sign-in cookie and Cloudflare's bot check). <a href="/privacy">Read the privacy notice</a>.</p>
+      </article>
+    </div>
+  </section>
+  <section class="block">
+    <div class="wrap grid-2">
+      <article class="feature">
+        <h3>Requirements</h3>
+        <p>Windows 10 or 11, 64-bit, and about 450 MB of disk space once installed. The Android preview needs Android 8
+          or later on a 64-bit ARM phone or tablet; Android TV and Google TV are supported since 0.12.0, with an
+          armeabi-v7a APK for 32-bit TVs.</p>
+      </article>
+      <article class="feature">
+        <h3>What's new</h3>
+        <p>Every release and what changed in it, newest first, is on the <a href="/changelog">changelog</a>. Krunk
+          offers new versions itself in Settings → About; your data stays when you update.</p>
+      </article>
+    </div>
+  </section>
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-grid">
+    <div class="foot-brand">
+      <a href="https://kruxsys.com/"><img src="/kruxsys.svg" width="28" height="28" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+      <p>Krunk is a KruxSYS product: a fast, private browser for Windows, with a preview for Android. Open source (MIT), no telemetry.</p>
+      <p class="foot-note">Bundles Chromium through the Chromium Embedded Framework, and filter lists by EasyList and uBlock Origin; see the notices in the download.</p>
+    </div>
+    <nav class="foot-col" aria-label="Krunk">
+      <h2>Krunk</h2>
+      <ul>
+        <li><a href="/download">Download</a></li>
+        <li><a href="/changelog">Changelog</a></li>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="/account/">Account</a></li>
+        <li><a href="mailto:privacy@kruxsys.com">Contact</a></li>
+      </ul>
+    </nav>
+    <nav class="foot-col" aria-label="KruxSYS">
+      <h2>KruxSYS</h2>
+      <ul>
+        <li><a href="https://kruxsys.com/projects/krunk/">Project page</a></li>
+        <li><a href="https://kruxsys.com/">kruxsys.com</a></li>
+        <li><a href="https://kruxsys.com/projects/screvia/">Screvia</a></li>
+        <li><a href="https://kruxsys.com/projects/plexdio/">Plexdio</a></li>
+      </ul>
+    </nav>
+    <p class="foot-meta"><span>MOD/01 · Krunk</span><span>© 2026 KruxSYS</span></p>
+  </div>
+</footer>
+</body>
+</html>

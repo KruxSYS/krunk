@@ -147,6 +147,17 @@
 		file_server
 	}
 
+	# The download page (2026-11-25, like the other KruxSYS sites). Only the exact path: the
+	# release files below /download/ stay with the handler above. /download/ alone (a folder
+	# with no index) goes to the page too.
+	redir /download/ /download 308
+	handle /download {
+		root * /srv/site
+		header Cache-Control "no-cache, no-transform"
+		rewrite * /download.html
+		file_server
+	}
+
 	handle /privacy {
 		root * /srv/site
 		header Cache-Control "no-cache, no-transform"

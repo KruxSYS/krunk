@@ -9,6 +9,7 @@ A single Caddy container (`caddy:2.11.8-alpine`, pinned by digest) that serves:
 | `/` | the website (`site/`, baked into the image) | `no-cache` |
 | `/changelog` (0.13.0) | every release's notes, generated from the repository's `CHANGELOG.md` when the image is built | `no-cache` |
 | `/pair` (0.13.0) | the phone's page for "Add a device" (`site/account/pair.html`); the token stays in the URL fragment | `no-store` |
+| `/download` (2026-11-25) | the download page (`site/download.html`) with the Windows and Android download boxes; `/download/` redirects there, and the home page sends old `/#download` links on | `no-cache` |
 | `/download/release.json` | the website's download box | `no-cache` |
 | `/download/<version>/…` | `Krunk-Setup-<version>.exe`, `Krunk-win-x64.zip` (as attachments), `NOTES.md`, `SHA256SUMS` | 1 year, `immutable` |
 | `/download/android.json` (Android 0.1.0) | the website's Android download box | `no-cache` |

@@ -473,3 +473,10 @@ details.danger-zone + .inline-panel, details.danger-zone .inline-panel { margin-
 .delete-line { margin: 0; text-align: right; font-size: var(--t-sm); }
 .delete-line a { color: var(--danger); display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--s1); }
 .auth .card .row-buttons .btn { width: 100%; }
+
+/* ---- /download (2026-11-25): its own page, like the sibling sites' download pages ---------- */
+.page-head { padding: clamp(2.5rem, 5vw, 3.5rem) 0 1.5rem; }
+.page-head h1 { margin: 1.1rem 0 .5rem; font-size: clamp(1.9rem, 4vw, 2.8rem); line-height: 1.1; letter-spacing: -.03em; }
+.page-head p:not(.eyebrow) { margin: 0; color: var(--muted); max-width: 46rem; }
+.dl-section { padding: 0 0 clamp(2.5rem, 6vw, 4.5rem); }
+.showcase.last { margin-bottom: 0; }

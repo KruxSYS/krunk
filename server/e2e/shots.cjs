@@ -91,7 +91,8 @@ async function newCode() {
   }
   const out = await context(false);
   // 0.10.0: the public pages and the HTML 404.
-  await shoot(out, 'home', '/', (p) => p.waitForSelector('#download .btn.big, #download .none'));
+  await shoot(out, 'home', '/', (p) => p.waitForSelector('#features'));
+  await shoot(out, 'download', '/download', (p) => p.waitForSelector('#download .btn.big, #download .none'));
   await shoot(out, 'privacy', '/privacy');
   await shoot(out, '404', '/no-such-page');
   await shoot(out, 'login', '/account/login');
