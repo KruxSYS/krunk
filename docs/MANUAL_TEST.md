@@ -81,7 +81,7 @@ The 2026-11-04 figures are in the README under "Memory".
 9. A web page can't navigate to `https://krunk.invalid/settings.html` or
    `https://shell.krunk.invalid/shell.html`. The navigation is blocked, and the log has
    "blocked navigation to an internal or unsupported URL".
-10. Every shortcut in the README's Usage table works with focus in the page, in the address
+10. Every shortcut in the Usage table of docs/USER-GUIDE.md works with focus in the page, in the address
     bar, and after clicking the title bar.
 
 ## Popup window
@@ -415,7 +415,7 @@ working set.
    - after about 30 s (second stage),
    - after more than 40 s with discard on (reloaded).
    Each time the page is shown at once and keeps updating; it is never left white. The log has
-   "tab N: woken (LowMemory)" or "(Suspended)". (Pages are not frozen: see README, "Known
+   "tab N: woken (LowMemory)" or "(Suspended)". (Pages are not frozen: see docs/KNOWN-LIMITATIONS.md, "Known
    limitations".)
 6. **Discard:**
    - About 6 minutes after a tab was last active, the log has "tab N: discarded". The

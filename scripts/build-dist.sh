@@ -18,7 +18,7 @@
 # KRUNK_UPDATE_PUBKEY_FILE the public key it trusts (default assets/keys/update-signing.pub):
 #   UPDATE_BASE_URL=https://downloads.example.org scripts/build-dist.sh
 #
-# Requirements (see README, "Building"): Rust with the x86_64-pc-windows-msvc target,
+# Requirements (see docs/BUILDING.md): Rust with the x86_64-pc-windows-msvc target,
 # cargo-xwin, export-cef-dir (same version as the cef crate), LLVM 20 (clang-cl, lld-link,
 # llvm-lib) in $LB_LLVM or on PATH, cmake, ninja, curl, python3, zip, dpkg-deb (NSIS is
 # fetched by scripts/fetch-nsis.sh).

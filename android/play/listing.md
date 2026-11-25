@@ -84,7 +84,7 @@ Play counts characters, not bytes).
   other browsers, no "best/#1", no keyword list.
 - uBlock Origin is named once, with author and licence, as a bundled separate program
   (`android/THIRD-PARTY-NOTICES.md`). Mozilla/GeckoView is named only factually.
-- Every claim is from `README.md` (Android section), `CHANGELOG-android.md` and
+- Every claim is from `docs/ANDROID.md`, `CHANGELOG-android.md` and
   `docs/ANDROID_FEATURES.md` as of 0.4.0. Re-check against 0.5.0's changelog before submitting
   (for example if 0.5.0 adds or changes features).
 - Not in the listing on purpose: Peter Lowe's non-commercial note (operator note in

@@ -133,7 +133,7 @@ Consequences:
   talks only to the provider the user configured (next section).
 
 ## AI agent, userscripts and macros (0.12.0)
-How it works: README, "AI agent, userscripts and macros". The agent is off by default. While it is
+How it works: docs/HOW-IT-WORKS.md, "AI agent, userscripts and macros". The agent is off by default. While it is
 off there is no panel, no agent and no provider request. Every provider entry point checks the
 setting.
 
@@ -292,7 +292,7 @@ switches stay disabled. Becoming the default browser is always the user's choice
 Settings: Krunk only writes its registration under HKCU (`core::default_browser::registration`).
 
 ## Update check
-How it works: README, "Updates". The rules are in `core::update` (unit-tested); the app only
+How it works: docs/HOW-IT-WORKS.md, "Updates". The rules are in `core::update` (unit-tested); the app only
 fetches files and runs the installer.
 
 **Signature, not HTTPS, is what is trusted.** `latest.json` is accepted only if its exact bytes
