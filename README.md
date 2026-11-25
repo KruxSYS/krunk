@@ -1,47 +1,82 @@
+<!-- Brand: KruxSYS palette and marks, see assets/brand/README.md. -->
 <p align="center">
-  <img src="assets/brand/krunk.svg" width="96" alt="Krunk">
-  &nbsp;&nbsp;
-  <img src="assets/brand/kruxsys.svg" width="96" alt="KruxSYS">
+  <img src="assets/brand/krunk.svg" width="96" height="96" alt="Krunk logo">
 </p>
 
 <h1 align="center">Krunk</h1>
 
 <p align="center">
-  A lightweight, privacy-minded web browser for Windows and Android: no telemetry, no background chatter.<br>
-  A <a href="https://kruxsys.com/">KruxSYS</a> project
+  <a href="https://kruxsys.com/"><img src="assets/brand/kruxsys.svg" width="20" height="20" alt="" align="absmiddle"></a>
+  &nbsp;by <a href="https://kruxsys.com/"><b>KruxSYS</b></a>
+</p>
+
+<p align="center"><b>A lightweight, privacy-minded web browser for Windows and Android.</b></p>
+
+<p align="center">
+  <a href="https://kruxsys.com/projects/krunk/"><img src="https://img.shields.io/badge/status-stable-6fdc95?style=flat-square&labelColor=0c1016" alt="Status: stable"></a>
+  <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Windows-0.29.0-22d3ee?style=flat-square&labelColor=0c1016" alt="Windows 0.29.0"></a>
+  <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Android-0.14.0%20preview-ffb547?style=flat-square&labelColor=0c1016" alt="Android 0.14.0 preview"></a>
+  <a href="https://kruxsys.com/projects/krunk/"><img src="https://img.shields.io/badge/project%20page-kruxsys.com-22d3ee?style=flat-square&labelColor=0c1016" alt="Project page on kruxsys.com"></a>
+  <a href="https://kruxsys.com/"><img src="https://img.shields.io/badge/by-KruxSYS-22d3ee?style=flat-square&labelColor=0c1016" alt="KruxSYS"></a>
+  <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/download-krunk.kruxsys.com-22d3ee?style=flat-square&labelColor=0c1016" alt="Download from krunk.kruxsys.com"></a>
+  <img src="https://img.shields.io/badge/Windows%2010%20%2F%2011-x64-2a3442?style=flat-square&labelColor=0c1016" alt="Windows 10 and 11, x64">
+  <img src="https://img.shields.io/badge/Android-8%2B-2a3442?style=flat-square&labelColor=0c1016" alt="Android 8 and later">
+  <img src="https://img.shields.io/badge/license-MIT-2a3442?style=flat-square&labelColor=0c1016" alt="License: MIT">
 </p>
 
 <p align="center">
-  <a href="https://krunk.kruxsys.com">Website</a> ·
+  <a href="https://krunk.kruxsys.com/">Website</a> ·
   <a href="https://krunk.kruxsys.com/download">Download</a> ·
   <a href="https://krunk.kruxsys.com/changelog">Changelog</a> ·
-  <a href="https://kruxsys.com/projects/krunk/">KruxSYS project page</a>
+  <a href="https://krunk.kruxsys.com/privacy">Privacy</a> ·
+  <a href="https://kruxsys.com/projects/krunk/">Project page</a> ·
+  <a href="https://kruxsys.com/">kruxsys.com</a>
 </p>
+
+**Krunk** is a free, lightweight, privacy-minded web browser for Windows 10/11 (x64), made by
+[KruxSYS](https://kruxsys.com/) and written in Rust. It brings its own engine, **Chromium 156.0.8078.80** through
+the Chromium Embedded Framework (**CEF 156.0.15**), so neither Microsoft Edge nor WebView2 is used. It installs per
+user without administrator rights or runs portable from a zip, keeps itself up to date with signed updates, and sends
+no telemetry. **Krunk for Android** (preview) shares the same Rust core and syncs with it. This repository also holds
+the **Krunk service**, the Docker Compose stack behind <https://krunk.kruxsys.com>: the website, downloads, signed
+updates and the end-to-end encrypted account sync.
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platforms-Windows%20%7C%20Android-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="Platforms: Windows | Android">
-  <img src="https://img.shields.io/badge/Windows-0.29.0-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="Windows 0.29.0">
-  <img src="https://img.shields.io/badge/Android-0.14.0%20preview-ffb547?labelColor=0c1016&amp;style=flat-square" alt="Android 0.14.0 preview">
-  <img src="https://img.shields.io/badge/license-MIT-22d3ee?labelColor=0c1016&amp;style=flat-square" alt="License: MIT">
+  <img src="docs/screenshots/landing-desktop.png" width="820" alt="The Krunk website in the KruxSYS look">
 </p>
 
+> **Status (Windows 0.29.0, Android 0.14.0):** Krunk for Windows is stable and in daily use; every release is
+> cross-built on Linux and smoke-tested on a Windows 11 VM. Krunk for Android is a preview (phones, tablets and
+> Android TV). What is not done or not verified is listed under [Known limitations](#known-limitations).
+> Release notes: [`CHANGELOG.md`](CHANGELOG.md) and [`CHANGELOG-android.md`](CHANGELOG-android.md).
 
-Krunk is a lightweight, privacy-minded web browser for Windows 10/11 (x64), written in
-Rust. It brings its own engine: **Chromium 156.0.8078.80** through the Chromium Embedded
-Framework (**CEF 156.0.15**), bundled in the download. Neither Microsoft Edge nor WebView2 is
-used. It installs per user without administrator rights, or runs portable from a zip. It includes:
-- tabs and private tabs, in as many windows as you like (drag tabs between them)
-- history and bookmarks
-- a new-tab page with your most-visited sites, built-in wallpapers and your own colours
-- built-in ad and tracker blocking
-- an encrypted password vault for logins and payment cards, with an optional recovery phrase
-- downloads, find, zoom, print and DevTools docked next to the page
-- session restore
-- background-tab sleep, to save memory
-- a Krunk account with end-to-end encrypted sync (bookmarks, history, settings, open tabs and,
-  with the vault unlocked, passwords) between your computers and Krunk for Android
-- Chrome extensions from the Chrome Web Store
-- a VPN for Krunk only (WireGuard and OpenVPN files from your provider), with a kill switch
+## What it does
+
+- **Tabs and windows**: tabs and private tabs in as many windows as you like; drag tabs between windows, tab
+  previews, session restore and background-tab sleep to save memory.
+- **History and bookmarks**: a bookmarks bar with folders, and an address bar with suggestions and inline completion.
+- **New-tab page**: your most-visited sites, built-in wallpapers and your own colours.
+- **Ad and tracker blocking**, built in, with your own filters and filter lists.
+- **Password vault**: encrypted logins and payment cards, strong-password suggestions and an optional recovery phrase.
+- **Krunk account and sync**: end-to-end encrypted bookmarks, history, settings, open tabs and (with the vault
+  unlocked) passwords, between your computers and Krunk for Android.
+- **Chrome extensions** from the Chrome Web Store (Krunk's own Manifest V3 runtime).
+- **VPN for Krunk only**: WireGuard and OpenVPN files from your provider, with a kill switch.
+- **Tools**: downloads (in parts, resumable), find, zoom, print, DevTools docked next to the page, a page-source
+  viewer and a WASM memory inspector.
+- **Optional AI agent**, userscripts and macros: off by default, with your own provider and key.
+
+## Contents
+
+- [Download and requirements](#download-and-requirements)
+- [Usage](#usage)
+- [How it works](#how-it-works)
+- [Krunk for Android (preview)](#krunk-for-android-preview)
+- [Building from source](#building-from-source)
+- [Known limitations](#known-limitations)
+- [Third-party components](#third-party-components)
+- [Brand](#brand)
+- [Other KruxSYS projects](#other-kruxsys-projects)
 
 ## Download and requirements
 - **Installer:** `Krunk-Setup-0.29.0.exe` (about 142 MB), from `https://krunk.kruxsys.com`. It installs for the current user
@@ -2758,13 +2793,25 @@ Page-load harness (0.26.0; details and every option in
   (`ui/shared/editor.js`, `jstok.js`), the agent panel's Markdown renderer
   (`ui/shell/markdown.js`) and the SSE parser are Krunk's own code. Nothing new is bundled.
 
-## About KruxSYS
-Krunk is a [KruxSYS](https://kruxsys.com/) project. KruxSYS builds privacy-minded software for
-Windows and Android:
-- **Krunk**: this browser ([project page](https://kruxsys.com/projects/krunk/), [website](https://krunk.kruxsys.com))
-- **Screvia**: [kruxsys.com/projects/screvia](https://kruxsys.com/projects/screvia/)
-- **Plexdio**: [kruxsys.com/projects/plexdio](https://kruxsys.com/projects/plexdio/)
+## Brand
 
-Contact: [privacy@kruxsys.com](mailto:privacy@kruxsys.com)
+Krunk is a KruxSYS product and uses the KruxSYS look: dark panels, thin blue-grey lines, a cyan signal accent,
+square corners and monospace labels. The icon keeps Krunk's "K" with its orange-to-magenta lower arm inside KruxSYS's
+dark square and cyan corner brackets. [`assets/brand/README.md`](assets/brand/README.md) describes the marks, and
+`assets/brand/make-icons.sh` renders the app icon, the website icons and the installer art from the SVG masters.
 
-<p align="center"><sub>© 2026 KruxSYS · Krunk is MIT licensed</sub></p>
+## Other KruxSYS projects
+
+- **[Screvia](https://kruxsys.com/projects/screvia/)**: screenshots, screen recording and sharing for Windows
+  ([screvia.kruxsys.com](https://screvia.kruxsys.com/)).
+- **[Plexdio](https://kruxsys.com/projects/plexdio/)**: a small, native Windows music player for Plex
+  ([plexdio.kruxsys.com](https://plexdio.kruxsys.com/)).
+
+More at [kruxsys.com](https://kruxsys.com/). Contact: [privacy@kruxsys.com](mailto:privacy@kruxsys.com)
+
+---
+
+<p align="center">
+  <a href="https://kruxsys.com/"><img src="assets/brand/kruxsys.svg" width="24" height="24" alt="KruxSYS"></a><br>
+  <sub>© 2026 KruxSYS · MIT licensed · <a href="https://kruxsys.com/projects/krunk/">kruxsys.com/projects/krunk</a></sub>
+</p>
