@@ -108,7 +108,15 @@
 
   fetch('/download/release.json', { cache: 'no-cache' })
     .then(function (res) { if (!res.ok) throw new Error(res.status); return res.json(); })
-    .then(function (r) { render(r); usingKrunk(String(r.version)); })
+    .then(function (r) {
+      render(r);
+      usingKrunk(String(r.version));
+      // The hero's mono readout, like the other KruxSYS sites: "Latest: 0.29.0 · Windows 10 and 11 · x64".
+      const latest = document.getElementById('latest-version');
+      if (latest && /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(String(r.version))) {
+        latest.textContent = 'Latest: ' + String(r.version) + ' · Windows 10 and 11 · x64';
+      }
+    })
     .catch(function () { none(); usingKrunk(null); });
 
   // The Android preview: /download/android.json, written by publish-android.sh. The box

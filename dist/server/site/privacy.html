@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Privacy · Krunk</title>
 <meta name="description" content="What the Krunk website and the optional Krunk account hold about you, for how long, and who else is involved.">
-<meta name="theme-color" content="#07090c" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f5f7fa" media="(prefers-color-scheme: light)">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#07090c">
 <meta property="og:site_name" content="Krunk · KruxSYS">
 <link rel="icon" type="image/png" href="/krunk-64.png">
 <link rel="stylesheet" href="/style.css">
@@ -15,15 +15,14 @@
 <a class="skip" href="#main">Skip to content</a>
 <header class="bar site-bar">
   <div class="wrap">
-    <div class="brandset">
-      <a class="brand" href="/"><img src="/krunk.svg" width="28" height="28" alt=""> Krunk</a>
-      <a class="by-kx" href="https://kruxsys.com/"><span class="by-text">by </span><img src="/kruxsys.svg" width="22" height="22" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
-    </div>
-    <nav aria-label="Site">
-      <a class="opt" href="/#features">Features</a>
-      <a class="opt" href="/#install">Install</a>
+    <a class="brand" href="/"><img src="/krunk.svg" width="30" height="30" alt=""><span class="wordmark">Krunk</span></a>
+    <a class="by-kx" href="https://kruxsys.com/projects/krunk/" title="Krunk on kruxsys.com"><span class="by-text">by</span> <img src="/kruxsys.svg" width="18" height="18" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+    <nav class="nav" aria-label="Site">
+      <a href="/#features">Features</a>
+      <a href="/#download">Download</a>
+      <a href="/changelog">Changelog</a>
       <a href="/privacy" aria-current="page">Privacy</a>
-      <a class="btn small" href="/account/">Account</a>
+      <a href="/account/">Account</a>
     </nav>
   </div>
 </header>
@@ -137,40 +136,33 @@
 </main>
 </div>
 <footer class="site-foot">
-  <div class="wrap kx-row">
-    <a class="kx-brand" href="https://kruxsys.com/"><img src="/kruxsys.svg" width="28" height="28" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
-    <p>Krunk is a KruxSYS project.</p>
-    <nav aria-label="KruxSYS">
-      <a href="https://kruxsys.com/">kruxsys.com</a>
-      <a href="https://kruxsys.com/projects/krunk/">Krunk project page</a>
-      <a href="https://kruxsys.com/projects/screvia/">Screvia</a>
-      <a href="https://kruxsys.com/projects/plexdio/">Plexdio</a>
-    </nav>
-  </div>
   <div class="wrap foot-grid">
-    <div>
-      <a class="brand" href="/"><img src="/krunk.svg" width="24" height="24" alt=""> Krunk</a>
-      <p>Open source (MIT). Bundles Chromium through the Chromium Embedded Framework, and filter
-        lists by EasyList and uBlock Origin; see the notices in the download.</p>
+    <div class="foot-brand">
+      <a href="https://kruxsys.com/"><img src="/kruxsys.svg" width="28" height="28" alt=""><span class="kx-word">Krux<span class="accent">SYS</span></span></a>
+      <p>Krunk is a KruxSYS product: a fast, private browser for Windows, with a preview for Android. Open source (MIT), no telemetry.</p>
+      <p class="foot-note">Bundles Chromium through the Chromium Embedded Framework, and filter lists by EasyList and uBlock Origin; see the notices in the download.</p>
     </div>
-    <nav aria-label="Footer">
+    <nav class="foot-col" aria-label="Krunk">
       <h2>Krunk</h2>
-      <a href="/#install">Download</a>
-      <a class="opt" href="/#features">Features</a>
-      <a href="/changelog">Changelog</a>
+      <ul>
+        <li><a href="/#download">Download</a></li>
+        <li><a href="/changelog">Changelog</a></li>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="/account/">Account</a></li>
+        <li><a href="mailto:privacy@kruxsys.com">Contact</a></li>
+      </ul>
     </nav>
-    <nav aria-label="Account">
-      <h2>Account</h2>
-      <a href="/account/login">Sign in</a>
-      <a href="/account/register">Create an account</a>
+    <nav class="foot-col" aria-label="KruxSYS">
+      <h2>KruxSYS</h2>
+      <ul>
+        <li><a href="https://kruxsys.com/projects/krunk/">Project page</a></li>
+        <li><a href="https://kruxsys.com/">kruxsys.com</a></li>
+        <li><a href="https://kruxsys.com/projects/screvia/">Screvia</a></li>
+        <li><a href="https://kruxsys.com/projects/plexdio/">Plexdio</a></li>
+      </ul>
     </nav>
-    <nav aria-label="About">
-      <h2>About</h2>
-      <a href="/privacy">Privacy</a>
-      <a href="mailto:privacy@kruxsys.com">Contact</a>
-    </nav>
+    <p class="foot-meta"><span>MOD/01 · Krunk</span><span>© 2026 KruxSYS</span></p>
   </div>
-  <div class="wrap foot-bottom"><p>© 2026 KruxSYS</p><p>Krunk · MIT licence</p></div>
 </footer>
 </body>
 </html>
