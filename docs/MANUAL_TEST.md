@@ -1205,6 +1205,10 @@ over CDP on a fast build). The probe page is `cast.html`, with two `<video>`s, o
 1. **APIs on:** a fresh profile on cast.html gives `presentation`, `remote` and
    `PresentationRequest` true; v2's `watchAvailability` throws InvalidStateError.
 2. **No discovery before use:** `udp.ps1` shows no `:5353` for Krunk until the first Cast….
+   Run this on the **installed** path whose firewall rule already allows Krunk, not on a new
+   folder: 0.30.0 passed on a new folder but searched at every launch once allowed (fixed in
+   0.30.1). `scripts/vm-0300/v0301.ps1 -Phase checks` does it: launch plus 60 s idle, Cast…,
+   a site's button (`site.html`), and casting off.
 3. **⋮ → Cast…:** the first time, Windows' firewall prompt appears (Allow). Then the picker shows
    "No devices found" with the firewall hint (or the devices).
 4. **Page context menu → Cast…** (above Inspect) opens the same picker.

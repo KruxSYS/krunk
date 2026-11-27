@@ -511,7 +511,8 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     also has play/pause, a position slider and, for devices that allow it, volume and mute.
   - While a tab casts, a cast icon appears in the toolbar; it opens the picker.
   - Private tabs can be cast; the picker says it is a private tab.
-  - Krunk looks for devices only from the moment you open the picker (or a site's cast button),
+  - Krunk looks for devices only from the moment you open the picker (or a site's cast button;
+    0.30.0 also searched at every launch once Windows Firewall allowed Krunk, fixed in 0.30.1),
     then until Krunk closes. **The first time, Windows asks whether Krunk may use the network**
     (it covers the picker): answer **Allow** for private networks, then choose Cast… again.
     Without that permission no device is found.
