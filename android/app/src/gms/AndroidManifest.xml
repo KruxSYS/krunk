@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Casting (0.15.0): merged only into builds with Google Play Services (app/build.gradle.kts,
+     not with -Pkrunk.noGms=true). The Cast framework reads its options class from the
+     meta-data; the controls screen is the SDK's expanded controller. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data
+            android:name="com.google.android.gms.cast.framework.OPTIONS_PROVIDER_CLASS_NAME"
+            android:value="org.krunk.browser.cast.CastOptionsProvider" />
+
+        <activity
+            android:name="org.krunk.browser.cast.KrunkExpandedControllerActivity"
+            android:exported="false"
+            android:label="@string/menu_cast"
+            android:launchMode="singleTask"
+            android:parentActivityName="org.krunk.browser.MainActivity"
+            android:theme="@style/Theme.Krunk.CastControls" />
+    </application>
+</manifest>

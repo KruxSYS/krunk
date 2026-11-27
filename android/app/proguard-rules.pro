@@ -21,3 +21,8 @@
 -keeppackagenames org.yaml.snakeyaml.**
 -keep class org.mozilla.gecko.util.DebugConfig { *; }
 -dontwarn org.yaml.snakeyaml.**
+
+# Casting (0.15.0, builds with Play Services): the Cast framework creates its options class from
+# the name in the manifest meta-data (src/gms/AndroidManifest.xml), by reflection. The rule is
+# harmless in a -Pkrunk.noGms=true build, which has no such class.
+-keep class org.krunk.browser.cast.CastOptionsProvider { <init>(); }

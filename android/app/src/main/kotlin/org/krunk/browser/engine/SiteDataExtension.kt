@@ -6,10 +6,12 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONArray
 import org.json.JSONObject
 import org.krunk.browser.KrunkApp
+import org.krunk.browser.cast.PageVideo
 import org.krunk.browser.ui.sitedata.SiteDataModel
 import org.krunk.ffi.isSiteName
 import org.krunk.ffi.webOrigin
 import org.mozilla.geckoview.GeckoRuntime
+import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.WebExtension
 
 /**
@@ -42,7 +44,7 @@ import org.mozilla.geckoview.WebExtension
  * The same extension carries the certificate exceptions (`certs-api.js`); [CertOverrides] talks
  * to it through [request].
  */
-class SiteDataExtension(runtime: GeckoRuntime) {
+class SiteDataExtension(private val runtime: GeckoRuntime) {
     private var port: WebExtension.Port? = null
     private var failed = false
     private var nextId = 1
@@ -137,7 +139,7 @@ class SiteDataExtension(runtime: GeckoRuntime) {
         val t = m.optString("t")
         val error = m.optString("error")
         if (error.isNotEmpty()) Log.w(KrunkApp.TAG, "site data: $error")
-        if (t != "list" && t != "certs") return
+        if (t != "list" && t != "certs" && t != "videos") return
         waiting.remove(m.optInt("id"))?.invoke(m)
     }
 
@@ -190,6 +192,45 @@ class SiteDataExtension(runtime: GeckoRuntime) {
     suspend fun list(): EngineSiteData? = siteData(request(JSONObject().put("t", "list")))
 
     /**
+     * The `<video>` elements of the page [url] shown in [session] (Cast, 0.15.0), or null when the
+     * extension did not answer or could not look (a page it may not script). The session is
+     * marked active for the extension's `tabs.query` while it asks, and inactive again after:
+     * Krunk marks no tab active otherwise. Callers set the time limit (`withTimeoutOrNull`).
+     */
+    suspend fun videos(session: GeckoSession, url: String): List<PageVideo>? {
+        val controller = runtime.webExtensionController
+        runCatching { controller.setTabActive(session, true) }
+        try {
+            val m = request(JSONObject().put("t", "videos").put("url", url)) ?: return null
+            if (!m.optBoolean("ok")) {
+                Log.w(KrunkApp.TAG, "cast: no video list: ${m.optString("error")}")
+                return null
+            }
+            val text = m.optString("result")
+            if (text.isEmpty() || text.length > MAX_VIDEO_JSON) return null
+            val rows = runCatching { JSONArray(text) }.getOrNull() ?: return null
+            val out = ArrayList<PageVideo>()
+            for (i in 0 until minOf(rows.length(), MAX_VIDEOS)) {
+                val o = rows.optJSONObject(i) ?: continue
+                out += PageVideo(
+                    src = o.optString("src").take(MAX_VIDEO_URL),
+                    type = o.optString("type").take(MAX_TEXT),
+                    title = o.optString("title").take(MAX_TEXT),
+                    poster = o.optString("poster").take(MAX_VIDEO_URL),
+                    currentTime = o.optDouble("time", 0.0).takeIf { it.isFinite() } ?: 0.0,
+                    duration = o.optDouble("duration", 0.0).takeIf { it.isFinite() } ?: 0.0,
+                    mse = o.optBoolean("mse"),
+                    paused = o.optBoolean("paused", true),
+                    area = o.optLong("area").coerceAtLeast(0L),
+                )
+            }
+            return out
+        } finally {
+            runCatching { controller.setTabActive(session, false) }
+        }
+    }
+
+    /**
      * Sends [message] to the extension and returns its answer (the message it sent back with the
      * same id), or null when there is none: the extension did not install or went away. While it
      * is still starting the call waits; callers set the limit (`withTimeoutOrNull`).
@@ -220,5 +261,8 @@ class SiteDataExtension(runtime: GeckoRuntime) {
 
         /** The longest list text accepted from the extension (rows are cut to MAX_ROWS anyway). */
         private const val MAX_JSON = 8_000_000
+        private const val MAX_VIDEOS = 50
+        private const val MAX_VIDEO_URL = 4096
+        private const val MAX_VIDEO_JSON = 1_000_000
     }
 }

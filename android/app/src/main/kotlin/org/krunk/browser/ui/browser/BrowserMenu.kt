@@ -14,9 +14,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.ScreenShare
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Bookmarks
+import androidx.compose.material.icons.outlined.Cast
 import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.FindInPage
@@ -43,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +66,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import org.krunk.browser.BuildConfig
 import org.krunk.browser.R
+import org.krunk.browser.cast.CastDecision
+import org.krunk.browser.cast.CastEntry
+import org.krunk.browser.cast.CastMenu
+import org.krunk.browser.cast.CastScreen
+import org.krunk.browser.cast.CastSender
+import org.krunk.browser.cast.CastVideos
 import org.krunk.browser.engine.logins.LoginVault
 import org.krunk.browser.tabs.TabUi
 import org.krunk.browser.ui.BrowserViewModel
@@ -97,6 +108,11 @@ fun BrowserMenu(
     val added = stringResource(R.string.bookmark_added)
     val removed = stringResource(R.string.bookmark_removed)
     val shareTitle = stringResource(R.string.share_chooser)
+    val isTv = LocalIsTv.current
+    val castEntries = remember(isTv) { CastMenu.entries(isTv, BuildConfig.CAST_SDK, CastSender.available(context)) }
+    val castNoVideo = stringResource(R.string.cast_no_video)
+    val castNotCastable = stringResource(R.string.cast_not_castable)
+    val castScreenMissing = stringResource(R.string.cast_screen_unavailable)
 
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
         // Back, Forward and (on phones) Home: icons, enabled from the page's history state.
@@ -180,10 +196,38 @@ fun BrowserMenu(
             },
         )
         // TVs have no apps to share to (the system sheet would be empty).
-        if (!LocalIsTv.current) {
+        if (!isTv) {
             Item(stringResource(R.string.menu_share), Icons.Outlined.Share, enabled = hasPage) {
                 onDismiss()
                 if (tab != null) Share.text(context, tab.url, tab.title, shareTitle)
+            }
+        }
+        // Casting (0.15.0): phones and tablets only (CastMenu).
+        for (entry in castEntries) {
+            when (entry) {
+                CastEntry.CAST -> Item(stringResource(R.string.menu_cast), Icons.Outlined.Cast, enabled = hasPage) {
+                    onDismiss()
+                    val session = tab?.let { vm.tabs.session(it.id) }
+                    if (tab != null && session != null) {
+                        scope.launch {
+                            val videos =
+                                withTimeoutOrNull(CAST_LOOKUP_MS) { vm.engine.siteData.videos(session.gecko, tab.url) }
+                            when (val decision = CastVideos.decide(videos.orEmpty(), tab.title)) {
+                                CastDecision.NoVideo -> onMessage(castNoVideo)
+                                CastDecision.NotCastable -> onMessage(castNotCastable)
+                                is CastDecision.Castable -> CastSender.cast(context, decision.media, onMessage)
+                            }
+                        }
+                    }
+                }
+
+                CastEntry.CAST_SCREEN -> Item(
+                    stringResource(R.string.menu_cast_screen),
+                    Icons.AutoMirrored.Outlined.ScreenShare,
+                ) {
+                    onDismiss()
+                    if (!CastScreen.open(context)) onMessage(castScreenMissing)
+                }
             }
         }
         if (onCursorMode != null) {
@@ -303,6 +347,9 @@ private fun NavIcon(
 }
 
 private const val DISABLED_ALPHA = 0.38f
+
+/** How long Cast waits for the page's video list (the site data extension may still be starting). */
+private const val CAST_LOOKUP_MS = 5_000L
 
 /** The pages Back or Forward can jump to (long press), nearest first. */
 @Composable

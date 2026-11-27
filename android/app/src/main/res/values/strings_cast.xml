@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Casting (0.15.0): the page menu's Cast and Cast screen entries. Not on TV. -->
+<resources>
+    <string name="menu_cast">Cast</string>
+    <string name="menu_cast_screen">Cast screen</string>
+    <string name="cast_looking">Looking for a video…</string>
+    <string name="cast_no_video">There is no video on this page.</string>
+    <string name="cast_not_castable">This video can\'t be sent to a Cast device. Use Cast screen to mirror the whole screen.</string>
+    <string name="cast_unavailable">Cast isn\'t available on this device. Use Cast screen to mirror the whole screen.</string>
+    <string name="cast_failed">The Cast device couldn\'t play this video. Use Cast screen to mirror the whole screen.</string>
+    <string name="cast_connect_failed">Couldn\'t connect to the Cast device.</string>
+    <string name="cast_sent">Playing on %1$s</string>
+    <string name="cast_choose_device">Cast to</string>
+    <string name="cast_screen_unavailable">This device has no screen casting settings.</string>
+</resources>

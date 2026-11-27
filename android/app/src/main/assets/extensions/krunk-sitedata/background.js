@@ -3,11 +3,14 @@
 //
 // App -> here:  {t:"list", id}
 //               {t:"hello"}                       the app's answer to "ready" (see below)
+//               {t:"videos", id, url}             the <video> elements of the tab showing url (Cast, 0.15.0)
 // Here -> app:  {t:"ready"}                       after every connection
 //               {t:"connected"}                   the app answered "ready" on this connection
 //               {t:"list", id, cookies, usage, error}
 //                 cookies: JSON text of [[host, count], ...], or "" when the cookies could not be listed
 //                 usage:   JSON text of [[origin, topHost, bytes], ...], or "" when sizes are not available
+//               {t:"videos", id, ok, result, error}
+//                 result: JSON text of [{src, type, title, poster, time, duration, mse, paused, area}, ...]
 //
 // The connection: GeckoView hands a native-app connection to the app only when the app's message
 // delegate exists at the moment the connection is made. This script starts while the extension is
@@ -130,11 +133,72 @@ async function certs(m) {
   }
 }
 
+// Cast (0.15.0): the videos of one tab. The app marks the tab it means as active just before it
+// asks (GeckoView's setTabActive), so the tab is the one showing m.url, the active one first. The
+// probe runs in every frame of that tab (tabs.executeScript with the <all_urls> host permission
+// this extension already has) and only reads properties of the <video> elements; it changes
+// nothing on the page.
+function probeVideos() {
+  const out = [];
+  let pageTitle = document.title;
+  try {
+    pageTitle = window.top.document.title;
+  } catch (e) {
+    // a cross-origin frame: its own title
+  }
+  for (const v of document.querySelectorAll("video")) {
+    if (out.length >= 20) break;
+    const src = String(v.currentSrc || v.src || "");
+    let type = "";
+    for (const s of v.querySelectorAll("source")) {
+      if (s.src === src && s.type) {
+        type = s.type;
+        break;
+      }
+    }
+    const r = v.getBoundingClientRect();
+    const d = v.duration;
+    out.push({
+      src: src.slice(0, 4096),
+      type: String(type).slice(0, 100),
+      title: String(v.title || v.getAttribute("aria-label") || pageTitle || "").slice(0, 300),
+      poster: String(v.poster || "").slice(0, 2048),
+      time: Number.isFinite(v.currentTime) ? v.currentTime : 0,
+      duration: d === Infinity ? -1 : Number.isFinite(d) ? d : 0,
+      mse: /^blob:/i.test(src) || !!v.srcObject,
+      paused: !!v.paused,
+      area: Math.max(0, Math.round(r.width * r.height)),
+    });
+  }
+  return out;
+}
+
+async function videos(m) {
+  try {
+    const tabs = await browser.tabs.query({});
+    const same = tabs.filter(t => t.url === m.url);
+    const tab = same.find(t => t.active) || same[0] || tabs.find(t => t.active);
+    if (!tab) throw new Error("no tab shows that page");
+    const frames = await browser.tabs.executeScript(tab.id, {
+      code: "(" + probeVideos.toString() + ")()",
+      allFrames: true,
+    });
+    const all = [];
+    for (const list of frames || []) {
+      if (Array.isArray(list)) all.push(...list);
+    }
+    send({ t: "videos", id: m.id, ok: true, result: JSON.stringify(all.slice(0, 50)), error: "" });
+  } catch (e) {
+    send({ t: "videos", id: m.id, ok: false, result: "", error: String(e).slice(0, 300) });
+  }
+}
+
 function onAppMessage(m) {
   if (!m) return;
   // The app's answer to "ready": this connection is the one it holds.
   if (m.t === "hello") send({ t: "connected" });
   else if (m.t === "list") list(m.id);
+  else if (m.t === "videos") videos(m);
   else if (m.t === "cert-add" || m.t === "cert-remove" || m.t === "cert-list") certs(m);
 }
 

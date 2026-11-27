@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Casting (0.15.0, builds with Play Services only): the Cast SDK's screens are AppCompat views,
+     while Krunk's own window theme is a platform one (Compose draws the rest). Dark, like the
+     Cast SDK's own look, with Krunk's dark-theme accent. -->
+<resources>
+    <style name="Theme.Krunk.CastDialog" parent="Theme.AppCompat.Dialog">
+        <item name="colorPrimary">@color/krunk_bg_dark</item>
+        <item name="colorPrimaryDark">@color/krunk_bg_dark</item>
+        <item name="colorAccent">@color/krunk_cast_accent</item>
+    </style>
+
+    <style name="Theme.Krunk.CastControls" parent="Theme.AppCompat.NoActionBar">
+        <item name="colorPrimary">@color/krunk_bg_dark</item>
+        <item name="colorPrimaryDark">@color/krunk_bg_dark</item>
+        <item name="colorAccent">@color/krunk_cast_accent</item>
+        <item name="android:windowBackground">@color/krunk_bg_dark</item>
+    </style>
+
+    <color name="krunk_cast_accent">#60A5FA</color>
+</resources>

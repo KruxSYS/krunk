@@ -224,6 +224,14 @@ gradle.taskGraph.whenReady {
     }
 }
 
+// -Pkrunk.noGms=true drops GeckoView's Google Play Services FIDO dependency (WebAuthn/passkeys
+// via Play Services). Tried in the A0 spike; see docs/ANDROID_PLAN.md open questions.
+// Since 0.15.0 it also leaves out casting: a normal build adds the Google Cast sender SDK and
+// src/gms (the real cast code, its manifest entries and theme); a noGms build takes src/nogms
+// (the same API, always "unavailable") and has no Cast class or manifest entry at all.
+val noGms = providers.gradleProperty("krunk.noGms").map { it.toBoolean() }.getOrElse(false)
+val castSet = if (noGms) "nogms" else "gms"
+
 androidComponents {
     onVariants { variant ->
         // One cargo build per profile, whatever the flavour: debug -> debug, release and qa ->
@@ -267,6 +275,11 @@ androidComponents {
                 kotlinOut.set(layout.buildDirectory.dir("rust/$profile/kotlin"))
             }
         }
+        variant.sources.kotlin?.addStaticSourceDirectory("src/$castSet/kotlin")
+        if (!noGms) {
+            variant.sources.res?.addStaticSourceDirectory("src/gms/res")
+            variant.sources.manifests.addStaticManifestFile("src/gms/AndroidManifest.xml")
+        }
         variant.sources.jniLibs?.addGeneratedSourceDirectory(cargo, CargoBuildTask::jniLibsOut)
         variant.sources.kotlin?.addGeneratedSourceDirectory(cargo, CargoBuildTask::kotlinOut)
 
@@ -301,8 +314,8 @@ android {
         applicationId = "org.krunk.browser"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "0.14.0"
+        versionCode = 25
+        versionName = "0.15.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // Devices (arm64-v8a; armeabi-v7a since 0.12.0 for 32-bit Android TV devices) and the
@@ -314,6 +327,8 @@ android {
         buildConfigField("String", "UBO_VERSION", "\"$uboVersion\"")
         buildConfigField("String", "UBO_ID", "\"${uboProps.getProperty("UBO_ID")}\"")
         buildConfigField("String", "UBO_SOURCE_URL", "\"$uboXpiUrl\"")
+        // 0.15.0: whether the Google Cast sender SDK is in this build (see noGms above).
+        buildConfigField("boolean", "CAST_SDK", (!noGms).toString())
     }
 
     splits {
@@ -494,10 +509,6 @@ tasks.matching { it.name.startsWith("test") && it.name.endsWith("UnitTest") }.co
     dependsOn(guardJsTest, siteDataJsTest)
 }
 
-// -Pkrunk.noGms=true drops GeckoView's Google Play Services FIDO dependency (WebAuthn/passkeys
-// via Play Services). Tried in the A0 spike; see docs/ANDROID_PLAN.md open questions.
-val noGms = providers.gradleProperty("krunk.noGms").map { it.toBoolean() }.getOrElse(false)
-
 dependencies {
     ktlint(libs.ktlint.cli) {
         attributes { attribute(Bundling.BUNDLING_ATTRIBUTE, objects.named(Bundling.EXTERNAL)) }
@@ -520,6 +531,11 @@ dependencies {
     implementation(libs.compose.material3)
     implementation(libs.compose.material3.window.size)
     implementation(libs.compose.material.icons.extended)
+    if (!noGms) {
+        implementation(libs.play.services.cast.framework)
+        implementation(libs.androidx.mediarouter)
+        implementation(libs.androidx.appcompat)
+    }
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
 
