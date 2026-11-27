@@ -388,6 +388,11 @@ pub struct Browser {
     parts_jobs: segmented::PartsJobs,
     /// Engine downloads Krunk gave up (cancelled at their next update).
     abandoned_downloads: RefCell<std::collections::HashSet<u32>>,
+    /// 0.30.2: views of closed tabs whose engine downloads still run, hidden on about:blank.
+    /// The engine reports a download only to the browser that started it: closing it would
+    /// leave the download running unseen (no progress, end, pause or cancel in the list).
+    /// Each closes when its last download ends (`download_updated`).
+    parked_views: RefCell<HashMap<TabId, ParkedView>>,
     /// Tabs auto-attached to their workers and frames while client hints are off (0.7.0).
     hints_attached: RefCell<std::collections::HashSet<TabId>>,
     /// When the list was loaded, and the addresses of the downloads the last close stopped.
@@ -571,6 +576,7 @@ impl Browser {
             downloads: RefCell::new(Downloads::new()),
             parts_jobs: segmented::PartsJobs::default(),
             abandoned_downloads: RefCell::new(Default::default()),
+            parked_views: RefCell::new(HashMap::new()),
             hints_attached: RefCell::new(Default::default()),
             stopped_by_close: RefCell::new((0, Vec::new())),
             download_ops: RefCell::new(HashMap::new()),
@@ -1724,6 +1730,14 @@ impl Browser {
         let view = self.views.borrow_mut().remove(&id);
         self.net.forget_tab(id);
         if let Some(v) = view {
+            if v.downloads.get() > 0 {
+                info!("tab {id}: closed with {} running downloads, its view stays hidden until they end", v.downloads.get());
+                v.view.set_visible(false);
+                v.view.set_audio_muted(true);
+                v.view.navigate("about:blank");
+                self.parked_views.borrow_mut().insert(id, (v.view, v.downloads));
+                return;
+            }
             match hand_over.filter(|w| self.may_keep_on_screen(*w, id, &v.view)) {
                 Some(win) => self.keep_on_screen(win, id, v.view),
                 None => v.view.close(),
@@ -4307,6 +4321,10 @@ impl Browser {
         for v in views {
             v.view.close();
         }
+        let parked: Vec<View> = self.parked_views.borrow_mut().drain().map(|(_, (v, _))| v).collect();
+        for v in parked {
+            v.close();
+        }
         if let Some(p) = self.popup.borrow_mut().take() {
             if let Some(c) = p.view {
                 c.close();
@@ -4339,6 +4357,9 @@ impl Browser {
         }
     }
 }
+
+/// A closed tab's view and its running downloads (`Browser::parked_views`).
+type ParkedView = (View, Rc<Cell<u32>>);
 
 /// Window events of the popup window.
 struct PopupEvents(Weak<Browser>);

@@ -175,6 +175,9 @@ impl Browser {
                             connections,
                         };
                         b.start_parts(fetch, path, tab, page);
+                        if let Some(tab) = tab {
+                            b.close_download_only_tab(tab);
+                        }
                     }
                     Err(ProbeError::Refused(why) | ProbeError::Network(why)) => {
                         info!("download: one connection ({why})");

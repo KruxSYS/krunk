@@ -3,6 +3,17 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## Unreleased
+
+- **A download no longer leaves its address in the tab.** After a link started a download, the
+  address bar showed the file's address instead of the page you were on, so a reload, or restoring
+  the session at the next start, downloaded the file again. The tab now stays on its page.
+- **A tab opened only for a download closes once the download starts**, as in Chrome (the
+  window's only tab shows the new-tab page instead). Such tabs used to stay open on the file's
+  address.
+- **Closing a tab no longer loses track of its running download.** The download kept going, but
+  the downloads list never saw it finish, and its Pause and Cancel did nothing.
+
 ## 0.30.1 — 2026-11-27
 
 - **Cast device discovery no longer starts at launch; it starts only when you open Cast… or a

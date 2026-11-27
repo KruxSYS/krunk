@@ -341,11 +341,16 @@ wrap_load_handler! {
                 return;
             }
             if let Some(view) = lookup(self.key) {
-                view.load_error.set(Some(sys::cef_errorcode_t::from(error_code) as i32));
+                let code = sys::cef_errorcode_t::from(error_code) as i32;
+                view.load_error.set(Some(code));
                 // The error page (an interstitial, say) shows for the failed address: the
                 // address bar must say so, not keep the previous page's address.
+                // 0.30.2: not for ERR_ABORTED (-3). No error page shows: the navigation became
+                // a download, was stopped or was replaced, and the tab still shows the previous
+                // page. Taking the download's address made a reload or a restored session
+                // download the file again.
                 let url = text(failed_url);
-                if !url.is_empty() {
+                if code != ERR_ABORTED && !url.is_empty() {
                     view.ev.address.with(|f| f(url));
                 }
             }
@@ -375,6 +380,10 @@ wrap_audio_handler! {
 
 /// The pseudo frame the engine's audible state is filed under (`View::frame_audio`).
 const ENGINE_AUDIO_FRAME: &str = "engine";
+
+/// net::ERR_ABORTED: a main-frame navigation that ended without an error page (a download,
+/// Stop, a 204, a newer navigation).
+const ERR_ABORTED: i32 = -3;
 
 wrap_display_handler! {
     struct Display {

@@ -109,6 +109,9 @@ impl Browser {
                 Some(p) => path = p,
                 None => {
                     self.abandon_download(start);
+                    if let Some(tab) = tab {
+                        self.close_download_only_tab(tab);
+                    }
                     return;
                 }
             }
@@ -116,6 +119,27 @@ impl Browser {
         // Large files from servers that send parts: several connections (see segmented.rs).
         if let Some((start, path)) = self.try_parts(start, path, private, tab) {
             self.accept_download(start, path, private, tab);
+        }
+    }
+
+    /// 0.30.2: a tab that was opened only for a download (a `target=_blank` link to a file, a
+    /// popup) and never showed a page goes, as in Chrome, once the download is accepted (or
+    /// refused). It kept the download's address, so a
+    /// reload or the next session downloaded the file again. The window's only tab shows the
+    /// new-tab page instead.
+    pub(super) fn close_download_only_tab(&self, tab: TabId) {
+        let shown = self.views.borrow().get(&tab).map(|v| v.net.committed.borrow().clone());
+        let Some(shown) = shown else { return };
+        if !shown.is_empty() && !lb_core::pages::is_blank(&shown) {
+            return;
+        }
+        let only = self.window_of(tab).and_then(|w| self.ws.borrow().model(w).map(|m| m.len() == 1)).unwrap_or(true);
+        if only {
+            info!("tab {tab}: opened for a download, shows the new-tab page");
+            self.navigate_tab(tab, &lb_core::pages::Page::NewTab.url());
+        } else {
+            info!("tab {tab}: opened for a download, closed");
+            self.close_tab(tab);
         }
     }
 
@@ -209,6 +233,10 @@ impl Browser {
         start.accept(&path);
         self.push_downloads();
         self.download_flight(tab);
+        // After the count above: the view stays (hidden) until the download ends.
+        if let Some(tab) = tab {
+            self.close_download_only_tab(tab);
+        }
     }
 
     /// A finished download is marked as from the Internet (its `Zone.Identifier` stream), so
@@ -351,6 +379,9 @@ impl Browser {
             if let Some(v) = tab.and_then(|t| self.views.borrow().get(&t).map(|v| v.downloads.clone())) {
                 v.set(v.get().saturating_sub(1));
             }
+            if let Some(t) = tab {
+                self.release_parked_view(t);
+            }
             self.download_ops.borrow_mut().remove(&update.id);
             info!("download {id} finished: {state:?}");
         }
@@ -361,6 +392,25 @@ impl Browser {
         if changed || now - last_push.get() >= PROGRESS_PUSH_MS {
             last_push.set(now);
             self.push_downloads();
+        }
+    }
+
+    /// A closed tab's view kept for its downloads (`Browser::parked_views`): one fewer runs,
+    /// and with none left it closes. Deferred: not inside the engine's download callback.
+    fn release_parked_view(&self, tab: TabId) {
+        let done = {
+            let parked = self.parked_views.borrow();
+            let Some((_, running)) = parked.get(&tab) else { return };
+            running.set(running.get().saturating_sub(1));
+            running.get() == 0
+        };
+        if done {
+            info!("tab {tab}: its last download ended, the closed tab's view goes");
+            self.defer(move |b| {
+                if let Some((v, _)) = b.parked_views.borrow_mut().remove(&tab) {
+                    v.close();
+                }
+            });
         }
     }
 
