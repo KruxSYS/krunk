@@ -3,6 +3,18 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
+## Unreleased
+
+- **Cast a video to your TV.** Menu › **Cast** sends the video on the page to a Chromecast, a
+  Google TV or another Google Cast device on your Wi-Fi: pick the device and the video carries on
+  there from where you were. Play, pause, seek and stop it from the notification or from the Cast
+  controls screen that opens. Casting needs Google Play Services on your phone; the Cast device
+  fetches the video itself, so videos that only play while you are signed in to the site, and
+  videos that stream in pieces (most big video sites), can't be sent this way.
+- **Cast screen.** Menu › **Cast screen** opens Android's screen mirroring, which shows your whole
+  screen on a TV or Cast device. It works for every video, also on phones without Google Play
+  Services.
+
 ## 0.14.0 — 2026-11-24
 
 - **Krunk is now a KruxSYS project, with a new icon.** The launcher icon and the Android TV banner
