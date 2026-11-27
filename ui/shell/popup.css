@@ -297,3 +297,30 @@ body.pv-dark { --bg-raised: #202124; --bg-hover: #3c4043; --fg: #e8eaed; --fg-mu
 .vpn-stats .kv .v { font-variant-numeric: tabular-nums; }
 .vpn-actions { margin: 0 0 4px; }
 .vpn-pop .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+
+/* 0.30.0: the cast picker. */
+.cast-icon.on { color: var(--accent); }
+.cast-private { border-color: var(--private, #7c3aed); }
+.cast-sources { display: flex; gap: 4px; margin: 0 0 8px; padding: 3px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.cast-source { flex: 1; min-width: 0; padding: 5px 4px; font-size: .923rem; border: 0; border-radius: 6px; background: none; color: var(--fg-muted); font-family: inherit; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cast-source.on { background: var(--bg-hover); color: var(--fg); font-weight: 600; }
+.cast-source:focus-visible, .cast-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.cast-list { display: flex; flex-direction: column; gap: 2px; margin: 0 0 8px; max-height: 260px; overflow-y: auto; }
+.cast-device { display: flex; align-items: center; gap: 6px; border-radius: 8px; }
+.cast-device:hover { background: var(--bg-hover); }
+.cast-pick { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 7px 8px; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.cast-pick[disabled] { cursor: default; }
+.cast-device.unavailable .cast-pick { opacity: .55; }
+.cast-dev-icon { flex: none; width: 20px; height: 20px; color: var(--fg-muted); }
+.cast-head-icon { width: 18px; height: 18px; }
+.cast-device.casting .cast-dev-icon, .cast-device.casting .cast-dev-status { color: var(--accent); }
+.cast-device.busy .cast-dev-status { color: #d97706; }
+.cast-dev-text { display: flex; flex-direction: column; min-width: 0; }
+.cast-dev-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-dev-status { font-size: .923rem; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cast-stop { margin-right: 6px; }
+.cast-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cast-range { flex: 1; min-width: 80px; accent-color: var(--accent); }
+.cast-range.small { flex: 0 1 90px; min-width: 60px; }
+.cast-time, .cast-vol-label { font-size: .923rem; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+.cast-pop .link { margin-top: 2px; }

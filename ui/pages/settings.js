@@ -14,7 +14,7 @@
   // ---------- tabs and deep links ----------
   const TABS = ['account', 'general', 'privacy', 'permissions', 'passwords', 'downloads', 'appearance', 'ai', 'advanced'];
   // Sections inside a tab (0.14.0: the VPN popup's "VPN settings" opens #vpn).
-  const SECTIONS = { vpn: ['privacy', 'vpn-card'] };
+  const SECTIONS = { vpn: ['privacy', 'vpn-card'], casting: ['permissions', 'casting-card'] };
   function tabFromHash() {
     const h = (location.hash || '').replace(/^#/, '').toLowerCase();
     if (SECTIONS[h]) return SECTIONS[h][0];

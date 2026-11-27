@@ -88,6 +88,8 @@
       // 0.19.0: the WASM memory inspector for the page in this tab.
       item('WASM memory inspector', '', () => { LB.post('openWasm'); close(); }),
       item('Picture-in-Picture', 'Alt+P', () => command('pictureInPicture'), !c.hasVideo),
+      // 0.30.0: the cast picker replaces the menu in this popup (no close: the host shows it).
+      c.cast ? item('Cast…', '', () => LB.post('command', { command: { command: 'cast' } })) : null,
       sep(),
       item('Settings', '', () => openPage('settings')),
       item('About Krunk', '', () => openPage('about')),
@@ -557,6 +559,143 @@
     if (f) f.focus();
   });
 
+  // 0.30.0: the cast device picker. The host sends the engine's devices (`cast` events while
+  // they come and go) with what a click starts per source; it decides again from its own copy,
+  // so this panel only says which device and which source.
+  const CAST_ICON = { cast: 'c-tv', speaker: 'c-speaker', speakerGroup: 'c-speakers', display: 'c-display', generic: 'c-cast' };
+  function castSvg(id, cls) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'icon ' + cls);
+    svg.setAttribute('aria-hidden', 'true');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#' + id);
+    svg.appendChild(use);
+    return svg;
+  }
+  const cast = { source: null, notice: '', error: '' };
+  LB.on('popupClear', function () { cast.source = null; cast.notice = ''; cast.error = ''; });
+  // A new picker (another tab, a page's request) starts from the host's preselection.
+  LB.on('popup', function (m) { if (m.content && m.content.kind === 'cast') { cast.source = null; cast.notice = ''; cast.error = ''; } });
+  function castAsk(cmd, args) {
+    cast.error = '';
+    LB.request(cmd, args).then(function () {}, function (e) {
+      cast.error = e.message || 'Failed';
+      if (current && current.kind === 'cast') castRerender();
+    });
+  }
+  function castTime(s) {
+    s = Math.max(0, Math.floor(s || 0));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(sec).padStart(2, '0');
+  }
+  function renderCast(c) {
+    const st = c.state || {};
+    const media = st.media || {};
+    const devices = c.devices || [];
+    const sources = [['tab', 'This tab']];
+    if (c.offerVideo) sources.push(['video', 'Video on this page']);
+    if (c.fromPage && c.offerVideo) sources[1][1] = 'Video';
+    const siteOffered = c.fromPage && devices.some((d) => d.site);
+    if (siteOffered) sources.unshift(['site', c.site || 'The site\'s app']);
+    let source = cast.source || (siteOffered ? 'site' : c.source) || 'tab';
+    if (!sources.some((x) => x[0] === source)) source = sources[0][0];
+    const head = el('div', { class: 'pop-head' }, [
+      el('div', { class: 'pop-icon cast-icon' + (st.casting ? ' on' : ''), 'aria-hidden': 'true' }, [castSvg('c-cast', 'cast-head-icon')]),
+      el('div', { class: 'pop-titles' }, [
+        el('h2', { class: 'pop-title', id: 'cast-title', text: st.casting ? (st.connecting ? 'Connecting to ' : 'Casting to ') + (st.sink || 'a device') : 'Cast' }),
+        el('div', { class: 'pop-sub', id: 'cast-sub', text: c.fromPage && c.site ? c.site + ' wants to cast' : 'To a TV or speaker on your network' }),
+      ]),
+    ]);
+    const parts = [head];
+    if (c.unavailable) {
+      parts.push(el('div', { class: 'pop-card plain-note', id: 'cast-off', role: 'status', text: 'Casting is not available. It is turned off in Settings (or was until Krunk restarts).' }));
+      parts.push(el('button', { class: 'link', id: 'cast-settings', onclick: () => { LB.post('openPage', { page: 'settings', section: 'casting' }); close(); }, text: 'Casting settings' }));
+      return [el('div', { class: 'panel pop cast-pop' }, parts)];
+    }
+    if (c.private) parts.push(el('div', { class: 'pop-card cast-private', id: 'cast-private', text: 'Private tab: the device shows what this tab shows. Nothing is saved.' }));
+    // The session's controls (play, seek, volume) while this tab casts.
+    if (st.casting && !st.connecting) {
+      const ctl = [];
+      if (media.canPlayPause) {
+        ctl.push(el('button', { class: 'btn', id: 'cast-play', 'aria-label': media.playing ? 'Pause' : 'Play', onclick: () => castAsk('castMedia', { action: media.playing ? 'pause' : 'play' }), text: media.playing ? '❚❚' : '▶' }));
+      }
+      if (media.canSeek && media.duration > 0) {
+        const t = el('span', { class: 'cast-time', id: 'cast-time', text: castTime(media.time) + ' / ' + castTime(media.duration) });
+        const seek = el('input', { type: 'range', id: 'cast-seek', class: 'cast-range', min: '0', max: String(Math.floor(media.duration)), step: '1', value: String(Math.floor(media.time || 0)), 'aria-label': 'Position' });
+        seek.addEventListener('input', () => { t.textContent = castTime(+seek.value) + ' / ' + castTime(media.duration); });
+        seek.addEventListener('change', () => castAsk('castMedia', { action: 'seek', value: +seek.value }));
+        ctl.push(seek, t);
+      }
+      if (media.canVolume) {
+        const vol = el('input', { type: 'range', id: 'cast-volume', class: 'cast-range small', min: '0', max: '100', step: '1', value: String(Math.round((media.volume || 0) * 100)), 'aria-label': 'Device volume' });
+        vol.addEventListener('change', () => castAsk('castMedia', { action: 'volume', value: +vol.value / 100 }));
+        ctl.push(el('span', { class: 'cast-vol-label', text: 'Vol' }), vol);
+      }
+      if (media.canMute) {
+        ctl.push(el('button', { class: 'btn', id: 'cast-mute', 'aria-label': media.muted ? 'Unmute' : 'Mute', onclick: () => castAsk('castMedia', { action: 'mute', value: media.muted ? 0 : 1 }), text: media.muted ? '🔇' : '🔊' }));
+      }
+      if (ctl.length) parts.push(el('div', { class: 'pop-card cast-controls', id: 'cast-controls' }, ctl));
+    }
+    // Which source: the tab (mirroring), the page's video (remoting), the site's own app.
+    if (sources.length > 1) {
+      parts.push(el('div', { class: 'cast-sources', role: 'radiogroup', 'aria-label': 'What to cast' }, sources.map(function (x) {
+        return el('button', { class: 'cast-source' + (x[0] === source ? ' on' : ''), id: 'cast-src-' + x[0], role: 'radio', 'aria-checked': x[0] === source ? 'true' : 'false',
+          onclick: () => { cast.source = x[0]; cast.notice = ''; castRerender(); }, text: x[1] });
+      })));
+    }
+    if (c.searching) {
+      parts.push(el('div', { class: 'pop-card plain-note', id: 'cast-searching', role: 'status', text: 'Looking for devices…' }));
+    } else if (!devices.length) {
+      parts.push(el('div', { class: 'pop-card plain-note', id: 'cast-none', role: 'status', text: 'No devices found. Cast devices must be on the same network as this computer. If Windows asked whether Krunk may use the network, allow it on private networks.' }));
+    } else {
+      parts.push(el('div', { class: 'cast-list', id: 'cast-list', role: 'list' }, devices.map(function (d) {
+        const plan = d[source];
+        const usable = !!plan && d.status !== 'unavailable' && d.status !== 'connecting' && d.status !== 'casting';
+        const row = el('div', { class: 'cast-device ' + d.status, role: 'listitem' }, [
+          el('button', { class: 'cast-pick', disabled: usable ? null : '', title: plan ? '' : 'This device can\'t show this', onclick: () => {
+            cast.notice = plan.notice || '';
+            castAsk('castStart', { sinkId: d.id, source: source });
+            castRerender();
+          } }, [
+            castSvg(CAST_ICON[d.icon] || 'c-cast', 'cast-dev-icon'),
+            el('span', { class: 'cast-dev-text' }, [
+              el('span', { class: 'cast-dev-name', text: d.name }),
+              el('span', { class: 'cast-dev-status', text: plan || d.status !== 'available' ? d.statusText : 'Can\'t show this' + (d.provider === 'dial' ? ' (DIAL device)' : '') }),
+            ]),
+          ]),
+          d.stop ? el('button', { class: 'btn cast-stop', 'data-route': d.stop, onclick: () => { cast.notice = ''; castAsk('castStop', { routeId: d.stop }); }, text: 'Stop' }) : null,
+        ]);
+        return row;
+      })));
+    }
+    if (cast.notice) parts.push(el('div', { class: 'pop-card plain-note', id: 'cast-notice', role: 'status', text: cast.notice }));
+    if (cast.error) parts.push(el('div', { class: 'pop-card warning', id: 'cast-error', role: 'alert', text: cast.error }));
+    parts.push(el('button', { class: 'link', id: 'cast-settings', onclick: () => { LB.post('openPage', { page: 'settings', section: 'casting' }); close(); }, text: 'Casting settings' }));
+    return [el('div', { class: 'panel pop cast-pop' }, parts)];
+  }
+  function castRerender() {
+    if (!current || current.kind !== 'cast') return;
+    const focused = document.activeElement && document.activeElement.id;
+    root.textContent = '';
+    renderCast(current).forEach((n) => n && root.appendChild(n));
+    const f = focused && document.getElementById(focused);
+    if (f) f.focus();
+    requestAnimationFrame(fit);
+  }
+  // New devices or a new session state while the picker is open: rendered again in place
+  // (unless the user is dragging a slider).
+  LB.on('cast', function (m) {
+    if (!current || current.kind !== 'cast' || m.tabId !== current.tabId) return;
+    // A session that started (or ended) makes an old error or notice stale.
+    const was = !!(current.state && current.state.casting);
+    if (!!(m.state && m.state.casting) !== was) { cast.error = ''; cast.notice = ''; }
+    current = Object.assign({}, m, { kind: 'cast' });
+    delete current.event;
+    const a = document.activeElement;
+    if (a && a.type === 'range' && a.matches(':active')) return;
+    castRerender();
+  });
+
   // The lock popup: the connection, a warning when something is wrong, the certificate.
   function dateText(unix) {
     const d = new Date(unix * 1000);
@@ -648,7 +787,7 @@
   }
   // Content whose height depends on its items: the window is opened with an upper bound
   // and fitted right after the render (the ⋮ menu used to leave a gap at the bottom).
-  const FITS = { vpn: true, extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, extMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
+  const FITS = { vpn: true, cast: true, extInstall: true, suggest: true, cardFill: true, menu: true, tabMenu: true, extMenu: true, navMenu: true, httpAuth: true, bookmarkMenu: true, siteInfo: true, addressMenu: true, captionMenu: true, downloads: true, permission: true, passwordSaved: true, pip: true, bookmarkFolder: true, jsDialog: true };
 
 
   // Login suggestions under a focused field: the matching usernames (with the host for a
@@ -1324,7 +1463,7 @@
       return;
     }
     current = m.content;
-    const render = { menu: renderMenu, shield: renderShield, vpn: renderVpn, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, extMenu: renderExtMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, tabPreview: renderTabPreview, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
+    const render = { menu: renderMenu, shield: renderShield, vpn: renderVpn, cast: renderCast, siteInfo: renderSiteInfo, suggest: renderSuggest, savePassword: renderSave, passwordSaved: renderPasswordSaved, cardFill: renderCardFill, saveCard: renderSaveCard, pip: renderPip, pipVolume: renderPipVolume, extInstall: renderExtInstall, fill: renderFill, permission: renderPermission, addressSuggest: renderAddressSuggest, addressMenu: renderAddressMenu, captionMenu: renderCaptionMenu, downloads: renderDownloads, bookmarkFolder: renderFolder, unlock: renderUnlock, update: renderUpdate, tabMenu: renderTabMenu, extMenu: renderExtMenu, navMenu: renderNavMenu, httpAuth: renderHttpAuth, bookmarkMenu: renderBookmarkMenu, bookmarkEdit: renderBookmarkEdit, tabList: renderTabList, tabPreview: renderTabPreview, unresponsive: renderUnresponsive, jsDialog: renderJsDialog }[c.kind];
     root.textContent = '';
     root.dataset.kind = c.kind;
     // The volume bar matches the engine's floating window, which is always dark.

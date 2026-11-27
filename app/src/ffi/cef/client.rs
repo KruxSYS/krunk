@@ -107,11 +107,24 @@ wrap_client! {
             &self,
             browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
-            _source_process: ProcessId,
+            source_process: ProcessId,
             message: Option<&mut ProcessMessage>,
         ) -> c_int {
             let (Some(browser), Some(frame), Some(message)) = (browser, frame, message) else { return 0 };
             let name = CefString::from(&message.name()).to_string();
+            // 0.30.0: the engine's cast bridge. Only from the browser process: a renderer
+            // sending the same names is ignored (and swallowed).
+            if name.starts_with("krunk.cast.") {
+                if lb_core::cast::accept_message(&name, source_process == ProcessId::BROWSER) {
+                    let json = message.argument_list().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
+                    if let Some(view) = lookup(self.key) {
+                        view.ev.cast.with(|f| f(name, json));
+                    }
+                } else {
+                    crate::log::warning!("cast: ignored {name} from a renderer");
+                }
+                return 1;
+            }
             if name == super::scriptlets::HELLO {
                 let args = message.argument_list();
                 let have = args.as_ref().map(|a| CefString::from(&a.string(0)).to_string()).unwrap_or_default();
@@ -801,6 +814,8 @@ const MENU_SEL_PRIVATE: c_int = 26522;
 const MENU_SEL_COPY: c_int = 26523;
 /// "Picture-in-picture" / "Exit picture-in-picture" on a video (0.22.0).
 const MENU_PIP: c_int = 26530;
+/// "Cast…" (0.30.0): the cast device picker for this tab.
+const MENU_CAST: c_int = 26540;
 /// CEF's own ids: Copy, and "View page source" (which opened the system text editor).
 const MENU_ID_COPY: c_int = lb_core::page_menu::id::COPY;
 const MENU_ID_VIEW_SOURCE: c_int = lb_core::page_menu::id::VIEW_SOURCE;
@@ -972,6 +987,9 @@ wrap_context_menu_handler! {
             if m.count() > 0 {
                 m.add_separator();
             }
+            if lookup(self.key).and_then(|v| v.ev.cast_enabled.with(|f| f())).unwrap_or(false) {
+                m.add_item(MENU_CAST, Some(&CefString::from("Cast…")));
+            }
             m.add_item(MENU_INSPECT, Some(&CefString::from("Inspect")));
         }
 
@@ -1020,7 +1038,13 @@ wrap_context_menu_handler! {
                 }
                 return 1;
             }
-            if command_id == MENU_SEARCH {
+            if command_id == MENU_CAST {
+                if let Some(view) = lookup(self.key) {
+                    view.ev.cast_menu.with(|f| f());
+                }
+                return 1;
+            }
+                        if command_id == MENU_SEARCH {
                 let text = params.map(|p| CefString::from(&p.selection_text()).to_string()).unwrap_or_default();
                 if let Some(view) = lookup(self.key) {
                     view.ev.search_selection.with(|f| f(text));

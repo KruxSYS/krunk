@@ -575,6 +575,10 @@ pub struct Settings {
     /// Finished downloads older than this many days leave the list at start; 0 = never.
     pub download_auto_clear_days: u32,
     pub session_log: SessionLogSettings,
+    /// 0.30.0: casting to Google Cast / DIAL devices through the engine's Media Router. When
+    /// off the router is not started (no LAN discovery) and pages see neither
+    /// `navigator.presentation` nor `HTMLMediaElement.remote`. Needs a restart.
+    pub casting: bool,
 
     /// F-69 (Android 0.6.0): what the lenient load could not take into the typed fields (a
     /// value from a newer version or another platform, an unknown key), and the fields a caller
@@ -1001,6 +1005,7 @@ impl Default for Settings {
             search_suggestions: true,
             download_auto_clear_days: 0,
             session_log: SessionLogSettings::default(),
+            casting: true,
             preserved: Preserved::default(),
         }
     }
@@ -1056,12 +1061,20 @@ const FORBIDDEN_FLAGS: &[&str] = &[
 /// Features that must not be switched off through the extra flags.
 const PROTECTED_FEATURES: &[&str] = &["IsolateOrigins", "SitePerProcess", "StrictOriginIsolation"];
 
+/// The engine's Media Router (casting). In `DISABLED_FEATURES` from the network audit until
+/// 0.30.0; now disabled only while the Casting switch is off (`Settings::casting`). On
+/// Windows the router never searches the LAN before a user gesture (the cast picker or a
+/// page's cast button), so turning it on costs no background traffic.
+pub const MEDIA_ROUTER_FEATURE: &str = "MediaRouter";
+
+/// The Blink APIs pages use to cast; switched off with the router so sites see no cast button.
+pub const CAST_BLINK_FEATURES: &[&str] = &["Presentation", "RemotePlayback"];
+
 /// Features we always disable: background traffic and services that a
 /// lightweight browser with its own vault does not need. Each entry was
 /// found with the logging-proxy audit (`.pipeline/cef-network-audit.md`).
 pub const DISABLED_FEATURES: &[&str] = &[
     "AutofillServerCommunication",
-    "MediaRouter",
     "OptimizationHints",
     "InterestFeedContentSuggestions",
     // Secure-time queries to clients2.google.com/time.
@@ -1646,7 +1659,14 @@ impl Settings {
         if self.send_gpc {
             enabled.push(GPC_FEATURE);
         }
-        let mut lists: Vec<String> = vec![DISABLED_FEATURES.join(","), enabled.join(","), String::new(), String::new()];
+        let mut disabled_features = DISABLED_FEATURES.to_vec();
+        let mut disabled_blink = String::new();
+        if !self.casting {
+            disabled_features.push(MEDIA_ROUTER_FEATURE);
+            disabled_blink = CAST_BLINK_FEATURES.join(",");
+        }
+        let mut lists: Vec<String> =
+            vec![disabled_features.join(","), enabled.join(","), disabled_blink, String::new()];
         for flag in self.extra_flags.split_whitespace() {
             let (name, value) = flag.trim_start_matches('-').split_once('=').unwrap_or((flag, ""));
             match LIST_SWITCHES.iter().position(|l| l.eq_ignore_ascii_case(name)) {
@@ -2664,8 +2684,39 @@ mod tests {
         assert_eq!(sw.iter().filter(|a| a.starts_with("--disable-blink-features=")).count(), 1);
         assert!(sw.contains(&"--disable-blink-features=Foo,Bar".to_string()), "{sw:?}");
         assert!(sw.contains(&format!("--disable-features={},Y", DISABLED_FEATURES.join(","))), "{sw:?}");
-        // MediaRouter is disabled by Krunk: enabling it is ignored.
+        // Casting on (the default): the router is the engine's default, enabling it changes nothing.
+        assert!(sw.contains(&"--enable-features=NoStatePrefetchHoldback,X,MediaRouter".to_string()), "{sw:?}");
+        // Casting off: MediaRouter is disabled by Krunk and enabling it is ignored.
+        let off = Settings { casting: false, ..s };
+        let sw = off.browser_switches();
         assert!(sw.contains(&"--enable-features=NoStatePrefetchHoldback,X".to_string()), "{sw:?}");
+    }
+
+    #[test]
+    fn casting_switch_controls_router_and_blink_apis() {
+        let on = Settings::default();
+        assert!(on.casting, "casting is on by default");
+        let sw = on.browser_switches();
+        let disabled = sw.iter().find(|a| a.starts_with("--disable-features=")).unwrap();
+        assert!(!disabled.split(['=', ',']).any(|f| f == MEDIA_ROUTER_FEATURE), "{disabled}");
+        assert!(!sw.iter().any(|a| a.starts_with("--disable-blink-features=")), "{sw:?}");
+
+        let off = Settings { casting: false, ..Settings::default() };
+        let sw = off.browser_switches();
+        let disabled = sw.iter().find(|a| a.starts_with("--disable-features=")).unwrap();
+        assert!(disabled.split(['=', ',']).any(|f| f == MEDIA_ROUTER_FEATURE), "{disabled}");
+        assert!(sw.contains(&"--disable-blink-features=Presentation,RemotePlayback".to_string()), "{sw:?}");
+        // The user's own blink list is merged into ours.
+        let mixed =
+            Settings { casting: false, extra_flags: "--disable-blink-features=Foo".into(), ..Settings::default() };
+        assert!(mixed
+            .browser_switches()
+            .contains(&"--disable-blink-features=Presentation,RemotePlayback,Foo".to_string()));
+        // The switch needs a restart.
+        assert!(off.restart_required(&on));
+        // Stored settings without the field load with casting on.
+        assert!(Settings::from_json_lenient("{}").casting);
+        assert!(!Settings::from_json_lenient(r#"{"casting":false}"#).casting);
     }
 
     #[test]

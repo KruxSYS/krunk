@@ -1061,6 +1061,7 @@ impl Browser {
             PopupContent::ExtInstall { request_id, .. } => self.ext_install_dismissed(*request_id),
             PopupContent::HttpAuth { tab_id, .. } => self.http_auth_hidden(*tab_id),
             PopupContent::JsDialog { dialog_id, .. } => self.js_dialog_dismissed(*dialog_id),
+            PopupContent::Cast { view } => self.cast_picker_gone(view.tab_id),
             PopupContent::Unlock { purpose, .. } => {
                 self.vaults.unlock_for.borrow_mut().take();
                 match purpose {

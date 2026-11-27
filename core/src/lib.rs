@@ -10,6 +10,7 @@ pub mod assets;
 pub mod blocker;
 pub mod blocklog;
 pub mod bookmarks;
+pub mod cast;
 pub mod cert_exceptions;
 pub mod certinfo;
 pub mod challenge;

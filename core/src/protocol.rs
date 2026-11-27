@@ -195,6 +195,9 @@ pub enum PopupKind {
     Vpn,
     /// The context menu of an extension's toolbar icon (right-click, 0.16.0).
     ExtMenu,
+    /// The cast device picker (0.30.0): from the ⋮ menu, the page's context menu, the toolbar's
+    /// cast button or a page's own cast button (the engine asks).
+    Cast,
 }
 
 impl PopupKind {
@@ -209,6 +212,7 @@ impl PopupKind {
                 | PopupKind::Pip
                 | PopupKind::TabList
                 | PopupKind::Vpn
+                | PopupKind::Cast
         )
     }
 
@@ -367,6 +371,9 @@ pub enum PopupContent {
         /// Krunk", an address is "Signed in as …". Both open Settings → Account.
         #[serde(default)]
         account: Option<String>,
+        /// 0.30.0: the "Cast…" item (casting is on in Settings).
+        #[serde(default)]
+        cast: bool,
     },
     /// The Picture-in-Picture chooser (0.6.0): the active tab's videos.
     Pip { tab_id: u32, videos: Vec<VideoInfo> },
@@ -388,6 +395,11 @@ pub enum PopupContent {
     Vpn {
         #[serde(flatten)]
         view: crate::vpn::VpnView,
+    },
+    /// The cast picker (0.30.0): the same view the `cast` event carries.
+    Cast {
+        #[serde(flatten)]
+        view: crate::cast::View,
     },
     Shield {
         host: String,
@@ -780,6 +792,7 @@ impl PopupContent {
             PopupContent::Unresponsive { .. } => PopupKind::Unresponsive,
             PopupContent::JsDialog { .. } => PopupKind::JsDialog,
             PopupContent::Vpn { .. } => PopupKind::Vpn,
+            PopupContent::Cast { .. } => PopupKind::Cast,
         }
     }
 
@@ -794,6 +807,7 @@ impl PopupContent {
             PopupContent::Pip { .. } => Some("pip".into()),
             PopupContent::TabList { .. } => Some("tabList".into()),
             PopupContent::Vpn { .. } => Some("vpn".into()),
+            PopupContent::Cast { .. } => Some("cast".into()),
             PopupContent::BookmarkFolder { id, .. } => Some(format!("folder:{id}")),
             _ => None,
         }
@@ -1927,6 +1941,22 @@ pub enum Request {
     VpnScope {
         scope: crate::settings::VpnScope,
     },
+    /// The cast picker (0.30.0): cast the picker's tab to a device. The host decides the mode
+    /// from its own copy of the engine's model (`cast::plan`), never from the page.
+    CastStart {
+        sink_id: String,
+        source: crate::cast::Source,
+    },
+    /// Stop a session on a device (the route the picker shows).
+    CastStop {
+        route_id: String,
+    },
+    /// Play, pause, seek (seconds), volume (0..1) or mute (0/1) the cast media.
+    CastMedia {
+        action: crate::cast::MediaAction,
+        #[serde(default)]
+        value: f64,
+    },
     /// krunk://scripts (0.12.0).
     ScriptsList,
     ScriptGet {
@@ -2241,6 +2271,9 @@ impl Sender {
                     | R::VpnConnect { .. }
                     | R::VpnDisconnect {}
                     | R::VpnScope { .. }
+                    | R::CastStart { .. }
+                    | R::CastStop { .. }
+                    | R::CastMedia { .. }
             ),
             Sender::Page(Page::NewTab) => matches!(
                 req,
@@ -3111,6 +3144,16 @@ pub enum Event {
         #[serde(flatten)]
         view: crate::vpn::VpnView,
     },
+    /// The cast picker's devices and session (0.30.0), to the open cast popup.
+    Cast {
+        #[serde(flatten)]
+        view: crate::cast::View,
+    },
+    /// The toolbar's cast button (0.30.0), to the shells.
+    CastButton {
+        #[serde(flatten)]
+        view: crate::cast::ButtonView,
+    },
 }
 
 /// A saved card as the fill dropdown shows it (0.6.0).
@@ -3512,6 +3555,58 @@ mod tests {
         assert_eq!(v["kind"], "vpn");
         assert_eq!(v["profiles"], serde_json::json!([]));
         assert_eq!(serde_json::from_value::<PopupContent>(v).unwrap(), c);
+    }
+
+    /// 0.30.0: the picker's commands come only from the popup; the engine's messages are not
+    /// requests at all (browser-process messages, see `cast::accept_message`).
+    #[test]
+    fn cast_commands_are_least_privilege() {
+        let cases: &[&str] = &[
+            r#"{"cmd":"castStart","sinkId":"cast:1","source":"tab"}"#,
+            r#"{"cmd":"castStart","sinkId":"cast:1","source":"video"}"#,
+            r#"{"cmd":"castStart","sinkId":"cast:1","source":"site"}"#,
+            r#"{"cmd":"castStop","routeId":"r1"}"#,
+            r#"{"cmd":"castMedia","action":"pause"}"#,
+            r#"{"cmd":"castMedia","action":"seek","value":12.5}"#,
+        ];
+        for msg in cases {
+            for s in every_sender() {
+                let r = parse_request(s, msg);
+                if s == Sender::Popup {
+                    assert!(r.is_ok(), "{msg}: {r:?}");
+                } else {
+                    assert_eq!(r, Err(ProtocolError::Forbidden), "{s:?} {msg}");
+                }
+            }
+            assert!(parse_content(msg).is_err(), "{msg}");
+        }
+        // The page can't pick the mode: only a source, and only known ones.
+        for bad in [
+            r#"{"cmd":"castStart","sinkId":"cast:1","source":"desktop"}"#,
+            r#"{"cmd":"castStart","sinkId":"cast:1","source":"tab","mode":"desktop"}"#,
+            r#"{"cmd":"castMedia","action":"eject"}"#,
+        ] {
+            assert!(matches!(parse_request(Sender::Popup, bad), Err(ProtocolError::Malformed(_))), "{bad}");
+        }
+        // The shell opens the picker like the VPN popup.
+        let rect = r#"{"x":900,"y":40,"width":340,"height":300}"#;
+        assert!(parse_request(Sender::Shell, &format!(r#"{{"cmd":"showPopup","popup":"cast","rect":{rect}}}"#)).is_ok());
+        assert!(PopupKind::Cast.shell_may_open() && PopupKind::Cast.takes_focus());
+        // The popup content and the event carry the same view.
+        let view = crate::cast::View { tab_id: 4, searching: true, ..Default::default() };
+        let c = PopupContent::Cast { view: view.clone() };
+        assert_eq!(c.kind(), PopupKind::Cast);
+        assert_eq!(c.toggle_anchor().as_deref(), Some("cast"));
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(
+            (v["kind"].as_str(), v["tabId"].as_u64(), v["searching"].as_bool()),
+            (Some("cast"), Some(4), Some(true))
+        );
+        assert_eq!(serde_json::from_value::<PopupContent>(v).unwrap(), c);
+        let j = Event::Cast { view }.to_json();
+        assert!(j.starts_with(r#"{"event":"cast","tabId":4"#), "{j}");
+        let b = Event::CastButton { view: crate::cast::ButtonView { show: true, sink: "TV".into(), active_tab: true } };
+        assert_eq!(b.to_json(), r#"{"event":"castButton","show":true,"sink":"TV","activeTab":true}"#);
     }
 
     /// An API key is parsed into a `Secret` and never shown by `Debug`.
@@ -5369,6 +5464,7 @@ mod tests {
             has_video: false,
             update: None,
             account: Some(String::new()),
+            cast: false,
         };
         let menu_json = serde_json::to_value(&menu).unwrap();
         assert_eq!(menu_json["account"], "");
@@ -5526,6 +5622,7 @@ mod tests {
                     has_video: false,
                     update: None,
                     account: None,
+                    cast: true,
                 },
             },
             Event::Popup {
@@ -5536,6 +5633,7 @@ mod tests {
                     has_video: false,
                     update: Some("0.7.9".into()),
                     account: Some("a@b.c".into()),
+                    cast: false,
                 },
             },
             Event::UpdateAvailable { version: Some("0.7.9".into()) },

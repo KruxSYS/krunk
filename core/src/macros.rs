@@ -265,6 +265,7 @@ fn command_name(cmd: Command) -> String {
         ViewSource => "View page source",
         ToggleAgent => "AI agent panel",
         StopMacros => "Stop macros",
+        Cast => "Cast",
     };
     name.to_string()
 }

@@ -59,6 +59,8 @@ pub enum Command {
     ToggleAgent,
     /// Ctrl+Shift+.: stop the running macro (0.12.0).
     StopMacros,
+    /// The cast device picker for the active tab (0.30.0; ⋮ menu and page menu, no key).
+    Cast,
 }
 
 /// Virtual-key codes (winuser.h).

@@ -169,5 +169,6 @@
   "sessionLog": {
     "enabled": false,
     "retentionDays": 30
-  }
+  },
+  "casting": true
 }

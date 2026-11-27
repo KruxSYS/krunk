@@ -1160,6 +1160,8 @@ mod tests {
             "preloadPages",
             // 0.28.0: embeds allowed per site stay on this device (Windows only for now).
             "embedAllow",
+            // 0.30.0: casting searches this device's network (Windows; Android has its own).
+            "casting",
         ];
         let v = serde_json::to_value(Settings::default()).unwrap();
         let unsorted: Vec<&String> = v

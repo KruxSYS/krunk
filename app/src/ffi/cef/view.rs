@@ -317,6 +317,8 @@ pub(super) struct Events {
     pub pointer: Slot<dyn FnMut(String, String)>,
     /// 0.26.0 load trace: a page context's start cost (µs scriptlets, µs page scripts).
     pub perf_ctx: Slot<dyn FnMut(u32, u32)>,
+    /// 0.30.0: a message from the engine's cast bridge: (name, JSON).
+    pub cast: Slot<dyn FnMut(String, String)>,
     pub fullscreen: Slot<dyn FnMut(bool)>,
     /// "Inspect" in the page's context menu, at this point of the page (DIP).
     pub inspect: Slot<dyn FnMut(InspectAt)>,
@@ -359,6 +361,9 @@ pub(super) struct Events {
     /// The Picture-in-Picture item was chosen: the menu's point (view DIP) and the video's
     /// address.
     pub pip_menu: Slot<dyn FnMut(i32, i32, String)>,
+    /// 0.30.0: whether the page menu offers "Cast…" (casting on), and the item chosen.
+    pub cast_enabled: Slot<dyn FnMut() -> bool>,
+    pub cast_menu: Slot<dyn FnMut()>,
 }
 
 /// An HTTP authentication challenge of a site (0.8.0): Basic or Digest from a server, never a
@@ -1680,6 +1685,33 @@ impl View {
         self.0.ev.perf_ctx.set(Box::new(f));
     }
 
+    /// 0.30.0: the engine's cast bridge sent `(name, JSON)` (see `lb_core::cast`).
+    pub fn on_cast(&self, f: impl FnMut(String, String) + 'static) {
+        self.0.ev.cast.set(Box::new(f));
+    }
+
+    /// 0.30.0: a command to the engine's cast bridge for this browser (the `krunk.cast`
+    /// pseudo-preference). False when the engine refused it (casting off, no such browser, the
+    /// picker closed).
+    pub fn cast_command(&self, command: &lb_core::cast::Command) -> bool {
+        let Some(id) = self.browser_id() else { return false };
+        let (Some(mut global), Some(value), Some(mut dict)) =
+            (request_context_get_global_context(), value_create(), dictionary_value_create())
+        else {
+            return false;
+        };
+        let (strings, number) = command.fields();
+        for (k, v) in strings {
+            dict.set_string(Some(&CefString::from(k)), Some(&CefString::from(v.as_str())));
+        }
+        if let Some(n) = number {
+            dict.set_double(Some(&CefString::from("value")), n);
+        }
+        dict.set_int(Some(&CefString::from("browser")), id);
+        value.set_dictionary(Some(&mut dict));
+        super::app::set_krunk_pref(&mut global, lb_core::cast::PREF, value)
+    }
+
     /// A frame sent a pointer-lock message: `(frame identifier, JSON)`.
     pub fn on_pointer_lock(&self, f: impl FnMut(String, String) + 'static) {
         self.0.ev.pointer.set(Box::new(f));
@@ -1717,6 +1749,12 @@ impl View {
 
     pub fn on_image_menu(&self, f: impl FnMut(lb_core::image_menu::ImageAction, String) + 'static) {
         self.0.ev.image_menu.set(Box::new(f));
+    }
+
+    /// 0.30.0: the page menu's "Cast…": shown while `enabled` says so; `chosen` opens the picker.
+    pub fn on_cast_menu(&self, enabled: impl FnMut() -> bool + 'static, chosen: impl FnMut() + 'static) {
+        self.0.ev.cast_enabled.set(Box::new(enabled));
+        self.0.ev.cast_menu.set(Box::new(chosen));
     }
 
     pub fn on_pip_label(&self, f: impl FnMut() -> Option<String> + 'static) {

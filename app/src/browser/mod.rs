@@ -51,6 +51,7 @@ mod ai_settings;
 mod blocking;
 mod bookmarks_bar;
 mod bounce;
+mod cast;
 mod cdp;
 mod certs;
 mod devtools;
@@ -521,6 +522,7 @@ pub struct Browser {
     save_image_as: RefCell<Vec<(String, i64)>>,
     /// The in-browser VPN (0.14.0).
     vpn: vpn::VpnHost,
+    cast: cast::CastHost,
 }
 
 impl Browser {
@@ -639,6 +641,7 @@ impl Browser {
             session_final: Cell::new(false),
             save_image_as: RefCell::new(Vec::new()),
             vpn: vpn::VpnHost::default(),
+            cast: cast::CastHost::default(),
         });
         let app = Window::create_app(Rc::new(AppEvents(browser.me.clone())))?;
         let _ = browser.app.set(app);
@@ -1618,6 +1621,13 @@ impl Browser {
             }
         });
         let weak = self.me.clone();
+        c.on_cast(move |name, json| {
+            // Not inside the engine's call: it can come while Krunk itself sends a command.
+            if let Some(b) = weak.upgrade() {
+                b.defer(move |b| b.cast_message(id, &name, &json));
+            }
+        });
+        let weak = self.me.clone();
         c.on_pointer_lock(move |frame, json| {
             if let Some(b) = weak.upgrade() {
                 b.pointer_message(id, frame, &json);
@@ -1642,6 +1652,15 @@ impl Browser {
                 b.defer(move |b| b.js_dialog_reset(id));
             }
         });
+        let (weak, weak2) = (self.me.clone(), self.me.clone());
+        c.on_cast_menu(
+            move || weak.upgrade().is_some_and(|b| b.settings.borrow().casting),
+            move || {
+                if let Some(b) = weak2.upgrade() {
+                    b.defer(move |b| b.cast_open_for(id));
+                }
+            },
+        );
         let weak = self.me.clone();
         c.on_pip_label(move || weak.upgrade().and_then(|b| b.pip_menu_label(id)));
         let weak = self.me.clone();
@@ -1673,6 +1692,7 @@ impl Browser {
     /// `hand_over`: the tab closed and its window `win` shows another tab next (0.15.0).
     fn destroy_view(&self, id: TabId, hand_over: Option<WindowId>) {
         self.js_dialog_tab_left(id, true);
+        self.cast_tab_gone(id);
         self.http_auth_tab_gone(id);
         self.preview_forget(id);
         // The last private tab: its PDFs go with it (0.11.3). (The model may have dropped the
@@ -2986,6 +3006,7 @@ impl Browser {
             Command::Fullscreen => self.toggle_fullscreen(),
             Command::TaskManager => self.open_page(Page::Tasks),
             Command::PictureInPicture => self.pip_command(None),
+            Command::Cast => self.cast_command(None),
             // The element under the mouse, or DevTools as such when the
             // mouse is not over the page.
             Command::InspectElement => {
@@ -3174,6 +3195,7 @@ impl Browser {
         self.send_agent_button_to(win);
         self.send_macro_running_to(win);
         self.send_vpn_to(win);
+        self.send_cast_button_to(win);
     }
 
     /// What every shell shows alike, besides the config: the bookmarks bar, downloads,
@@ -3367,6 +3389,7 @@ impl Browser {
                     PopupKind::Pip => "pip",
                     PopupKind::TabList => "tabList",
                     PopupKind::Vpn => "vpn",
+                    PopupKind::Cast => "cast",
                     _ => "shield",
                 };
                 if self.toggle_suppressed(anchor) {
@@ -3379,6 +3402,7 @@ impl Browser {
                         PopupKind::SiteInfo => self.show_site_info(rect),
                         PopupKind::TabList => self.show_tab_list(rect),
                         PopupKind::Vpn => self.show_vpn_popup(rect),
+                        PopupKind::Cast => self.show_cast_popup(rect),
                         _ => {
                             self.shield_anchor.set(Some(rect));
                             self.show_shield();
@@ -3689,6 +3713,9 @@ impl Browser {
             | Request::VpnConnect { .. }
             | Request::VpnDisconnect {}
             | Request::VpnScope { .. }) => self.dispatch_vpn(sender, tab, req_id, r),
+            r @ (Request::CastStart { .. } | Request::CastStop { .. } | Request::CastMedia { .. }) => {
+                self.dispatch_cast(req_id, r)
+            }
             r @ (Request::ScriptsList
             | Request::ScriptGet { .. }
             | Request::ScriptSave { .. }
@@ -3730,6 +3757,7 @@ impl Browser {
             has_video,
             update: self.update_notice(),
             account: self.account_menu_label(),
+            cast: self.settings.borrow().casting,
         }
     }
 
@@ -3804,6 +3832,19 @@ impl Browser {
                 crate::ffi::cef::post_ui(move || {
                     if let Some(b) = weak.upgrade() {
                         b.js_dialog_dismissed(gone);
+                    }
+                });
+            }
+        }
+        // The cast picker replaced by anything but itself for the same tab: its engine session
+        // closes (0.30.0).
+        if let Some(PopupContent::Cast { view: gone }) = &replaced {
+            let same = matches!(&content, PopupContent::Cast { view } if view.tab_id == gone.tab_id);
+            if !same {
+                let (weak, tab) = (self.me.clone(), gone.tab_id);
+                crate::ffi::cef::post_ui(move || {
+                    if let Some(b) = weak.upgrade() {
+                        b.cast_picker_gone(tab);
                     }
                 });
             }

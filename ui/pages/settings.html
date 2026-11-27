@@ -737,7 +737,7 @@
   </section>
 
   <!-- ================================================================ Permissions -->
-  <section class="panel" data-tab="permissions" data-section="permissions camera microphone location geolocation notifications clipboard midi screen share local network sites exceptions">
+  <section class="panel" data-tab="permissions" data-section="permissions camera microphone location geolocation notifications clipboard midi screen share local network sites exceptions cast casting chromecast tv">
     <h2 class="panel-title">Permissions</h2>
     <div class="card group">
       <h3>Defaults</h3>
@@ -750,6 +750,14 @@
       <div class="row setting" data-keywords="midi devices"><div class="text"><label for="permissions.midi">MIDI devices</label></div><div class="control"><select id="permissions.midi" data-key="permissions.midi"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
       <div class="row setting" data-keywords="screen share sharing"><div class="text"><label for="permissions.screenShare">Screen sharing</label></div><div class="control"><select id="permissions.screenShare" data-key="permissions.screenShare"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
       <div class="row setting" data-keywords="local network access"><div class="text"><label for="permissions.localNetwork">Local network</label><p class="desc">Devices on your network and programs on this computer.</p></div><div class="control"><select id="permissions.localNetwork" data-key="permissions.localNetwork"><option value="ask">Ask</option><option value="block">Block</option></select></div></div>
+    </div>
+    <div class="card group" id="casting-card" data-keywords="cast casting chromecast google cast tv dial">
+      <h3>Casting</h3>
+      <div class="row setting" data-keywords="cast casting chromecast tv dial">
+        <div class="text"><label for="casting">Cast to devices (Chromecast, Google Cast, DIAL) <span class="tag">restart</span></label>
+          <p class="desc">"Cast…" in the menu sends this tab or its video to a TV or speaker on your network, and sites get their cast buttons. Krunk looks for devices only once you open the cast picker or a site's cast button, then until Krunk closes. Windows may ask once whether Krunk may use your network: allow it on private networks, or no devices are found. Off: no cast items, no device search, and sites see no cast support.</p></div>
+        <div class="control"><input type="checkbox" id="casting" data-key="casting"></div>
+      </div>
     </div>
     <div class="card group" data-keywords="exceptions sites allowed blocked">
       <h3>Sites</h3>
