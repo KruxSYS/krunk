@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://kruxsys.com/projects/krunk/"><img src="https://img.shields.io/badge/status-stable-6fdc95?style=flat-square&labelColor=0c1016" alt="Status: stable"></a>
   <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Windows-0.30.1-22d3ee?style=flat-square&labelColor=0c1016" alt="Windows 0.30.1"></a>
-  <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Android-0.14.0%20preview-ffb547?style=flat-square&labelColor=0c1016" alt="Android 0.14.0 preview"></a>
+  <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Android-0.15.0%20preview-ffb547?style=flat-square&labelColor=0c1016" alt="Android 0.15.0 preview"></a>
   <a href="https://kruxsys.com/projects/krunk/"><img src="https://img.shields.io/badge/project%20page-kruxsys.com-22d3ee?style=flat-square&labelColor=0c1016" alt="Project page on kruxsys.com"></a>
   <a href="https://kruxsys.com/"><img src="https://img.shields.io/badge/by-KruxSYS-22d3ee?style=flat-square&labelColor=0c1016" alt="KruxSYS"></a>
   <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/download-krunk.kruxsys.com-22d3ee?style=flat-square&labelColor=0c1016" alt="Download from krunk.kruxsys.com"></a>
@@ -48,7 +48,7 @@ updates and the end-to-end encrypted account sync.
   </tr>
 </table>
 
-> **Status (Windows 0.30.1, Android 0.14.0):** Krunk for Windows is stable and in daily use; every release is
+> **Status (Windows 0.30.1, Android 0.15.0):** Krunk for Windows is stable and in daily use; every release is
 > cross-built on Linux and smoke-tested on a Windows 11 VM. Krunk for Android is a preview (phones, tablets and
 > Android TV). What is not done or not verified is listed under [Known limitations](#known-limitations).
 > Release notes: [`CHANGELOG.md`](CHANGELOG.md) and [`CHANGELOG-android.md`](CHANGELOG-android.md).
@@ -109,7 +109,7 @@ LightBrowser or older Krunk versions, and every built-in `krunk://` page is in t
 
 ## Krunk for Android (preview)
 
-Krunk for Android (0.14.0) runs on phones and tablets with Android 8 or later (`arm64-v8a`, plus an `armeabi-v7a`
+Krunk for Android (0.15.0) runs on phones and tablets with Android 8 or later (`arm64-v8a`, plus an `armeabi-v7a`
 APK for 32-bit TVs) and on Android TV / Google TV. It is built from `android/` and `ffi/` on GeckoView and shares
 Krunk's Rust `core` with the Windows app: the same address-bar rules, database layout and session format. It has
 built-in uBlock Origin, the password vault with strong-password suggestions, the VPN, and sign-in and end-to-end
