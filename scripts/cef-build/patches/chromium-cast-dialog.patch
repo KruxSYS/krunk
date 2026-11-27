@@ -1,0 +1,14 @@
+diff --git a/components/media_router/browser/media_router_dialog_controller.cc b/components/media_router/browser/media_router_dialog_controller.cc
+index a06fddea5726f..9b657f1451c8f 100644
+--- a/components/media_router/browser/media_router_dialog_controller.cc
++++ b/components/media_router/browser/media_router_dialog_controller.cc
+@@ -27,7 +27,8 @@ MediaRouterDialogController::GetOrCreate& GetGetOrCreate() {
+ // static
+ void MediaRouterDialogController::SetGetOrCreate(
+     const MediaRouterDialogController::GetOrCreate& get_or_create) {
+-  DCHECK(!GetGetOrCreate());
++  // Krunk: an embedder (CEF, Krunk's device picker) may replace the factory
++  // that ChromeBrowserMainExtraPartsViews registered.
+   GetGetOrCreate() = get_or_create;
+ }
+ 

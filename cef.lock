@@ -14,13 +14,13 @@ CEF_CRATE=156.3.0+156.0.15
 CEF_VERSION=156.0.15
 CHROMIUM_VERSION=156.0.8078.80
 CEF_SOURCE=self-built
-CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx-xml.tar.bz2
-CEF_SHA256=45c3dcf5f9c4f66e33518d751f95d874e45d031961a6fa7b254a1c5c54662797
+CEF_ARCHIVE=cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx-xml-cast.tar.bz2
+CEF_SHA256=d34b7f0e5b45d7edfbfc8b9ba0dca0d73e8da47dbb869637f1a652e75b7668b2
 # Where the archive is kept (outside git, with the release artifacts): the pipeline's artifact
 # store and the GitHub release of 0.12.3 (dist/). 0.5.2-0.9.0 shipped the unpatched ..._krunk-codecs
 # archive (a8bb5c42…), 0.10.0-0.12.0 ..._krunk-codecs-hidden (5aab8496…), 0.12.1-0.12.2
 # ..._krunk-codecs-hidden-brand (29d97fa8…).
-CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx-xml.tar.bz2
+CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156.0.15+gcf671c0+chromium-156.0.8078.80_windows64_minimal_krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx-xml-cast.tar.bz2
 # scripts/cef-build/cross-build.sh (is_official_build proprietary_codecs ffmpeg_branding=Chrome
 # enable_platform_hevc enable_platform_ac3_eac3_audio), MSVC 14.51.36231 / SDK 10.0.28000.0.
 # Krunk's CEF patches (0.10.0), applied by cross-build.sh build:
@@ -76,4 +76,12 @@ CEF_ARTIFACT=/work/projects/extra/browser/.pipeline/artifacts/cef/cef_binary_156
 #     with style-src 'self' no longer leaves sitemaps unstyled (Chrome 158 shows them broken).
 #     Archive ..._audible-chips-kx-xml (45c3dcf5…), libcef.dll 9baf0e75…; everything else as in
 #     ..._audible-chips-kx (40e2a148…, the new logo, never shipped on its own).
-CEF_PATCHES="krunk-windowed-hidden.patch:86e46b0042bc18de8cd385124ce3623bbea1a18f7f9c8737c2000451d3c7f14b chromium-private-media.patch:1316748dc6ffb7d76d16aa02b3c8d4de7e9f4c102dd2565f42332c04e52452d6 chromium-clone-navigation.patch:e70936d42a179a5f7ad56f378a11c838284f73d708e066833f3e7b63e477d5a0 chromium-sockets-per-host.patch:1b6061d9d90a43c466f51aabe8ca06b396bfb98ac05c561b98b8983e68aa811c chromium-preconnect-blocked-hosts.patch:9a118b67fded7b220409c7c360868f493ce51c9013ebe7819db3eb90c8785ea4 krunk-preconnect-pref.patch:b88a7d85d705eec876bb22ddaca4d1ba8ed9e29998ccf3727dc28e80e999edca chromium-ua-brand.patch:991e7737679ab3bf4e7a0f4a640a7e1276bda15acbc292a1060def3f938c544c chromium-xml-viewer-csp.patch:46bb3012b6ea82f8d12ce8acbd8786b0d4474746d15cbcdceaf0504042251339"
+#   scripts/cef-build/patches/krunk-cast-bridge.patch (0.30.0, CEF checkout)
+#     sha256 90ee5b32ec4d2bc4f13f43cc44cf326c6065308ca2a5a17280faa6890ed46f3d
+#   scripts/cef-build/patches/chromium-cast-dialog.patch (0.30.0, Chromium checkout)
+#     sha256 caa8b11f5a787cee35e480ebad2e879ef8d9ae64df3f1bfa69a1ea0acf69812a
+#     casting: KrunkCastController replaces Chrome's Views Cast dialog for Krunk's browsers and
+#     bridges Chromium's MediaRouterUI model to the app (browser-process messages krunk.cast.*,
+#     commands through the krunk.cast pseudo-preference). Archive ..._kx-xml-cast (d34b7f0e…),
+#     libcef.dll c4ad6834…; 0.29.0 shipped ..._kx-xml (45c3dcf5…, libcef 9baf0e75…).
+CEF_PATCHES="krunk-windowed-hidden.patch:86e46b0042bc18de8cd385124ce3623bbea1a18f7f9c8737c2000451d3c7f14b chromium-private-media.patch:1316748dc6ffb7d76d16aa02b3c8d4de7e9f4c102dd2565f42332c04e52452d6 chromium-clone-navigation.patch:e70936d42a179a5f7ad56f378a11c838284f73d708e066833f3e7b63e477d5a0 chromium-sockets-per-host.patch:1b6061d9d90a43c466f51aabe8ca06b396bfb98ac05c561b98b8983e68aa811c chromium-preconnect-blocked-hosts.patch:9a118b67fded7b220409c7c360868f493ce51c9013ebe7819db3eb90c8785ea4 krunk-preconnect-pref.patch:b88a7d85d705eec876bb22ddaca4d1ba8ed9e29998ccf3727dc28e80e999edca chromium-ua-brand.patch:991e7737679ab3bf4e7a0f4a640a7e1276bda15acbc292a1060def3f938c544c chromium-xml-viewer-csp.patch:46bb3012b6ea82f8d12ce8acbd8786b0d4474746d15cbcdceaf0504042251339 krunk-cast-bridge.patch:90ee5b32ec4d2bc4f13f43cc44cf326c6065308ca2a5a17280faa6890ed46f3d chromium-cast-dialog.patch:caa8b11f5a787cee35e480ebad2e879ef8d9ae64df3f1bfa69a1ea0acf69812a"

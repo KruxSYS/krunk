@@ -1,0 +1,982 @@
+diff --git a/BUILD.gn b/BUILD.gn
+index dd0a558c0..9ca2c8279 100644
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -648,6 +648,8 @@ source_set("libcef_static") {
+     "libcef/browser/media_router/media_sink_impl.h",
+     "libcef/browser/media_router/media_source_impl.cc",
+     "libcef/browser/media_router/media_source_impl.h",
++    "libcef/browser/media_router/krunk_cast_controller.cc",
++    "libcef/browser/media_router/krunk_cast_controller.h",
+     "libcef/browser/media_stream_registrar.cc",
+     "libcef/browser/media_stream_registrar.h",
+     "libcef/browser/menu_manager.cc",
+diff --git a/libcef/browser/chrome/chrome_browser_main_extra_parts_cef.cc b/libcef/browser/chrome/chrome_browser_main_extra_parts_cef.cc
+index 7c96eb632..fa5f160d2 100644
+--- a/libcef/browser/chrome/chrome_browser_main_extra_parts_cef.cc
++++ b/libcef/browser/chrome/chrome_browser_main_extra_parts_cef.cc
+@@ -10,6 +10,7 @@
+ #include "cef/libcef/browser/chrome/chrome_startup_browser_creator.h"
+ #include "cef/libcef/browser/context.h"
+ #include "cef/libcef/browser/file_dialog_runner.h"
++#include "cef/libcef/browser/media_router/krunk_cast_controller.h"
+ #include "cef/libcef/browser/permission_prompt.h"
+ #include "cef/libcef/common/app_manager.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -86,6 +87,9 @@ void ChromeBrowserMainExtraPartsCef::PreMainMessageLoopRun() {
+   file_dialog_runner::RegisterFactory();
+   permission_prompt::RegisterCreateCallback();
+ 
++  // Krunk: Krunk's own device picker replaces Chrome's Cast dialog.
++  KrunkCastController::Register();
++
+ #if BUILDFLAG(IS_WIN)
+   const auto& settings = CefContext::Get()->settings();
+   if (settings.chrome_app_icon_id > 0) {
+diff --git a/libcef/browser/media_router/krunk_cast_controller.cc b/libcef/browser/media_router/krunk_cast_controller.cc
+new file mode 100644
+index 000000000..f690f7bd9
+--- /dev/null
++++ b/libcef/browser/media_router/krunk_cast_controller.cc
+@@ -0,0 +1,723 @@
++// Copyright (c) 2026 Krunk. Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++
++#include "cef/libcef/browser/media_router/krunk_cast_controller.h"
++
++#include <algorithm>
++#include <utility>
++
++#include "base/json/json_writer.h"
++#include "base/strings/utf_string_conversions.h"
++#include "cef/include/cef_process_message.h"
++#include "cef/libcef/browser/browser_host_base.h"
++#include "cef/libcef/browser/thread_util.h"
++#include "chrome/browser/media/router/media_router_feature.h"
++#include "chrome/browser/ui/media_router/cast_dialog_model.h"
++#include "chrome/browser/ui/media_router/media_cast_mode.h"
++#include "chrome/browser/ui/media_router/media_router_ui.h"
++#include "chrome/browser/ui/media_router/ui_media_sink.h"
++#include "components/media_router/browser/media_router.h"
++#include "components/media_router/browser/media_router_factory.h"
++#include "components/media_router/browser/media_router_metrics.h"
++#include "components/media_router/browser/presentation/start_presentation_context.h"
++#include "components/media_router/browser/presentation/web_contents_presentation_manager.h"
++#include "components/media_router/common/media_route.h"
++#include "components/media_router/common/media_source.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "content/public/browser/browser_context.h"
++#include "content/public/browser/media_session.h"
++#include "content/public/browser/web_contents.h"
++#include "media/remoting/device_capability_checker.h"
++#include "ui/display/types/display_constants.h"
++
++using media_router::MediaCastMode;
++using media_router::UIMediaSink;
++using media_router::UIMediaSinkState;
++
++namespace {
++
++const char* ModeName(MediaCastMode mode) {
++  switch (mode) {
++    case MediaCastMode::PRESENTATION:
++      return "presentation";
++    case MediaCastMode::TAB_MIRROR:
++      return "tab";
++    case MediaCastMode::DESKTOP_MIRROR:
++      return "desktop";
++    case MediaCastMode::REMOTE_PLAYBACK:
++      return "video";
++  }
++  return "tab";
++}
++
++std::optional<MediaCastMode> ModeFromName(const std::string& name) {
++  if (name == "presentation") {
++    return MediaCastMode::PRESENTATION;
++  }
++  if (name == "tab") {
++    return MediaCastMode::TAB_MIRROR;
++  }
++  if (name == "video") {
++    return MediaCastMode::REMOTE_PLAYBACK;
++  }
++  // Desktop mirroring is not offered by Krunk.
++  return std::nullopt;
++}
++
++const char* StateName(UIMediaSinkState state) {
++  switch (state) {
++    case UIMediaSinkState::AVAILABLE:
++      return "available";
++    case UIMediaSinkState::CONNECTING:
++      return "connecting";
++    case UIMediaSinkState::CONNECTED:
++      return "connected";
++    case UIMediaSinkState::DISCONNECTING:
++      return "disconnecting";
++    case UIMediaSinkState::UNAVAILABLE:
++      return "unavailable";
++  }
++  return "unavailable";
++}
++
++const char* IconName(media_router::SinkIconType icon) {
++  switch (icon) {
++    case media_router::SinkIconType::CAST:
++      return "cast";
++    case media_router::SinkIconType::CAST_AUDIO_GROUP:
++      return "speakerGroup";
++    case media_router::SinkIconType::CAST_AUDIO:
++      return "speaker";
++    case media_router::SinkIconType::WIRED_DISPLAY:
++      return "display";
++    default:
++      return "generic";
++  }
++}
++
++const char* ProviderName(media_router::mojom::MediaRouteProviderId provider) {
++  switch (provider) {
++    case media_router::mojom::MediaRouteProviderId::CAST:
++      return "cast";
++    case media_router::mojom::MediaRouteProviderId::DIAL:
++      return "dial";
++    case media_router::mojom::MediaRouteProviderId::WIRED_DISPLAY:
++      return "wired";
++    default:
++      return "other";
++  }
++}
++
++const char* RouteMode(const media_router::MediaRoute& route) {
++  const auto& source = route.media_source();
++  if (source.IsTabMirroringSource()) {
++    return "tab";
++  }
++  if (source.IsRemotePlaybackSource()) {
++    return "video";
++  }
++  if (source.IsDesktopMirroringSource()) {
++    return "desktop";
++  }
++  return "presentation";
++}
++
++base::DictValue SinkToDict(const UIMediaSink& sink) {
++  base::DictValue d;
++  d.Set("id", sink.id);
++  d.Set("name", base::UTF16ToUTF8(sink.friendly_name));
++  d.Set("icon", IconName(sink.icon_type));
++  d.Set("provider", ProviderName(sink.provider));
++  d.Set("state", StateName(sink.state));
++  d.Set("status", base::UTF16ToUTF8(sink.GetStatusTextForDisplay()));
++  base::ListValue modes;
++  for (MediaCastMode mode : sink.cast_modes) {
++    if (mode != MediaCastMode::DESKTOP_MIRROR) {
++      modes.Append(ModeName(mode));
++    }
++  }
++  d.Set("modes", std::move(modes));
++  if (sink.route) {
++    d.Set("route", sink.route->media_route_id());
++    d.Set("routeMode", RouteMode(*sink.route));
++    d.Set("routeLocal", sink.route->is_local());
++  }
++  if (sink.issue) {
++    d.Set("issue", sink.issue->info().title);
++  }
++  return d;
++}
++
++}  // namespace
++
++// Follows the profile's routes for this tab (the toolbar icon and the
++// picker's controls need them while the picker is closed).
++class KrunkCastController::TabRoutesObserver
++    : public media_router::MediaRoutesObserver {
++ public:
++  TabRoutesObserver(media_router::MediaRouter* router,
++                    KrunkCastController* owner)
++      : media_router::MediaRoutesObserver(router), owner_(owner) {}
++
++  void OnRoutesUpdated(
++      const std::vector<media_router::MediaRoute>& routes) override {
++    owner_->OnRoutesUpdated(routes);
++  }
++
++ private:
++  const raw_ptr<KrunkCastController> owner_;
++};
++
++// Tells the two MediaRouterUIs' model updates apart.
++class KrunkCastController::UIObserver
++    : public media_router::CastDialogController::Observer {
++ public:
++  UIObserver(KrunkCastController* owner, bool video)
++      : owner_(owner), video_(video) {}
++
++  void OnModelUpdated(const media_router::CastDialogModel& model) override {
++    owner_->OnModelUpdated(video_, model);
++  }
++
++ private:
++  const raw_ptr<KrunkCastController> owner_;
++  const bool video_;
++};
++
++// static
++void KrunkCastController::Register() {
++  media_router::MediaRouterDialogController::SetGetOrCreate(
++      base::BindRepeating([](content::WebContents* web_contents)
++                              -> media_router::MediaRouterDialogController* {
++        DCHECK(web_contents);
++        KrunkCastController::CreateForWebContents(web_contents);
++        return KrunkCastController::FromWebContents(web_contents);
++      }));
++}
++
++// static
++bool KrunkCastController::HandleCommand(CefRefPtr<CefValue> value,
++                                        std::string& error) {
++  CEF_REQUIRE_UIT();
++  if (!value || value->GetType() != VTYPE_DICTIONARY) {
++    error = "krunk.cast needs a dictionary";
++    return false;
++  }
++  CefRefPtr<CefDictionaryValue> dict = value->GetDictionary();
++  const std::string cmd = dict->GetString("cmd").ToString();
++  const int browser_id = dict->GetInt("browser");
++  auto browser = CefBrowserHostBase::GetBrowserForBrowserId(browser_id);
++  content::WebContents* web_contents =
++      browser ? browser->GetWebContents() : nullptr;
++  if (!web_contents) {
++    error = "krunk.cast: no such browser";
++    return false;
++  }
++  if (!media_router::MediaRouterEnabled(web_contents->GetBrowserContext())) {
++    error = "krunk.cast: casting is turned off";
++    return false;
++  }
++
++  KrunkCastController::CreateForWebContents(web_contents);
++  KrunkCastController* controller =
++      KrunkCastController::FromWebContents(web_contents);
++
++  if (cmd == "open") {
++    controller->Open();
++    return true;
++  }
++  if (cmd == "start") {
++    if (!controller->Start(dict->GetString("sink").ToString(),
++                           dict->GetString("mode").ToString())) {
++      error = "krunk.cast: cannot start (picker closed or unknown mode)";
++      return false;
++    }
++    return true;
++  }
++  if (cmd == "stop") {
++    controller->Stop(dict->GetString("route").ToString());
++    return true;
++  }
++  if (cmd == "close") {
++    controller->HideMediaRouterDialog();
++    return true;
++  }
++  if (cmd == "media") {
++    controller->Media(dict->GetString("action").ToString(),
++                      dict->HasKey("value") ? dict->GetDouble("value") : 0);
++    return true;
++  }
++  error = "krunk.cast: unknown command";
++  return false;
++}
++
++KrunkCastController::KrunkCastController(content::WebContents* web_contents)
++    : content::WebContentsUserData<KrunkCastController>(*web_contents),
++      media_router::MediaRouterDialogController(web_contents),
++      status_receiver_(this),
++      session_receiver_(this) {
++  if (auto* router = media_router::MediaRouterFactory::GetApiForBrowserContext(
++          web_contents->GetBrowserContext())) {
++    routes_observer_ = std::make_unique<TabRoutesObserver>(router, this);
++  }
++}
++
++KrunkCastController::~KrunkCastController() {
++  Reset();
++}
++
++int KrunkCastController::tab_id() const {
++  return sessions::SessionTabHelper::IdForTab(&GetWebContents()).id();
++}
++
++bool KrunkCastController::ShowMediaRouterDialogForPresentation(
++    std::unique_ptr<media_router::StartPresentationContext> context) {
++  // Same rule as Chrome: no picker over attacker-controlled fullscreen.
++  base::WeakPtr<KrunkCastController> weak_this = weak_ptr_factory_.GetWeakPtr();
++  auto blocker =
++      initiator()->ForSecurityDropFullscreen(display::kInvalidDisplayId);
++  if (!weak_this || !blocker) {
++    return false;
++  }
++  if (IsShowingMediaRouterDialog()) {
++    // A page request replaces a menu-opened picker.
++    CloseMediaRouterDialog();
++    Reset();
++  }
++  fullscreen_blocker_ = std::move(*blocker);
++  trigger_ = "page";
++  return media_router::MediaRouterDialogController::
++      ShowMediaRouterDialogForPresentation(std::move(context));
++}
++
++void KrunkCastController::Open() {
++  if (IsShowingMediaRouterDialog()) {
++    // Already open (e.g. a page request): send the model again.
++    SendModel("krunk.cast.open");
++    return;
++  }
++  trigger_ = "menu";
++  ShowMediaRouterDialog(
++      media_router::MediaRouterDialogActivationLocation::TOOLBAR);
++}
++
++void KrunkCastController::CreateMediaRouterDialog(
++    media_router::MediaRouterDialogActivationLocation activation_location) {
++  open_sent_ = false;
++  InitializeUIs();
++  SendModel("krunk.cast.open");
++  open_sent_ = true;
++}
++
++void KrunkCastController::UpdateVideoEligibility() {
++  video_reason_ = "none";
++  video_codec_.clear();
++  audio_codec_.clear();
++  auto* session = content::MediaSession::GetIfExists(&GetWebContents());
++  if (!session) {
++    return;
++  }
++  media_session::mojom::MediaSessionInfoPtr info;
++  // MediaSessionImpl answers synchronously.
++  session->GetMediaSessionInfo(base::BindOnce(
++      [](media_session::mojom::MediaSessionInfoPtr* out,
++         media_session::mojom::MediaSessionInfoPtr in) { *out = std::move(in); },
++      &info));
++  if (!info || !info->remote_playback_metadata) {
++    return;
++  }
++  const auto& meta = info->remote_playback_metadata;
++  if (meta->is_encrypted_media) {
++    video_reason_ = "drm";
++    return;
++  }
++  if (meta->remote_playback_disabled) {
++    video_reason_ = "disabled";
++    return;
++  }
++  if (media::remoting::ParseVideoCodec(meta->video_codec) ==
++          media::VideoCodec::kUnknown ||
++      media::remoting::ParseAudioCodec(meta->audio_codec) ==
++          media::AudioCodec::kUnknown) {
++    video_reason_ = "codec";
++    return;
++  }
++  auto presentation_manager =
++      media_router::WebContentsPresentationManager::Get(&GetWebContents());
++  if (presentation_manager &&
++      presentation_manager->HasDefaultPresentationRequest()) {
++    // The site has its own Cast integration (e.g. YouTube): its
++    // "presentation" mode is the way to cast its video.
++    video_reason_ = "site";
++    return;
++  }
++  video_reason_.clear();
++  video_codec_ = meta->video_codec;
++  audio_codec_ = meta->audio_codec;
++}
++
++void KrunkCastController::InitializeUIs() {
++  DestroyUIs();
++  ui_ = start_presentation_context_
++            ? media_router::MediaRouterUI::
++                  CreateWithStartPresentationContextAndMirroring(
++                      initiator(), std::move(start_presentation_context_))
++            : media_router::MediaRouterUI::
++                  CreateWithDefaultMediaSourceAndMirroring(initiator());
++  ui_->RegisterDestructor(base::BindOnce(&KrunkCastController::OnUIDestroyed,
++                                         base::Unretained(this)));
++  ui_observer_ = std::make_unique<UIObserver>(this, /*video=*/false);
++  ui_->AddObserver(ui_observer_.get());
++
++  UpdateVideoEligibility();
++  if (video_reason_.empty()) {
++    video_ui_ = media_router::MediaRouterUI::CreateWithMediaSessionRemotePlayback(
++        initiator(), media::remoting::ParseVideoCodec(video_codec_),
++        media::remoting::ParseAudioCodec(audio_codec_));
++    video_ui_->RegisterDestructor(base::BindOnce(
++        &KrunkCastController::OnVideoUIDestroyed, base::Unretained(this)));
++    video_ui_observer_ = std::make_unique<UIObserver>(this, /*video=*/true);
++    video_ui_->AddObserver(video_ui_observer_.get());
++  }
++}
++
++void KrunkCastController::DestroyUIs() {
++  if (video_ui_) {
++    video_ui_->RemoveObserver(video_ui_observer_.get());
++    video_ui_.reset();
++  }
++  if (ui_) {
++    ui_->RemoveObserver(ui_observer_.get());
++    ui_.reset();
++  }
++  video_ui_observer_.reset();
++  ui_observer_.reset();
++  model_.reset();
++  video_model_.reset();
++}
++
++void KrunkCastController::OnUIDestroyed() {
++  ui_.reset();
++  model_.reset();
++}
++
++void KrunkCastController::OnVideoUIDestroyed() {
++  video_ui_.reset();
++  video_model_.reset();
++}
++
++void KrunkCastController::CloseMediaRouterDialog() {
++  // Also called by the base class when the tab navigates, closes or crashes
++  // (Chrome closes its dialog then too). There is no widget whose destruction
++  // would reset the state later, so reset it here.
++  const bool was_showing = IsShowingMediaRouterDialog();
++  Reset();
++  if (was_showing) {
++    Send("krunk.cast.closed", base::DictValue());
++  }
++}
++
++bool KrunkCastController::IsShowingMediaRouterDialog() const {
++  return !!ui_;
++}
++
++void KrunkCastController::Reset() {
++  DestroyUIs();
++  trigger_ = "menu";
++  open_sent_ = false;
++  fullscreen_blocker_.RunAndReset();
++  media_router::MediaRouterDialogController::Reset();
++}
++
++bool KrunkCastController::Start(const std::string& sink_id,
++                                const std::string& mode_name) {
++  auto mode = ModeFromName(mode_name);
++  if (!mode) {
++    return false;
++  }
++  media_router::MediaRouterUI* ui =
++      *mode == MediaCastMode::REMOTE_PLAYBACK ? video_ui_.get() : ui_.get();
++  if (!ui) {
++    return false;
++  }
++  ui->StartCasting(sink_id, *mode);
++  return true;
++}
++
++void KrunkCastController::Stop(const std::string& route_id) {
++  if (ui_) {
++    ui_->StopCasting(route_id);
++    return;
++  }
++  if (auto* router = media_router::MediaRouterFactory::GetApiForBrowserContext(
++          GetWebContents().GetBrowserContext())) {
++    router->TerminateRoute(route_id);
++  }
++}
++
++void KrunkCastController::Media(const std::string& action, double value) {
++  // A Cast app session (e.g. a site's receiver) has its own media controller;
++  // mirroring and remote playback are controlled through the page's media.
++  const bool remote = route_controller_.is_bound() && route_status_;
++  if (action == "play" || action == "pause") {
++    if (remote && route_status_->can_play_pause) {
++      action == "play" ? route_controller_->Play() : route_controller_->Pause();
++      return;
++    }
++    if (auto* session = content::MediaSession::Get(&GetWebContents())) {
++      action == "play"
++          ? session->Resume(media_session::mojom::MediaSession::SuspendType::kUI)
++          : session->Suspend(media_session::mojom::MediaSession::SuspendType::kUI);
++    }
++    return;
++  }
++  if (action == "seek") {
++    const base::TimeDelta to = base::Seconds(std::max(0.0, value));
++    if (remote && route_status_->can_seek) {
++      route_controller_->Seek(to);
++      return;
++    }
++    if (auto* session = content::MediaSession::Get(&GetWebContents())) {
++      session->SeekTo(to);
++    }
++    return;
++  }
++  if (remote && action == "volume" && route_status_->can_set_volume) {
++    route_controller_->SetVolume(
++        static_cast<float>(std::clamp(value, 0.0, 1.0)));
++    return;
++  }
++  if (remote && action == "mute" && route_status_->can_mute) {
++    route_controller_->SetMute(value != 0);
++  }
++}
++
++void KrunkCastController::OnModelUpdated(
++    bool video,
++    const media_router::CastDialogModel& model) {
++  if (video) {
++    video_model_ = model;
++  } else {
++    model_ = model;
++  }
++  if (open_sent_) {
++    SendModel("krunk.cast.model");
++  }
++}
++
++base::DictValue KrunkCastController::BuildModel() const {
++  base::DictValue d;
++  d.Set("trigger", trigger_);
++  d.Set("private", initiator()->GetBrowserContext()->IsOffTheRecord());
++  base::DictValue video;
++  video.Set("castable", video_reason_.empty());
++  video.Set("reason", video_reason_);
++  d.Set("video", std::move(video));
++  if (model_) {
++    d.Set("header", base::UTF16ToUTF8(model_->dialog_header()));
++  }
++
++  // One list: the tab/page model, with REMOTE_PLAYBACK added from the video
++  // model for the sinks that can play this page's video.
++  base::ListValue sinks;
++  std::vector<std::string> seen;
++  if (model_) {
++    for (const auto& sink : model_->media_sinks()) {
++      UIMediaSink merged = sink;
++      if (video_model_) {
++        for (const auto& v : video_model_->media_sinks()) {
++          if (v.id == sink.id &&
++              v.cast_modes.count(MediaCastMode::REMOTE_PLAYBACK)) {
++            merged.cast_modes.insert(MediaCastMode::REMOTE_PLAYBACK);
++            if (!merged.route && v.route) {
++              merged.route = v.route;
++              merged.state = v.state;
++            }
++          }
++        }
++      }
++      seen.push_back(sink.id);
++      sinks.Append(SinkToDict(merged));
++    }
++  }
++  if (video_model_) {
++    for (const auto& v : video_model_->media_sinks()) {
++      if (std::find(seen.begin(), seen.end(), v.id) == seen.end()) {
++        sinks.Append(SinkToDict(v));
++      }
++    }
++  }
++  d.Set("sinks", std::move(sinks));
++  return d;
++}
++
++void KrunkCastController::SendModel(const char* name) {
++  base::DictValue d = BuildModel();
++  d.Set("state", BuildState());
++  Send(name, d);
++}
++
++base::DictValue KrunkCastController::BuildState() const {
++  base::DictValue d;
++  d.Set("casting", route_.has_value());
++  if (!route_) {
++    return d;
++  }
++  d.Set("route", route_->media_route_id());
++  d.Set("sink", route_->media_sink_name());
++  d.Set("mode", RouteMode(*route_));
++  d.Set("connecting", route_->is_connecting());
++  base::DictValue media;
++  if (route_status_) {
++    media.Set("title", route_status_->title);
++    media.Set("playing", route_status_->play_state ==
++                             media_router::mojom::MediaStatus::PlayState::PLAYING);
++    media.Set("canPlayPause", route_status_->can_play_pause);
++    media.Set("canSeek", route_status_->can_seek);
++    media.Set("canVolume", route_status_->can_set_volume);
++    media.Set("canMute", route_status_->can_mute);
++    media.Set("volume", route_status_->volume);
++    media.Set("muted", route_status_->is_muted);
++    media.Set("time", route_status_->current_time.InSecondsF());
++    media.Set("duration", route_status_->duration.InSecondsF());
++  } else {
++    // Mirroring / remote playback: the page's media session.
++    media.Set("playing", session_playing_);
++    media.Set("canPlayPause", true);
++    media.Set("canSeek", session_position_.has_value());
++    media.Set("canVolume", false);
++    media.Set("canMute", false);
++    if (session_position_) {
++      media.Set("time", session_position_->GetPosition().InSecondsF());
++      media.Set("duration", session_position_->duration().InSecondsF());
++    }
++  }
++  d.Set("media", std::move(media));
++  return d;
++}
++
++void KrunkCastController::SendState() {
++  Send("krunk.cast.state", BuildState());
++}
++
++void KrunkCastController::Send(const char* name,
++                               const base::DictValue& payload) {
++  auto browser = CefBrowserHostBase::GetBrowserForContents(&GetWebContents());
++  if (!browser) {
++    return;
++  }
++  CefRefPtr<CefClient> client = browser->GetClient();
++  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
++  if (!client || !frame) {
++    return;
++  }
++  base::DictValue with_id = payload.Clone();
++  with_id.Set("browser", browser->GetIdentifier());
++  std::string json = base::WriteJson(with_id).value_or("{}");
++  CefRefPtr<CefProcessMessage> message = CefProcessMessage::Create(name);
++  message->GetArgumentList()->SetString(0, json);
++  client->OnProcessMessageReceived(browser.get(), frame, PID_BROWSER, message);
++}
++
++void KrunkCastController::OnRoutesUpdated(
++    const std::vector<media_router::MediaRoute>& routes) {
++  const int id = tab_id();
++  std::vector<media_router::MediaRoute::Id> presentation_routes;
++  if (auto manager =
++          media_router::WebContentsPresentationManager::Get(&GetWebContents())) {
++    for (const auto& r : manager->GetMediaRoutes()) {
++      presentation_routes.push_back(r.media_route_id());
++    }
++  }
++  std::optional<media_router::MediaRoute> found;
++  for (const auto& route : routes) {
++    if (!route.is_local()) {
++      continue;
++    }
++    const auto& source = route.media_source();
++    const bool mine =
++        (source.IsTabMirroringSource() && source.TabId() == id) ||
++        (source.IsRemotePlaybackSource() &&
++         source.TabIdFromRemotePlaybackSource() == id) ||
++        std::find(presentation_routes.begin(), presentation_routes.end(),
++                  route.media_route_id()) != presentation_routes.end();
++    if (mine) {
++      found = route;
++      break;
++    }
++  }
++
++  const bool changed_route =
++      found.has_value() != route_.has_value() ||
++      (found && route_ && found->media_route_id() != route_->media_route_id());
++  const bool changed_details =
++      found && route_ && found->is_connecting() != route_->is_connecting();
++  route_ = found;
++  if (changed_route) {
++    route_controller_.reset();
++    status_receiver_.reset();
++    route_status_.reset();
++    if (route_) {
++      if (auto* router =
++              media_router::MediaRouterFactory::GetApiForBrowserContext(
++                  GetWebContents().GetBrowserContext())) {
++        router->GetMediaController(
++            route_->media_route_id(),
++            route_controller_.BindNewPipeAndPassReceiver(),
++            status_receiver_.BindNewPipeAndPassRemote());
++        route_controller_.reset_on_disconnect();
++        status_receiver_.set_disconnect_handler(base::BindOnce(
++            [](KrunkCastController* self) {
++              self->status_receiver_.reset();
++              self->route_status_.reset();
++            },
++            base::Unretained(this)));
++      }
++      EnsureMediaSessionObserver();
++    }
++  }
++  if (changed_route || changed_details) {
++    SendState();
++  }
++}
++
++bool KrunkCastController::EnsureMediaSessionObserver() {
++  if (session_receiver_.is_bound()) {
++    return true;
++  }
++  auto* session = content::MediaSession::Get(&GetWebContents());
++  if (!session) {
++    return false;
++  }
++  session->AddObserver(session_receiver_.BindNewPipeAndPassRemote());
++  return true;
++}
++
++void KrunkCastController::OnMediaStatusUpdated(
++    media_router::mojom::MediaStatusPtr status) {
++  route_status_ = std::move(status);
++  SendState();
++}
++
++void KrunkCastController::MediaSessionInfoChanged(
++    media_session::mojom::MediaSessionInfoPtr info) {
++  const bool playing =
++      info && info->playback_state ==
++                  media_session::mojom::MediaPlaybackState::kPlaying;
++  if (playing != session_playing_) {
++    session_playing_ = playing;
++    if (route_ && !route_status_) {
++      SendState();
++    }
++  }
++}
++
++void KrunkCastController::MediaSessionPositionChanged(
++    const std::optional<media_session::MediaPosition>& position) {
++  session_position_ = position;
++  if (route_ && !route_status_) {
++    SendState();
++  }
++}
++
++WEB_CONTENTS_USER_DATA_KEY_IMPL(KrunkCastController);
+diff --git a/libcef/browser/media_router/krunk_cast_controller.h b/libcef/browser/media_router/krunk_cast_controller.h
+new file mode 100644
+index 000000000..32d2ad57d
+--- /dev/null
++++ b/libcef/browser/media_router/krunk_cast_controller.h
+@@ -0,0 +1,172 @@
++// Copyright (c) 2026 Krunk. Use of this source code is governed by a BSD-style
++// license that can be found in the LICENSE file.
++//
++// Krunk: the Media Router dialog for Krunk's (Alloy style) browsers. Chrome's
++// own Cast dialog is a Views bubble tied to a Chrome Browser window; Krunk
++// draws its own device picker instead. This controller keeps Chrome's
++// UI-independent model (MediaRouterUI: sinks, cast modes, routes, issues) and
++// bridges it to the embedder:
++//
++//   engine -> app  CefClient::OnProcessMessageReceived(browser, main frame,
++//                  PID_BROWSER, message) with one JSON string argument:
++//                    krunk.cast.open    the picker should open (page request
++//                                       or menu), with the first model
++//                    krunk.cast.model   devices changed
++//                    krunk.cast.state   this tab's session (casting, device,
++//                                       media status)
++//                    krunk.cast.closed  the picker session ended
++//                  The source is PID_BROWSER, so a renderer cannot fake them.
++//   app -> engine  the pseudo-preference "krunk.cast" (a dictionary) through
++//                  CefRequestContext::SetPreference: {cmd: open|start|stop|
++//                  close|media, browser: <browser id>, ...}. See
++//                  HandleCommand().
++
++#ifndef CEF_LIBCEF_BROWSER_MEDIA_ROUTER_KRUNK_CAST_CONTROLLER_H_
++#define CEF_LIBCEF_BROWSER_MEDIA_ROUTER_KRUNK_CAST_CONTROLLER_H_
++
++#include <memory>
++#include <optional>
++#include <string>
++
++#include "base/memory/weak_ptr.h"
++#include "base/values.h"
++#include "cef/include/cef_values.h"
++#include "chrome/browser/ui/media_router/cast_dialog_controller.h"
++#include "chrome/browser/ui/media_router/cast_dialog_model.h"
++#include "components/media_router/browser/media_router_dialog_controller.h"
++#include "components/media_router/browser/media_routes_observer.h"
++#include "components/media_router/common/mojom/media_controller.mojom.h"
++#include "components/media_router/common/mojom/media_status.mojom.h"
++#include "content/public/browser/web_contents_user_data.h"
++#include "mojo/public/cpp/bindings/receiver.h"
++#include "mojo/public/cpp/bindings/remote.h"
++#include "services/media_session/public/cpp/media_image.h"
++#include "services/media_session/public/cpp/media_metadata.h"
++#include "services/media_session/public/cpp/media_position.h"
++#include "services/media_session/public/mojom/media_session.mojom.h"
++
++namespace media_router {
++class MediaRouterUI;
++}
++
++class KrunkCastController
++    : public content::WebContentsUserData<KrunkCastController>,
++      public media_router::MediaRouterDialogController,
++      public media_router::mojom::MediaStatusObserver,
++      public media_session::mojom::MediaSessionObserver {
++ public:
++  // The pseudo-preference name.
++  static constexpr char kPrefName[] = "krunk.cast";
++
++  // Replaces the Media Router dialog factory (called once at start-up).
++  static void Register();
++
++  // Runs a "krunk.cast" command. Returns false and sets |error| for a bad one.
++  static bool HandleCommand(CefRefPtr<CefValue> value, std::string& error);
++
++  KrunkCastController(const KrunkCastController&) = delete;
++  KrunkCastController& operator=(const KrunkCastController&) = delete;
++  ~KrunkCastController() override;
++
++  // MediaRouterDialogController:
++  bool ShowMediaRouterDialogForPresentation(
++      std::unique_ptr<media_router::StartPresentationContext> context)
++      override;
++  void CreateMediaRouterDialog(
++      media_router::MediaRouterDialogActivationLocation activation_location)
++      override;
++  void CloseMediaRouterDialog() override;
++  bool IsShowingMediaRouterDialog() const override;
++  void Reset() override;
++
++  // mojom::MediaStatusObserver:
++  void OnMediaStatusUpdated(media_router::mojom::MediaStatusPtr status) override;
++
++  // media_session::mojom::MediaSessionObserver:
++  void MediaSessionInfoChanged(
++      media_session::mojom::MediaSessionInfoPtr info) override;
++  void MediaSessionMetadataChanged(
++      const std::optional<media_session::MediaMetadata>& metadata) override {}
++  void MediaSessionActionsChanged(
++      const std::vector<media_session::mojom::MediaSessionAction>& actions)
++      override {}
++  void MediaSessionImagesChanged(
++      const base::flat_map<media_session::mojom::MediaSessionImageType,
++                           std::vector<media_session::MediaImage>>& images)
++      override {}
++  void MediaSessionPositionChanged(
++      const std::optional<media_session::MediaPosition>& position) override;
++
++ private:
++  friend class content::WebContentsUserData<KrunkCastController>;
++  class TabRoutesObserver;
++  class UIObserver;
++
++  // From |ui_| (video == false) or |video_ui_| (video == true).
++  void OnModelUpdated(bool video, const media_router::CastDialogModel& model);
++
++  explicit KrunkCastController(content::WebContents* web_contents);
++
++  // Commands from the app.
++  void Open();
++  bool Start(const std::string& sink_id, const std::string& mode);
++  void Stop(const std::string& route_id);
++  void Media(const std::string& action, double value);
++
++  // Creates |ui_| (and |video_ui_| when the page's media can be remoted).
++  void InitializeUIs();
++  void DestroyUIs();
++  void OnVideoUIDestroyed();
++  void OnUIDestroyed();
++
++  // Video (media remoting) eligibility from the media session.
++  void UpdateVideoEligibility();
++
++  void OnRoutesUpdated(const std::vector<media_router::MediaRoute>& routes);
++
++  base::DictValue BuildModel() const;
++  base::DictValue BuildState() const;
++  void SendModel(const char* name);
++  void SendState();
++  void Send(const char* name, const base::DictValue& payload);
++
++  bool EnsureMediaSessionObserver();
++
++  int tab_id() const;
++
++  std::unique_ptr<media_router::MediaRouterUI> ui_;
++  std::unique_ptr<media_router::MediaRouterUI> video_ui_;
++  std::unique_ptr<UIObserver> ui_observer_;
++  std::unique_ptr<UIObserver> video_ui_observer_;
++  std::optional<media_router::CastDialogModel> model_;
++  std::optional<media_router::CastDialogModel> video_model_;
++  // "page" when a site asked (Presentation API / Remote Playback), else
++  // "menu".
++  std::string trigger_ = "menu";
++  bool open_sent_ = false;
++
++  // Video eligibility: "" when castable, else none|disabled|drm|codec|site.
++  std::string video_reason_ = "none";
++  std::string video_codec_;
++  std::string audio_codec_;
++
++  // This tab's current local route, if any.
++  std::optional<media_router::MediaRoute> route_;
++  std::unique_ptr<TabRoutesObserver> routes_observer_;
++  mojo::Remote<media_router::mojom::MediaController> route_controller_;
++  mojo::Receiver<media_router::mojom::MediaStatusObserver> status_receiver_;
++  media_router::mojom::MediaStatusPtr route_status_;
++
++  mojo::Receiver<media_session::mojom::MediaSessionObserver>
++      session_receiver_;
++  bool session_playing_ = false;
++  std::optional<media_session::MediaPosition> session_position_;
++
++  base::ScopedClosureRunner fullscreen_blocker_;
++
++  base::WeakPtrFactory<KrunkCastController> weak_ptr_factory_{this};
++
++  WEB_CONTENTS_USER_DATA_KEY_DECL();
++};
++
++#endif  // CEF_LIBCEF_BROWSER_MEDIA_ROUTER_KRUNK_CAST_CONTROLLER_H_
+diff --git a/libcef/browser/prefs/pref_helper.cc b/libcef/browser/prefs/pref_helper.cc
+index a171bf710..7471c7de0 100644
+--- a/libcef/browser/prefs/pref_helper.cc
++++ b/libcef/browser/prefs/pref_helper.cc
+@@ -7,6 +7,7 @@
+ #include "base/notreached.h"
+ #include "base/strings/stringprintf.h"
+ #include "cef/include/cef_preference.h"
++#include "cef/libcef/browser/media_router/krunk_cast_controller.h"
+ #include "cef/libcef/browser/thread_util.h"
+ #include "cef/libcef/common/values_impl.h"
+ #include "components/prefs/pref_service.h"
+@@ -68,6 +69,10 @@ CefRefPtr<CefDictionaryValue> GetAllPreferences(PrefService* pref_service,
+ }
+ 
+ bool CanSetPreference(PrefService* pref_service, const CefString& name) {
++  // Krunk: "krunk.cast" is a command channel, not a stored preference.
++  if (name.ToString() == KrunkCastController::kPrefName) {
++    return true;
++  }
+   const PrefService::Preference* pref =
+       pref_service->FindPreference(std::string_view(name.ToString()));
+   return (pref && pref->IsUserModifiable());
+@@ -77,6 +82,16 @@ bool SetPreference(PrefService* pref_service,
+                    const CefString& name,
+                    CefRefPtr<CefValue> value,
+                    CefString& error) {
++  // Krunk: the cast picker's commands (see krunk_cast_controller.h).
++  if (name.ToString() == KrunkCastController::kPrefName) {
++    std::string cast_error;
++    const bool ok = KrunkCastController::HandleCommand(value, cast_error);
++    if (!ok) {
++      error = cast_error;
++    }
++    return ok;
++  }
++
+   // The below validation logic should match PrefService::SetUserPrefValue.
+ 
+   const PrefService::Preference* pref =

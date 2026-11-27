@@ -135,6 +135,22 @@ outside git; the archive is kept with the release artifacts (`CEF_ARTIFACT` in `
   way. `document_xml_tree_viewer.cc` now injects the viewer's stylesheet with
   `StyleEngine::InjectSheet` (what extensions' insertCSS uses; page CSP doesn't apply to it).
   Iframes already used a user-agent shadow root, which is exempt. Only libcef.dll changes.
+- `krunk-cast-bridge.patch` (0.30.0, CEF checkout) + `chromium-cast-dialog.patch` (Chromium
+  checkout): casting. Chromium's Media Router, Cast/DIAL providers, mirroring and media remoting
+  are all built in, but their dialog is Chrome's Views Cast bubble. The CEF patch adds
+  `libcef/browser/media_router/krunk_cast_controller.{h,cc}`, registered in
+  `ChromeBrowserMainExtraPartsCef::PreMainMessageLoopRun` as the `MediaRouterDialogController`
+  factory (the Chromium patch only drops the DCHECK that the factory is set once). It keeps
+  Chrome's UI-independent `MediaRouterUI` (tab + page modes, plus
+  `CreateWithMediaSessionRemotePlayback` when the page's media session has a remotable video)
+  and bridges it:
+  - engine → app: `CefClient::OnProcessMessageReceived(browser, main frame, PID_BROWSER, …)`
+    with `krunk.cast.open|model|state|closed`, one JSON argument each;
+  - app → engine: the `krunk.cast` pseudo-preference (a dictionary: `open`, `start`, `stop`,
+    `close`, `media`; hooked in `pref_helper::SetPreference`).
+
+  Page requests (Presentation API, the `<video>` cast button) end in the same controller, so they
+  open Krunk's picker. Only libcef.dll changes. See docs/HOW-IT-WORKS.md "Casting".
 - `krunk-preconnect-pref.patch` (0.26.0, CEF checkout): three pseudo-preferences in
   `CefRequestContextImpl::CanSetPreference` / `SetPreference`. They are never registered or
   stored and reach the engine through the existing API, so the C API is unchanged:
