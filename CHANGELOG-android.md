@@ -3,7 +3,7 @@
 What changed in each Krunk for Android release, newest first. The Windows browser's list is
 `CHANGELOG.md`.
 
-## Unreleased
+## 0.15.0 — 2026-11-27
 
 - **Cast a video to your TV.** Menu › **Cast** sends the video on the page to a Chromecast, a
   Google TV or another Google Cast device on your Wi-Fi: pick the device and the video carries on
@@ -14,6 +14,7 @@ What changed in each Krunk for Android release, newest first. The Windows browse
 - **Cast screen.** Menu › **Cast screen** opens Android's screen mirroring, which shows your whole
   screen on a TV or Cast device. It works for every video, also on phones without Google Play
   Services.
+- Krunk on Android TV shows neither: the TV is the screen.
 
 ## 0.14.0 — 2026-11-24
 

@@ -1227,7 +1227,9 @@ over CDP on a fast build). The probe page is `cast.html`, with two `<video>`s, o
 ## Krunk for Android 0.15.0 (casting)
 
 Evidence of the emulator pass: `.pipeline/artifacts/cast-0.30.0/android/` and `android-smoke.md`.
-<!-- TODO(M4): fill in the AVDs and results once the agent's pass is reviewed -->
+Emulator used on 2026-11-27: the phone AVD (`sdk_gphone64_x86_64`, Android 16, Play services
+25.26.35) for 1–4, and the Android TV AVD `krunk_tv36` for 5. No Cast device was on the
+emulator's network, so 6 is still open.
 
 1. **Direct/play build, Play services image:** page menu → Cast and Cast screen. On a page with an
    MP4 `<video>`, Cast opens the Cast SDK's device dialog ("searching" / no devices without a TV).

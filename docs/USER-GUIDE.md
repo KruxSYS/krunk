@@ -526,8 +526,9 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
       screen.
     - Cast needs Google Play services: builds without them (`-Pkrunk.noGms=true`) and phones
       without Play services show only Cast screen. Krunk on Android TV shows neither.
-    - A video Cast can't send (no address, a `blob:` or streaming-source video) gets a message
-      pointing to Cast screen. <!-- TODO(M4): confirm the exact wording once the agent reports -->
+    - A video Cast can't send (no address, a `blob:` or streaming-source video) gets "This video
+      can't be sent to a Cast device. Use Cast screen to mirror the whole screen."; a page without
+      a video says so.
 - **Media overlay name (0.11.0):** Windows' media overlay (the volume flyout, the lock screen)
   names Krunk with its icon for media a page plays; it showed Chromium before. Krunk sets its
   own Windows app ID (`Krunk.Browser`), registers its name and icon for it, and puts it on its
