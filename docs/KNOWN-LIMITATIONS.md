@@ -24,6 +24,14 @@ What is not done, not verified or different from Chrome, release by release. Par
   - **The `<video>` cast button** appears only while a compatible device is available, as in Chrome.
   - **Not supported:** AirPlay, Miracast, DLNA/UPnP renderers, and Windows' own "Cast to device" /
     Project (Win+K). Desktop (whole-screen) mirroring is not offered.
+  - **Android (0.15.0):**
+    - Cast sends the video's address: the device downloads it itself. `blob:` or MediaSource
+      (streaming) videos, which most big video sites use, can't be sent; use Cast screen.
+      Addresses that need the page's cookies, sign-in or headers fail on the device too.
+    - DRM video can't be cast.
+    - Cast needs Google Play services (not in `-Pkrunk.noGms=true` builds).
+    - There is no tab mirroring of Krunk's own: Cast screen is Android's system mirroring.
+    - Never tried with a real Cast device.
   - **The Casting switch needs a restart.** Chromium can't turn its router on or off while
     running; the Cast items hide at once.
 - **Page loading (0.26.0):** on the test corpus, 0.26.0 opens typed addresses sooner (median first

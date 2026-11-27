@@ -258,6 +258,7 @@ Krunk's no-Google-contact promise; alternative: …*, unless the operator overri
 | Picture-in-Picture | yes — 0.6.0 | roadmap (Android PiP via `MediaSession.Delegate` + activity PiP) | `MediaSession` | 3 |
 | Media session / notification controls | yes — 0.11.0 | roadmap | `MediaSession` | 3 |
 | Autoplay control | no | done (0.4.0: per site, muted allowed and audible blocked by default; not run on a device) | `PERMISSION_AUTOPLAY_*` | 3 |
+| Casting (Google Cast / screen) | yes — 0.30.0: tab mirroring, video remoting, sites' cast buttons, DIAL | done (0.15.0: Cast SDK sends the page's video URL to a Cast device; Cast screen opens the system's screen casting; hidden on TV and without Play services; never tried with a real device) | Cast SDK (Play services), not GeckoView | 7 |
 | DRM (Widevine) | partial — L3 opt-in | roadmap (Widevine L1/L3 through Gecko's GMP) | — | 3 |
 
 ## 16. AI agent, scripts, VPN, updates, default browser

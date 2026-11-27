@@ -1224,7 +1224,23 @@ over CDP on a fast build). The probe page is `cast.html`, with two `<video>`s, o
    - The toolbar cast icon during a session.
    - A DIAL TV appears for a site's DIAL app.
 
-## Krunk for Android 0.1.0 (round 1)
+## Krunk for Android 0.15.0 (casting)
+
+Evidence of the emulator pass: `.pipeline/artifacts/cast-0.30.0/android/` and `android-smoke.md`.
+<!-- TODO(M4): fill in the AVDs and results once the agent's pass is reviewed -->
+
+1. **Direct/play build, Play services image:** page menu → Cast and Cast screen. On a page with an
+   MP4 `<video>`, Cast opens the Cast SDK's device dialog ("searching" / no devices without a TV).
+2. **Cast screen** opens Android's Settings → Cast (or the wireless settings on images without it).
+3. **A `blob:`/MSE video** (e.g. a YouTube watch page): Cast shows "can't be sent… use Cast
+   screen".
+4. **`-Pkrunk.noGms=true` build:** no Cast entry; Cast screen is there.
+5. **Android TV** (TV AVD or the forced-TV override): neither entry.
+6. **With a real Cast device (operator):** Cast an MP4 → it plays on the TV from the same
+   position; the notification and expanded controller pause/seek/stop it; Cast screen mirrors
+   the phone.
+
+## Krunk for Android 0.1.0 (round 1)## Krunk for Android 0.1.0 (round 1)
 
 Device: the sandbox emulator (`android/scripts/emu.sh`), or any Android 8+ phone with the debug
 APK from `dist/android/`. `android/scripts/flows.sh` drives flows 1–9 over adb.

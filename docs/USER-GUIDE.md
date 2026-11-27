@@ -517,6 +517,17 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
     Without that permission no device is found.
   - Settings → Permissions → **Casting** turns it all off (needs a restart): no Cast items, no
     device search, and sites see no cast support.
+  - **Krunk for Android (0.15.0):** the page menu has **Cast** and **Cast screen**.
+    - **Cast** sends the page's video to a Google Cast device with Google's Cast SDK. You pick the
+      device in Android's Cast dialog; the device then plays the video from its address, resuming
+      where you were. The media notification and the full-screen controller give play/pause,
+      seek and stop.
+    - **Cast screen** opens Android's own screen casting (Settings → Cast) to mirror the whole
+      screen.
+    - Cast needs Google Play services: builds without them (`-Pkrunk.noGms=true`) and phones
+      without Play services show only Cast screen. Krunk on Android TV shows neither.
+    - A video Cast can't send (no address, a `blob:` or streaming-source video) gets a message
+      pointing to Cast screen. <!-- TODO(M4): confirm the exact wording once the agent reports -->
 - **Media overlay name (0.11.0):** Windows' media overlay (the volume flyout, the lock screen)
   names Krunk with its icon for media a page plays; it showed Chromium before. Krunk sets its
   own Windows app ID (`Krunk.Browser`), registers its name and icon for it, and puts it on its
