@@ -324,6 +324,11 @@ fn status_text(status: Status, sink: &Sink, tab: &TabState) -> String {
     }
 }
 
+/// The site's name from Chromium's dialog header ("Cast youtube.com" → "youtube.com").
+fn site_name(header: &str) -> String {
+    header.trim().strip_prefix("Cast ").unwrap_or(header.trim()).to_string()
+}
+
 /// Builds the picker view from the engine's model. `page_has_video` comes from the host's
 /// own video tracking (the Picture-in-Picture list): the engine's media session only knows
 /// about playing media.
@@ -355,7 +360,7 @@ pub fn view(tab_id: u32, model: &Model, page_has_video: bool) -> View {
         tab_id,
         private: model.private,
         from_page: model.trigger == "page",
-        site: model.header.clone(),
+        site: site_name(&model.header),
         offer_video,
         source,
         devices,
@@ -554,6 +559,8 @@ mod tests {
         assert_eq!(v.devices[2].status_text, "YouTube");
         assert_eq!(v.devices[0].status_text, "Available");
         assert_eq!(v.site, "example.com");
+        assert_eq!(site_name("Cast youtube.com"), "youtube.com");
+        assert_eq!(site_name(" 127.0.0.1:18112 "), "127.0.0.1:18112");
         // Page request: the tab first, the page's own app offered.
         let page = Model { trigger: "page".into(), ..m.clone() };
         let v = view(3, &page, false);
