@@ -102,10 +102,16 @@ object CastSender {
         // MainActivity is a ComponentActivity with a platform theme: the MediaRouter dialog
         // needs an AppCompat one (src/gms/res/values/themes_cast.xml).
         val themed = ContextThemeWrapper(context, R.style.Theme_Krunk_CastDialog)
-        MediaRouteChooserDialog(themed, R.style.Theme_Krunk_CastDialog).apply {
-            routeSelector = selector
-            setTitle(R.string.cast_choose_device)
-            show()
+        // The dialog's own title ("Cast to"); its setTitle crashes before show() (no view yet).
+        runCatching {
+            MediaRouteChooserDialog(themed, R.style.Theme_Krunk_CastDialog).apply {
+                routeSelector = selector
+                show()
+            }
+        }.onFailure {
+            pending = null
+            Log.w(KrunkApp.TAG, "cast: no device chooser", it)
+            say(context.getString(R.string.cast_unavailable))
         }
     }
 
