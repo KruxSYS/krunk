@@ -1,0 +1,29 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>cast probe</title>
+<style>body{font:15px system-ui;margin:16px;background:#111;color:#eee} video{width:420px;margin:4px;background:#000} pre{font-size:13px}</style>
+<h1>Krunk 0.30.0 cast probe</h1>
+<video id="v1" src="clip.mp4" controls loop muted playsinline></video>
+<video id="v2" src="clip.mp4" controls loop muted playsinline disableremoteplayback></video>
+<pre id="out">…</pre>
+<script>
+// What a site sees: the Presentation API, the Remote Playback API on <video>, and whether the
+// engine says a cast device is available (watchAvailability). v2 has disableRemotePlayback.
+const out = { presentation: 'presentation' in navigator, remote: 'remote' in HTMLMediaElement.prototype,
+  presentationRequest: typeof window.PresentationRequest === 'function' };
+async function probe() {
+  const v1 = document.getElementById('v1'), v2 = document.getElementById('v2');
+  if (out.remote) {
+    out.v1State = v1.remote.state;
+    try { out.v1Watch = 'id ' + await v1.remote.watchAvailability((a) => { out.v1Available = a; show(); }); } catch (e) { out.v1Watch = e.name; }
+    try { await v2.remote.watchAvailability(() => {}); out.v2Watch = 'allowed'; } catch (e) { out.v2Watch = e.name; }
+  }
+  if (out.presentationRequest) {
+    try { const r = new PresentationRequest(['cast:CC1AD845']); out.presentationAvailability = (await r.getAvailability()).value; } catch (e) { out.presentationAvailability = e.name; }
+  }
+  try { await v1.play(); out.v1Playing = !v1.paused; } catch (e) { out.v1Playing = e.name; }
+  show();
+}
+function show() { document.getElementById('out').textContent = JSON.stringify(out, null, 1); window.__cast = out; }
+probe();
+</script>
