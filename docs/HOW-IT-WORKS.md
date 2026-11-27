@@ -787,8 +787,12 @@ own copy of the engine model (`cast::plan`):
 unless the cast picker is the open popup. Each tab's session state drives the toolbar's cast
 button (`castButton` event).
 
-**Discovery and the network.** On Windows Chromium never starts discovery before a user gesture
-(`CastMediaSinkService`: `should_delay_discovery` is always true there). The first picker or site
+**Discovery and the network.** On Windows Chromium delays discovery until a user gesture
+(`CastMediaSinkService`: `should_delay_discovery` is always true there), *except* that
+`MediaRouterDesktop` checks the firewall at startup and starts mDNS at once when the firewall
+already allows the browser (Chrome does this). 0.30.0 shipped with that, so it searched the LAN at
+every launch once Krunk had been allowed. Since 0.30.1 `chromium-cast-dialog.patch` makes
+`OnFirewallCheckComplete` only log: discovery always waits for the picker or a page request. The first picker or site
 request starts mDNS and DIAL, which then run until Krunk exits. The VM smoke saw no mDNS socket
 before the first picker and `:::5353` after it. Windows Defender Firewall asks once per Krunk.exe
 path; the installer is per-user and can't add Chrome's "mDNS-In" rule.

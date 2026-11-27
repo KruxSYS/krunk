@@ -26,8 +26,9 @@ TOOLCHAIN_HASH_KEY=3bfcb536c8      # TOOLCHAIN_HASH in src/build/vs_toolchain.py
 # product logo, brand(); only resources.pak changes); -xml since 2026-11-24
 # (patches/chromium-xml-viewer-csp.patch: the XML tree viewer keeps its style under a strict CSP);
 # -cast since 0.30.0 (patches/krunk-cast-bridge.patch, chromium-cast-dialog.patch: Krunk's own
-# device picker on Chromium's Media Router).
-CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx-xml-cast${CEF_FLAVOR_SUFFIX:-}
+# device picker on Chromium's Media Router); -cast2 since 0.30.1 (chromium-cast-dialog.patch also keeps
+# Windows from starting device discovery at launch when the firewall allows it).
+CEF_FLAVOR=krunk-codecs-hidden-brand-private-nav-preconnect-ua-audible-chips-kx-xml-cast2${CEF_FLAVOR_SUFFIX:-}
 PATCHES=$(cd "$(dirname "$0")" && pwd)/patches
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 SRC=$ROOT/chromium_git/chromium/src

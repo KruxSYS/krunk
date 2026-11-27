@@ -1,3 +1,25 @@
+diff --git a/chrome/browser/media/router/mojo/media_router_desktop.cc b/chrome/browser/media/router/mojo/media_router_desktop.cc
+index ea831bd7a56e8..50cfb29ecc628 100644
+--- a/chrome/browser/media/router/mojo/media_router_desktop.cc
++++ b/chrome/browser/media/router/mojo/media_router_desktop.cc
+@@ -862,11 +862,14 @@ void MediaRouterDesktop::EnsureMdnsDiscoveryEnabled() {
+ void MediaRouterDesktop::OnFirewallCheckComplete(
+     bool firewall_can_use_local_ports) {
+   if (firewall_can_use_local_ports) {
++    // Krunk: no device discovery at launch, whatever the firewall allows. It
++    // starts with the first user gesture (the cast picker, a page's cast
++    // request: OnUserGesture -> StartDiscovery), as on a first run.
+     GetLogger()->LogInfo(
+         mojom::LogCategory::kDiscovery, kLoggerComponent,
+-        "Windows firewall allows mDNS. Ensuring mDNS discovery is enabled.", "",
+-        "", "");
+-    EnsureMdnsDiscoveryEnabled();
++        "Windows firewall allows mDNS. Krunk: discovery waits for a user "
++        "gesture.",
++        "", "", "");
+   } else {
+     GetLogger()->LogInfo(mojom::LogCategory::kDiscovery, kLoggerComponent,
+                          "Windows firewall does not allows mDNS. mDNS "
 diff --git a/components/media_router/browser/media_router_dialog_controller.cc b/components/media_router/browser/media_router_dialog_controller.cc
 index a06fddea5726f..9b657f1451c8f 100644
 --- a/components/media_router/browser/media_router_dialog_controller.cc

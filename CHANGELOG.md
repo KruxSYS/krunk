@@ -3,6 +3,12 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.30.1 — 2026-11-27
+
+- **Cast device discovery no longer starts at launch; it starts only when you open Cast… or a
+  site asks to cast.** In 0.30.0, once Windows Firewall allowed Krunk on the network, Krunk
+  searched the network for Cast devices every time it started, even if you never cast.
+
 ## 0.30.0 — 2026-11-27
 
 - **Cast to your TV or speaker.** ⋮ → Cast… (or right-click the page → Cast…) opens a device

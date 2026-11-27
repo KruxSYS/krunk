@@ -14,7 +14,10 @@ What is not done, not verified or different from Chrome, release by release. Par
     are found (Settings → Windows Security → Firewall → Allow an app). The per-user installer
     can't add Chrome's firewall rule.
   - **Once started, discovery runs until Krunk exits** (Chromium's behaviour). It starts only
-    with the picker or a site's cast button.
+    with the picker or a site's cast button. **0.30.0 got this wrong:** once Windows Firewall
+    allowed Krunk, Chromium's own Windows code started mDNS discovery at every launch while
+    casting was on (found in the final verification pass). 0.30.1 fixes it in the engine
+    (`chromium-cast-dialog.patch`).
   - **Copy-protected (DRM / Widevine) video can't be cast on its own**; "Video on this page"
     mirrors the tab instead, and the protected picture may stay black on the device. Remoting
     also needs a device and codecs that Chromium's capability check accepts; otherwise the tab is

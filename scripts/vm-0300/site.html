@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><title>site cast request</title>
+<style>body{font:16px system-ui;margin:16px} button{position:absolute;left:520px;top:120px;width:240px;height:60px;font-size:18px}</style>
+<h1>A site's own cast button</h1>
+<button id="b">Cast (site)</button><pre id="o"></pre>
+<script>
+document.getElementById('b').onclick = () => new PresentationRequest(['cast:CC1AD845']).start()
+  .then((c) => { document.getElementById('o').textContent = 'connected ' + c.state; }, (e) => { document.getElementById('o').textContent = e.name + ': ' + e.message; });
+</script>
