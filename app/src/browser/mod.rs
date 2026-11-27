@@ -1731,7 +1731,10 @@ impl Browser {
         self.net.forget_tab(id);
         if let Some(v) = view {
             if v.downloads.get() > 0 {
-                info!("tab {id}: closed with {} running downloads, its view stays hidden until they end", v.downloads.get());
+                info!(
+                    "tab {id}: closed with {} running downloads, its view stays hidden until they end",
+                    v.downloads.get()
+                );
                 v.view.set_visible(false);
                 v.view.set_audio_muted(true);
                 v.view.navigate("about:blank");

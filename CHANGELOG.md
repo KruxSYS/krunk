@@ -3,7 +3,7 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
-## Unreleased
+## 0.30.2 — 2026-11-27
 
 - **A download no longer leaves its address in the tab.** After a link started a download, the
   address bar showed the file's address instead of the page you were on, so a reload, or restoring

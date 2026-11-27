@@ -14,7 +14,7 @@
 
 <p align="center">
   <a href="https://kruxsys.com/projects/krunk/"><img src="https://img.shields.io/badge/status-stable-6fdc95?style=flat-square&labelColor=0c1016" alt="Status: stable"></a>
-  <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Windows-0.30.1-22d3ee?style=flat-square&labelColor=0c1016" alt="Windows 0.30.1"></a>
+  <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Windows-0.30.2-22d3ee?style=flat-square&labelColor=0c1016" alt="Windows 0.30.2"></a>
   <a href="https://krunk.kruxsys.com/download"><img src="https://img.shields.io/badge/Android-0.15.0%20preview-ffb547?style=flat-square&labelColor=0c1016" alt="Android 0.15.0 preview"></a>
   <a href="https://kruxsys.com/projects/krunk/"><img src="https://img.shields.io/badge/project%20page-kruxsys.com-22d3ee?style=flat-square&labelColor=0c1016" alt="Project page on kruxsys.com"></a>
   <a href="https://kruxsys.com/"><img src="https://img.shields.io/badge/by-KruxSYS-22d3ee?style=flat-square&labelColor=0c1016" alt="KruxSYS"></a>
@@ -48,7 +48,7 @@ updates and the end-to-end encrypted account sync.
   </tr>
 </table>
 
-> **Status (Windows 0.30.1, Android 0.15.0):** Krunk for Windows is stable and in daily use; every release is
+> **Status (Windows 0.30.2, Android 0.15.0):** Krunk for Windows is stable and in daily use; every release is
 > cross-built on Linux and smoke-tested on a Windows 11 VM. Krunk for Android is a preview (phones, tablets and
 > Android TV). What is not done or not verified is listed under [Known limitations](#known-limitations).
 > Release notes: [`CHANGELOG.md`](CHANGELOG.md) and [`CHANGELOG-android.md`](CHANGELOG-android.md).
@@ -206,7 +206,7 @@ The main ones; the full list is in [`docs/KNOWN-LIMITATIONS.md`](docs/KNOWN-LIMI
 
 - **Unsigned:** the binaries are not code-signed, so SmartScreen may warn on first start. Updates are protected by
   Krunk's own Ed25519 signature instead.
-- **Engine security fixes** reach users only through new Krunk releases (Chromium 156 in 0.30.1).
+- **Engine security fixes** reach users only through new Krunk releases (Chromium 156 in 0.30.2).
 - **Speed:** Krunk's engine still runs page JavaScript and layout slower than Chrome on the same machine; the
   cross-built engine has no V8 context snapshot, and Chrome's prerendering is off in CEF.
 - **Casting** was never tried with a real Cast or DIAL device; copy-protected video is mirrored, not sent as
