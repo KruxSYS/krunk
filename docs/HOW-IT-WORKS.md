@@ -739,6 +739,67 @@ site when "Remember for this site" is left on. Stored answers are listed and can
 the site's Cookies and site data page (shield panel → Cookies and site data → Permissions).
 Private tabs ask every time and remember nothing. Dismissing the prompt blocks once.
 
+## Casting (0.30.0)
+
+Chromium's Media Router does the work: device discovery (Cast over mDNS, DIAL over SSDP), the
+Cast and DIAL route providers, tab mirroring (the mirroring service with Cast Streaming), media
+remoting for a page's video, and the Presentation and Remote Playback APIs for sites. All of it
+is part of the engine build; until 0.30.0 Krunk switched it off (`--disable-features=MediaRouter`).
+
+**Engine bridge** (`scripts/cef-build/patches/krunk-cast-bridge.patch`, CEF checkout, plus the
+one-line `chromium-cast-dialog.patch`). Chrome's Cast dialog is a Views bubble tied to a Chrome
+`Browser`, which Krunk's (Alloy) windows aren't. The patch registers `KrunkCastController` as the
+`MediaRouterDialogController` factory. Per tab, it keeps Chrome's UI-independent model
+(`MediaRouterUI`): one for the tab and the page's own presentation request
+(`CreateWith{DefaultMediaSource,StartPresentationContext}AndMirroring`), and, when the tab's
+media session has a remotable video (codecs known, not encrypted, remote playback allowed, no
+site Cast integration), one for that video (`CreateWithMediaSessionRemotePlayback`, the path
+Chrome's media controls use).
+- Engine → host: `CefClient::OnProcessMessageReceived(browser, main frame, PID_BROWSER, msg)`
+  with one JSON argument:
+  - `krunk.cast.open`: the picker should open, with the first model;
+  - `krunk.cast.model`: devices with state, cast modes, route and issue, plus the video's
+    eligibility and whether the tab is private;
+  - `krunk.cast.state`: the tab's session and the media status;
+  - `krunk.cast.closed`: the tab navigated, closed or crashed.
+
+  The host believes these names only from the browser process (`lb_core::cast::accept_message`):
+  a renderer can send process messages with any name.
+- Host → engine: the pseudo-preference `krunk.cast` (a dictionary, through the existing
+  `CefRequestContext::SetPreference`, hooked in `pref_helper`): `open`, `start {sink, mode}`,
+  `stop {route}`, `close`, `media {action, value}`. Media controls go to the route's
+  `mojom::MediaController` where the receiver app has one (a site's Cast app); mirroring and
+  remote playback are controlled through the tab's `content::MediaSession`.
+- Page requests (`PresentationRequest.start()`, the `<video>` cast button) reach the same
+  controller through `ControllerPresentationServiceDelegateImpl`. Tab fullscreen is dropped while
+  the picker is up (Chrome does the same against spoofing). Closing the picker rejects the page's
+  request.
+
+**Host** (`app/src/browser/cast.rs`, pure logic in `core/src/cast.rs`). The picker is a popup
+(`PopupKind::Cast`) for one tab; it shows `cast::View`. The popup sends only a device and a source
+(`castStart {sinkId, source: tab|video|site}`), never a mode. The host decides the mode from its
+own copy of the engine model (`cast::plan`):
+- remoting when the video is eligible and the device takes it;
+- the site's own receiver when the site has a Cast integration;
+- otherwise tab mirroring, with a notice that says why.
+
+`castStart`, `castStop` and `castMedia` are popup-only requests (`Sender::permits`), refused
+unless the cast picker is the open popup. Each tab's session state drives the toolbar's cast
+button (`castButton` event).
+
+**Discovery and the network.** On Windows Chromium never starts discovery before a user gesture
+(`CastMediaSinkService`: `should_delay_discovery` is always true there). The first picker or site
+request starts mDNS and DIAL, which then run until Krunk exits. The VM smoke saw no mDNS socket
+before the first picker and `:::5353` after it. Windows Defender Firewall asks once per Krunk.exe
+path; the installer is per-user and can't add Chrome's "mDNS-In" rule.
+
+**Off switch.** `Settings::casting` (default on, restart). When it is off,
+`Settings::browser_switches` adds `MediaRouter` to `--disable-features` and
+`Presentation,RemotePlayback` to `--disable-blink-features`, and the host hides every cast entry.
+Chromium fixes `MediaRouterEnabled()` per profile, so the switch takes effect after a restart.
+Until then the engine still has its router, and the host refuses the picker and closes page
+requests.
+
 ## Site permissions
 
 Since 0.6.0 Krunk asks about the other permissions too, in the same prompt: **camera**,
@@ -1085,9 +1146,11 @@ Built by `core::settings::Settings::browser_switches` and added in
   sign-in dialog (with the vault) instead of the engine's.
 - `--host-resolver-rules=MAP krunk.invalid ~NOTFOUND, MAP *.krunk.invalid ~NOTFOUND`
   (see "Internal origins").
-- `--disable-features=AutofillServerCommunication,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled`
-  turns off autofill crowdsourcing, Cast discovery, optimization hints, feed suggestions,
-  secure-time queries and the "AI mode" eligibility request.
+- `--disable-features=AutofillServerCommunication,OptimizationHints,InterestFeedContentSuggestions,NetworkTimeServiceQuerying,AimEnabled,AimServerEligibilityEnabled,AimServerRequestOnStartupEnabled`
+  turns off autofill crowdsourcing, optimization hints, feed suggestions, secure-time queries and
+  the "AI mode" eligibility request. `MediaRouter` (Cast discovery) is added only while Settings →
+  Casting is off (0.30.0; it was always there before), together with
+  `--disable-blink-features=Presentation,RemotePlayback`.
 - `--enable-features=NoStatePrefetchHoldback` (0.26.0): a page's `<link rel=prerender>` fetches
   nothing. The engine ran those prefetches in a hidden page with no Krunk tab, so their requests
   bypassed the ad blocker and tracking protection.

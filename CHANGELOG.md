@@ -3,6 +3,24 @@
 What changed in each Krunk release, newest first. Krunk for Android has its own list:
 `CHANGELOG-android.md`.
 
+## 0.30.0 — 2026-11-27
+
+- **Cast to your TV or speaker.** ⋮ → Cast… (or right-click the page → Cast…) opens a device
+  picker for the tab: Chromecast, Google TV and other TVs with Google Cast, Cast speakers and DIAL
+  devices on your network, each with its state. **This tab** mirrors the tab with sound and keeps
+  going while you use other tabs. **Video on this page** sends the playing video itself. Where that
+  isn't possible (copy-protected video, a page that forbids it, a device that can't play it) Krunk
+  mirrors the tab and says so. While casting, a cast icon in the toolbar brings back the picker
+  with Stop, play/pause, the position and, where the device allows it, volume.
+- **Sites' own cast buttons work.** YouTube and other sites using Google Cast or the Presentation
+  API open the same picker and can start their own app on the device, and a video's built-in
+  controls show a cast button when a device is available. Private tabs can be cast and are marked
+  as such.
+- **Searching the network only when you ask.** Krunk looks for devices only once you open the
+  picker or a site's cast button. The first time, Windows asks whether Krunk may use the network:
+  allow it on private networks. Settings → Permissions → Casting turns casting off completely
+  (after a restart: no cast items, no device search, no cast support for sites).
+
 ## 0.29.0 — 2026-11-24
 
 - **Krunk is now a KruxSYS project.** KruxSYS (https://kruxsys.com) publishes Krunk: the website

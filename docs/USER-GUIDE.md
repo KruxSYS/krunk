@@ -494,6 +494,29 @@ Old `lb://` addresses (from LightBrowser) open the matching `krunk://` page.
   floating window changes the volume, and changes the page makes (its own controls, the mute
   button) move the slider. (Until 0.10 a separate bar showed under the window whenever the
   pointer was over the video.)
+- **Casting (0.30.0):** send a tab or its video to a Chromecast, a TV with Google Cast built in
+  (Chromecast with Google TV, Android TV), a Cast speaker or a DIAL device on your network. ⋮ →
+  **Cast…** or right-click the page → **Cast…** opens the device picker for the current tab:
+  - **This tab** mirrors the tab, picture and sound. Casting goes on while you use other tabs and
+    stops when you press Stop or close the tab.
+  - **Video on this page** sends the playing video itself (the engine streams it to the device,
+    which then shows it full screen). A copy-protected (DRM) video, a page that forbids it
+    (`disableRemotePlayback`), a format the device can't play or a device that only plays sound
+    falls back to mirroring the tab, and the picker says so.
+  - Sites with their own Cast button (YouTube and others using Google's Cast SDK or the
+    Presentation API) open the same picker; the site's own app is offered first ("youtube.com").
+    A `<video>` element's own controls show a cast button once a device is available.
+  - Each device shows its state: available, connecting, casting (this tab), or busy with
+    something else (with what it plays). Stop ends a session; while this tab casts the picker
+    also has play/pause, a position slider and, for devices that allow it, volume and mute.
+  - While a tab casts, a cast icon appears in the toolbar; it opens the picker.
+  - Private tabs can be cast; the picker says it is a private tab.
+  - Krunk looks for devices only from the moment you open the picker (or a site's cast button),
+    then until Krunk closes. **The first time, Windows asks whether Krunk may use the network**
+    (it covers the picker): answer **Allow** for private networks, then choose Cast… again.
+    Without that permission no device is found.
+  - Settings → Permissions → **Casting** turns it all off (needs a restart): no Cast items, no
+    device search, and sites see no cast support.
 - **Media overlay name (0.11.0):** Windows' media overlay (the volume flyout, the lock screen)
   names Krunk with its icon for media a page plays; it showed Chromium before. Krunk sets its
   own Windows app ID (`Krunk.Browser`), registers its name and icon for it, and puts it on its

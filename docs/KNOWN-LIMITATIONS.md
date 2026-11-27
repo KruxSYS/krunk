@@ -2,6 +2,30 @@
 
 What is not done, not verified or different from Chrome, release by release. Part of the [Krunk README](../README.md); the other pages are listed there under *Documentation*.
 
+- **Casting (0.30.0):**
+  - **Never cast to a real device in testing.** No Cast or DIAL device was reachable from the
+    test machines. The Windows VM showed the picker (menu, page menu, a site's request), the
+    on/off switch, the page APIs and the absence of LAN discovery before the first use. Mirroring,
+    video remoting, a site's Cast app, the session controls and the toolbar button during a
+    session were not tried with a device; Chromecast, Google TV, Cast speakers and DIAL TVs are
+    all untested.
+  - **The first use triggers Windows' firewall prompt**, which covers the picker and closes it:
+    allow Krunk on private networks and choose Cast… again. If the prompt is refused, no devices
+    are found (Settings → Windows Security → Firewall → Allow an app). The per-user installer
+    can't add Chrome's firewall rule.
+  - **Once started, discovery runs until Krunk exits** (Chromium's behaviour). It starts only
+    with the picker or a site's cast button.
+  - **Copy-protected (DRM / Widevine) video can't be cast on its own**; "Video on this page"
+    mirrors the tab instead, and the protected picture may stay black on the device. Remoting
+    also needs a device and codecs that Chromium's capability check accepts; otherwise the tab is
+    mirrored.
+  - **Video on this page** needs a playing video with a media session: a muted autoplaying clip
+    or a page with several players is mirrored as the whole tab.
+  - **The `<video>` cast button** appears only while a compatible device is available, as in Chrome.
+  - **Not supported:** AirPlay, Miracast, DLNA/UPnP renderers, and Windows' own "Cast to device" /
+    Project (Win+K). Desktop (whole-screen) mirroring is not offered.
+  - **The Casting switch needs a restart.** Chromium can't turn its router on or off while
+    running; the Cast items hide at once.
 - **Page loading (0.26.0):** on the test corpus, 0.26.0 opens typed addresses sooner (median first
   byte 64 ms). For link-opened pages the time to the largest paint is unchanged from 0.25.5
   (559 → 562 ms, same session). Krunk's engine still runs page JavaScript and layout slower than

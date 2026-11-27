@@ -1195,6 +1195,35 @@ from 0.11.0 (staging and live). Not rerun: the other flows (their code did not c
 6. **Email links:** click a mailto: link: Windows' email app opens (or its "choose an app"
    dialog). Choose Gmail in Settings → General: the link opens Gmail's compose in a new tab.
 
+## Krunk 0.30.0 (casting)
+
+Harness: `scripts/vm-0300/` (start.ps1 with `-Set "casting=false"`, shot.ps1, udp.ps1, d0300.mjs
+over CDP on a fast build). The probe page is `cast.html`, with two `<video>`s, one of them
+`disableremoteplayback`. Results of the 2026-11-27 pass are in
+`.pipeline/artifacts/cast-0.30.0/vm-smoke.md`.
+
+1. **APIs on:** a fresh profile on cast.html gives `presentation`, `remote` and
+   `PresentationRequest` true; v2's `watchAvailability` throws InvalidStateError.
+2. **No discovery before use:** `udp.ps1` shows no `:5353` for Krunk until the first Cast….
+3. **⋮ → Cast…:** the first time, Windows' firewall prompt appears (Allow). Then the picker shows
+   "No devices found" with the firewall hint (or the devices).
+4. **Page context menu → Cast…** (above Inspect) opens the same picker.
+5. **Site request:** a button calling `new PresentationRequest(['cast:CC1AD845']).start()` opens
+   the picker with "<site> wants to cast". Esc rejects the page's promise (NotFoundError with no
+   devices).
+6. **Off:** Settings → Permissions → Casting off, restart. The APIs are false, there is no Cast…
+   in either menu and no Krunk UDP sockets.
+7. **With a real device (not done yet, needs the operator):**
+   - This tab → the TV mirrors the tab with sound; switch tabs (casting continues), Stop, and
+     closing the tab ends it.
+   - Video on this page with a plain MP4 → the video plays on the TV; play/pause/seek from the
+     page and from the picker.
+   - A Widevine video → the tab is mirrored, with the notice.
+   - YouTube's cast button → the picker → the YouTube receiver app.
+   - Private tab → marked in the picker.
+   - The toolbar cast icon during a session.
+   - A DIAL TV appears for a site's DIAL app.
+
 ## Krunk for Android 0.1.0 (round 1)
 
 Device: the sandbox emulator (`android/scripts/emu.sh`), or any Android 8+ phone with the debug
